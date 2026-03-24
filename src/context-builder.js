@@ -114,7 +114,7 @@ ${langInstruction}
                     if (a.pinned !== b.pinned) return b.pinned ? 1 : -1;
                     return (b.importance || 0) - (a.importance || 0);
                 })
-                .slice(0, 20);
+                .slice(0, 50);
             for (const m of active) {
                 if (m.text?.trim()) lines.push(m.text.trim());
             }
