@@ -1,3 +1,4 @@
+import fs from 'fs';
 import STReader from './st-reader.js';
 
 let config = {};
@@ -13,23 +14,40 @@ const ImageGen = {
 
     /**
      * Vertex AI Imagen API로 직접 이미지 생성
-     * @param {string} scenePrompt - 장면 설명 (영어)
-     * @param {object} character - ST 캐릭터 데이터
-     * @returns {Buffer|null} 이미지 버퍼
+     * 캐릭터 PNG를 subject reference로 포함하여 외모 일관성 유지
      */
     async generate(scenePrompt, character) {
         console.log(`[ImageGen] 프롬프트: ${scenePrompt.substring(0, 100)}...`);
 
         if (!apiKey) throw new Error('Imagen API 키가 없습니다');
 
-        const model = config.imageModel || 'imagen-3.0-generate-002';
+        // 캐릭터 PNG를 레퍼런스 이미지로 로드
+        const instance = { prompt: scenePrompt };
+        let model = config.imageModel || 'imagen-3.0-generate-002';
+        const avatarPath = STReader.getCharacterAvatarPath(character);
+        if (avatarPath) {
+            try {
+                const avatarBase64 = fs.readFileSync(avatarPath).toString('base64');
+                instance.referenceImages = [{
+                    referenceType: 'REFERENCE_TYPE_SUBJECT',
+                    referenceId: 1,
+                    referenceImage: { bytesBase64Encoded: avatarBase64 },
+                    subjectImageConfig: { subjectType: 'SUBJECT_TYPE_PERSON' },
+                }];
+                model = 'imagen-3.0-capability-001';
+                console.log(`[ImageGen] 레퍼런스 이미지 포함: ${character.avatar}`);
+            } catch (e) {
+                console.warn(`[ImageGen] 레퍼런스 이미지 로드 실패:`, e.message);
+            }
+        }
+
         const url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:predict?key=${apiKey}`;
 
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                instances: [{ prompt: scenePrompt }],
+                instances: [instance],
                 parameters: {
                     sampleCount: 1,
                     aspectRatio: '3:4',
