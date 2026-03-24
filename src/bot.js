@@ -149,6 +149,7 @@ const Bot = {
 
             if (!response) {
                 console.error('[Bot] AI 응답 없음');
+                await message.reply('⚠️ 응답을 생성하지 못했어요.').catch(() => {});
                 return;
             }
 
@@ -195,6 +196,10 @@ const Bot = {
 
         } catch (e) {
             console.error(`[Bot] 메시지 처리 오류:`, e);
+            const errMsg = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED')
+                ? '⚠️ API 쿼터 초과! 잠시 후 다시 시도해주세요.'
+                : `⚠️ 오류 발생: ${e.message?.substring(0, 100)}`;
+            await message.reply(errMsg).catch(() => {});
         }
     },
 
