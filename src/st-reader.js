@@ -224,15 +224,21 @@ const STReader = {
 
     // --- CHARM 메모리 ---
     getCharmMemory(charId) {
+        // CHARM과 동일한 sanitize: 영숫자, _, - 외 전부 _로 치환
+        const safe = String(charId).replace(/[^a-zA-Z0-9_\-]/g, '_');
+        const fileName = `charm-memory-${safe}.json`;
+
         const fileDirs = [
+            path.join(stPath, 'data', 'default-user', 'user', 'files'),
             path.join(stPath, 'data', 'default-user', 'files'),
             path.join(stPath, 'public', 'user', 'files'),
         ];
 
         for (const dir of fileDirs) {
-            const filePath = path.join(dir, `charm-memory-${charId}.json`);
+            const filePath = path.join(dir, fileName);
             if (fs.existsSync(filePath)) {
                 try {
+                    console.log(`[ST-Reader] CHARM 메모리 로드: ${fileName}`);
                     return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
                 } catch (e) {
                     console.error(`[ST-Reader] CHARM 메모리 읽기 실패:`, e.message);

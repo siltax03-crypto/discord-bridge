@@ -91,40 +91,39 @@ ${langInstruction}
     },
 
     /**
-     * CHARM 메모리에서 주요 기억 추출 (간소화 버전)
-     * 중요도 높은 기억 + 최근 기억 위주
+     * CHARM 메모리에서 주요 기억 추출
+     * 실제 구조: { memories: [{text, category, importance, strength, pinned, ...}], timeline: [...] }
      */
     _buildCharmInjection(charmData) {
-        const memories = [];
+        const lines = [];
 
-        // Tier 3: 감정 카테고리 기억
-        if (charmData.tier3) {
-            const categories = ['heart', 'habit', 'promise', 'surprise', 'wound', 'first', 'inside'];
-            for (const cat of categories) {
-                const items = charmData.tier3[cat] || [];
-                const active = items
-                    .filter(m => m.strength > 0.3 || m.pinned)
-                    .sort((a, b) => (b.importance || 0) - (a.importance || 0))
-                    .slice(0, 3);
-                for (const m of active) {
-                    memories.push(m.text || m.content || '');
-                }
+        // 메모리: pinned 우선, 그 다음 중요도·strength 순
+        if (charmData.memories?.length) {
+            const active = charmData.memories
+                .filter(m => m.strength > 0.3 || m.pinned)
+                .sort((a, b) => {
+                    if (a.pinned !== b.pinned) return b.pinned ? 1 : -1;
+                    return (b.importance || 0) - (a.importance || 0);
+                })
+                .slice(0, 20);
+            for (const m of active) {
+                if (m.text?.trim()) lines.push(m.text.trim());
             }
         }
 
-        // Tier 2: 타임라인 (최근 항목)
-        if (charmData.tier2?.timeline) {
-            const recent = charmData.tier2.timeline
+        // 타임라인: 최근 이벤트
+        if (charmData.timeline?.length) {
+            const recent = charmData.timeline
                 .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
                 .slice(0, 5);
-            for (const m of recent) {
-                memories.push(m.text || m.content || m.summary || '');
+            for (const t of recent) {
+                const text = t.text || t.summary || t.content || '';
+                if (text.trim()) lines.push(text.trim());
             }
         }
 
-        const valid = memories.filter(m => m.trim());
-        if (valid.length === 0) return null;
-        return valid.join('\n');
+        if (lines.length === 0) return null;
+        return lines.join('\n');
     },
 };
 

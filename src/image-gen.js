@@ -55,7 +55,8 @@ const ImageGen = {
 
     // --- NovelAI 이미지 생성 ---
     async _generateNovelAI(prompt) {
-        const apiKey = STReader.getApiKey('novel');
+        const apiKey = this._getSecretValue('api_key_novel');
+        if (!apiKey) throw new Error('NovelAI API 키를 찾을 수 없습니다');
 
         const body = {
             input: prompt,
@@ -93,13 +94,8 @@ const ImageGen = {
     // --- NanoGPT 이미지 생성 ---
     async _generateNanoGPT(prompt) {
         // NanoGPT API — ST secrets에서 키 가져오기
-        let apiKey;
-        try {
-            const secrets = STReader.getSecrets();
-            apiKey = secrets.api_key_nanogpt || secrets.nanogpt_key || secrets.api_key_makersuite;
-        } catch {
-            throw new Error('NanoGPT API 키를 찾을 수 없습니다');
-        }
+        const apiKey = this._getSecretValue('api_key_nanogpt') || this._getSecretValue('api_key_makersuite');
+        if (!apiKey) throw new Error('NanoGPT API 키를 찾을 수 없습니다');
 
         // NanoGPT 이미지 생성 엔드포인트
         const body = {
@@ -205,6 +201,21 @@ const ImageGen = {
         }
 
         return tags.length > 0 ? `1girl, ${tags.join(', ')}` : '';
+    },
+
+    // secrets.json에서 active한 키 값 추출 (배열 구조 대응)
+    _getSecretValue(secretKey) {
+        try {
+            const secrets = STReader.getSecrets();
+            const val = secrets[secretKey];
+            if (Array.isArray(val)) {
+                const active = val.find(e => e.active) || val[0];
+                return active?.value || null;
+            }
+            return typeof val === 'string' ? val : null;
+        } catch {
+            return null;
+        }
     },
 };
 
