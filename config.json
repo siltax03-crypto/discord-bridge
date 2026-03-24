@@ -1,0 +1,13 @@
+{
+  "stPath": "/home/ubuntu/SillyTavern",
+  "stApiUrl": "http://localhost:25214",
+  "discordToken": "여기에_디스코드_봇_토큰",
+  "connectionProfileId": "",
+  "maxHistoryMessages": 50,
+  "maxResponseTokens": 1000,
+  "language": "ko",
+  "channels": {
+    "채널ID_1": { "character": "Snow" },
+    "채널ID_2": { "character": "Blaise" }
+  }
+}
