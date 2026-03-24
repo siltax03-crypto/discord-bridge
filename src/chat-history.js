@@ -68,6 +68,18 @@ const ChatHistory = {
         }));
     },
 
+    removeLastUserMessage(channelId) {
+        const data = this._load(channelId);
+        for (let i = data.messages.length - 1; i >= 0; i--) {
+            if (data.messages[i].role === 'user') {
+                data.messages.splice(i, 1);
+                this._save(channelId, data);
+                return true;
+            }
+        }
+        return false;
+    },
+
     clear(channelId) {
         const data = { channelId, messages: [] };
         this._save(channelId, data);

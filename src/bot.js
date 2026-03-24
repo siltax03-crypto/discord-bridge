@@ -30,6 +30,7 @@ const Bot = {
         });
 
         client.on(Events.MessageCreate, (message) => this._onMessage(message));
+        client.on(Events.MessageDelete, (message) => this._onMessageDelete(message));
 
         await client.login(config.discordToken);
     },
@@ -149,7 +150,7 @@ const Bot = {
 
             if (!response) {
                 console.error('[Bot] AI 응답 없음');
-                await message.reply('⚠️ 응답을 생성하지 못했어요.').catch(() => {});
+                this._tempReply(message, '⚠️ 응답을 생성하지 못했어요.');
                 return;
             }
 
@@ -199,7 +200,28 @@ const Bot = {
             const errMsg = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED')
                 ? '⚠️ API 쿼터 초과! 잠시 후 다시 시도해주세요.'
                 : `⚠️ 오류 발생: ${e.message?.substring(0, 100)}`;
-            await message.reply(errMsg).catch(() => {});
+            this._tempReply(message, errMsg);
+        }
+    },
+
+    // --- 자동 삭제 에러 메시지 ---
+    async _tempReply(message, text) {
+        try {
+            const reply = await message.reply(text);
+            setTimeout(() => reply.delete().catch(() => {}), 10_000);
+        } catch (e) {
+            console.error('[Bot] 임시 메시지 전송 실패:', e.message);
+        }
+    },
+
+    // --- 메시지 삭제 동기화 ---
+    async _onMessageDelete(message) {
+        if (message.author?.bot) return;
+        if (!config.channels[message.channelId]) return;
+
+        const removed = ChatHistory.removeLastUserMessage(message.channelId);
+        if (removed) {
+            console.log(`[Bot] 메시지 삭제 동기화: 채널 ${message.channelId}`);
         }
     },
 
