@@ -154,7 +154,7 @@ const Bot = {
 
             // [SEND_PHOTO: ...] 태그 감지 및 처리
             let photoPrompt = null;
-            const photoMatch = response.match(/\[SEND_PHOTO:\s*(.+?)\]\s*$/);
+            const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
             if (photoMatch) {
                 photoPrompt = photoMatch[1].trim();
                 response = response.replace(photoMatch[0], '').trim();
