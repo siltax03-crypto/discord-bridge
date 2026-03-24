@@ -68,15 +68,21 @@ const STReader = {
     },
 
     // secret-id → 실제 API 키 조회
+    // secrets.json 구조: api_key_vertexai: [{id, value, label, active}, ...]
     _getSecretByID(secretId) {
         if (!secretId) return null;
         const secrets = this.getSecrets();
-        // secrets.json에서 secret-id로 직접 조회
-        if (secrets[secretId]) return secrets[secretId];
-        // 또는 api_key_* 필드에서 검색
-        for (const [key, value] of Object.entries(secrets)) {
-            if (key === secretId) return value;
+
+        // api_key_* 배열 필드에서 id로 매칭하여 value 추출
+        for (const [, val] of Object.entries(secrets)) {
+            if (Array.isArray(val)) {
+                const entry = val.find(e => e.id === secretId);
+                if (entry) return entry.value;
+            }
         }
+
+        // 단순 문자열 폴백 (구버전 호환)
+        if (typeof secrets[secretId] === 'string') return secrets[secretId];
         return null;
     },
 

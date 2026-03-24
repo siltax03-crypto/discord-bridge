@@ -1,5 +1,4 @@
 import { Client, GatewayIntentBits, Events, AttachmentBuilder } from 'discord.js';
-import fs from 'fs';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
@@ -172,18 +171,10 @@ const Bot = {
                     username: charName,
                 };
 
-                // 캐릭터 아바타 URL 설정
-                const avatarPath = STReader.getCharacterAvatarPath(character);
-                if (avatarPath) {
-                    // 로컬 파일을 base64 data URL로 변환
-                    try {
-                        const avatarBuffer = fs.readFileSync(avatarPath);
-                        const ext = avatarPath.split('.').pop()?.toLowerCase() || 'png';
-                        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png';
-                        sendOptions.avatarURL = `data:${mime};base64,${avatarBuffer.toString('base64')}`;
-                    } catch {
-                        // 아바타 실패해도 메시지는 보냄
-                    }
+                // 캐릭터 아바타 URL 설정 (ST 서버 경로 사용)
+                if (character.avatar) {
+                    const stApiUrl = config.stApiUrl || 'http://localhost:8000';
+                    sendOptions.avatarURL = `${stApiUrl}/characters/${encodeURIComponent(character.avatar)}`;
                 }
 
                 // 이미지 생성 + 첨부
