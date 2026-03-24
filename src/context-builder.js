@@ -13,18 +13,23 @@ const ContextBuilder = {
         // --- 캐릭터 기본 정보 ---
         if (character.description) {
             parts.push(`[Character Description]\n${character.description}`);
+            console.log(`[Context] ✓ Description 로드 (${character.description.length}자)`);
         }
         if (character.personality) {
             parts.push(`[Character Personality]\n${character.personality}`);
+            console.log(`[Context] ✓ Personality 로드`);
         }
         if (character.scenario) {
             parts.push(`[Scenario]\n${character.scenario}`);
+            console.log(`[Context] ✓ Scenario 로드`);
         }
         if (character.system_prompt || character.data?.system_prompt) {
             parts.push(`[Character System Prompt]\n${character.system_prompt || character.data.system_prompt}`);
+            console.log(`[Context] ✓ System Prompt 로드`);
         }
         if (character.mes_example || character.data?.mes_example) {
             parts.push(`[Example Dialogue]\n${character.mes_example || character.data.mes_example}`);
+            console.log(`[Context] ✓ Example Dialogue 로드`);
         }
 
         // --- 유저 페르소나 ---
@@ -32,6 +37,7 @@ const ContextBuilder = {
             const persona = STReader.getPersonaDescription();
             if (persona) {
                 parts.push(`[User Persona - ${userName}]\n${persona}`);
+                console.log(`[Context] ✓ Persona 로드`);
             }
         } catch (e) {
             // 페르소나 없으면 스킵
@@ -43,12 +49,14 @@ const ContextBuilder = {
         const charBookEntries = STReader.getCharacterBook(character);
         if (charBookEntries.length > 0) {
             lorebookParts.push(charBookEntries.map(e => e.content).join('\n---\n'));
+            console.log(`[Context] ✓ Character Book 로드 (${charBookEntries.length}개 항목)`);
         }
 
         const worldName = STReader.getCharacterWorldName(character);
         const worldEntries = STReader.getWorldInfo(worldName);
         if (worldEntries.length > 0) {
             lorebookParts.push(worldEntries.map(e => e.content).join('\n---\n'));
+            console.log(`[Context] ✓ World Info "${worldName}" 로드 (${worldEntries.length}개 항목)`);
         }
 
         if (lorebookParts.length > 0) {
@@ -63,6 +71,7 @@ const ContextBuilder = {
                 const charmBlock = this._buildCharmInjection(charmData);
                 if (charmBlock) {
                     parts.push(`[Character Memories]\n${charmBlock}`);
+                    console.log(`[Context] ✓ CHARM 메모리 주입 (${charmData.memories?.length || 0}개 기억)`);
                 }
             }
         } catch (e) {
