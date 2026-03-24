@@ -53,7 +53,7 @@ const ImageGen = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{ parts }],
+                contents: [{ role: 'user', parts }],
                 generationConfig: {
                     responseModalities: ['IMAGE'],
                     temperature: 1,
