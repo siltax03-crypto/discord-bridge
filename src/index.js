@@ -10,6 +10,15 @@ import ImageGen from './image-gen.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// --- 로그에 타임스탬프 추가 ---
+const _origLog = console.log;
+const _origErr = console.error;
+const _origWarn = console.warn;
+const _ts = () => new Date().toLocaleTimeString('ko-KR', { hour12: false });
+console.log = (...args) => _origLog(`[${_ts()}]`, ...args);
+console.error = (...args) => _origErr(`[${_ts()}]`, ...args);
+console.warn = (...args) => _origWarn(`[${_ts()}]`, ...args);
+
 // --- config.json 로드 ---
 const configPath = path.join(__dirname, '..', 'config.json');
 if (!fs.existsSync(configPath)) {
