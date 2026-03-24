@@ -59,10 +59,14 @@ const AIClient = {
             body.system_instruction = { parts: [{ text: systemInstruction }] };
         }
 
-        // API 키로 AI Studio 엔드포인트 사용
+        // Vertex AI Express 엔드포인트 (API 키 인증)
         const apiKey = profile.apiKey;
-        if (!apiKey) throw new Error('Gemini API 키가 없습니다');
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        if (!apiKey) throw new Error('Vertex AI API 키가 없습니다');
+        const region = profile['api-url'] || 'us-central1';
+        const baseUrl = region === 'global'
+            ? 'https://aiplatform.googleapis.com'
+            : `https://${region}-aiplatform.googleapis.com`;
+        const url = `${baseUrl}/v1/publishers/google/models/${modelName}:generateContent?key=${apiKey}`;
 
         const resp = await fetch(url, {
             method: 'POST',

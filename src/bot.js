@@ -171,11 +171,8 @@ const Bot = {
                     username: charName,
                 };
 
-                // 캐릭터 아바타 URL 설정 (ST 서버 경로 사용)
-                if (character.avatar) {
-                    const stApiUrl = config.stApiUrl || 'http://localhost:8000';
-                    sendOptions.avatarURL = `${stApiUrl}/characters/${encodeURIComponent(character.avatar)}`;
-                }
+                // 아바타는 웹훅 생성 시 설정된 것을 사용
+                // (Discord는 공개 URL만 받으므로 localhost/base64 불가)
 
                 // 이미지 생성 + 첨부
                 if (photoPrompt) {
