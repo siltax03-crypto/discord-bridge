@@ -7,6 +7,8 @@ import AIClient from './ai-client.js';
 import ChatHistory from './chat-history.js';
 import Bot from './bot.js';
 import ImageGen from './image-gen.js';
+import Scheduler from './scheduler.js';
+import Reminders from './reminders.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,11 +23,27 @@ console.warn = (...args) => _origWarn(`[${_ts()}]`, ...args);
 
 // --- config.json 로드 ---
 const configPath = path.join(__dirname, '..', 'config.json');
+const examplePath = path.join(__dirname, '..', 'config.example.json');
 if (!fs.existsSync(configPath)) {
-    console.error('config.json을 찾을 수 없습니다.');
-    process.exit(1);
+    // 최초 실행/업데이트 직후: 예시 파일로부터 생성
+    if (fs.existsSync(examplePath)) {
+        fs.copyFileSync(examplePath, configPath);
+        console.log('config.json이 없어 config.example.json으로 생성했습니다. ST 설정 화면에서 값을 채우세요.');
+    } else {
+        console.error('config.json을 찾을 수 없습니다.');
+        process.exit(1);
+    }
 }
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+// --- stPath 자동 보정 ---
+// 설정이 없거나 경로가 존재하지 않으면, 형제 폴더의 SillyTavern을 자동으로 찾는다.
+// (discord-bridge와 SillyTavern이 같은 부모 폴더 안에 나란히 있다고 가정)
+const siblingST = path.join(__dirname, '..', '..', 'SillyTavern');
+if ((!config.stPath || !fs.existsSync(config.stPath)) && fs.existsSync(siblingST)) {
+    config.stPath = siblingST;
+    console.log(`[Init] stPath 자동 설정 (형제 폴더): ${siblingST}`);
+}
 
 // --- 유효성 검사 ---
 if (!config.stPath) {
@@ -67,6 +85,22 @@ try {
 
     // --- 봇 시작 ---
     await Bot.start(config);
+
+    // --- 선톡 스케줄러 + 리마인더 ---
+    const sendProactive = (channelId, note) => Bot.sendProactive(channelId, note);
+    Scheduler.init(config, sendProactive);
+    Reminders.init(config, sendProactive);
+    console.log('[Init] 스케줄러/리마인더 설정 완료');
+
+    // --- heartbeat: ST 확장 설정 UI에서 봇 상태 표시용 ---
+    const statusPath = path.join(__dirname, '..', 'data', 'bot-status.json');
+    const writeHeartbeat = () => {
+        try {
+            fs.writeFileSync(statusPath, JSON.stringify({ ts: Date.now(), pid: process.pid }));
+        } catch { /* 무시 */ }
+    };
+    writeHeartbeat();
+    setInterval(writeHeartbeat, 30_000).unref();
 
 } catch (e) {
     console.error('[Init] 시작 실패:', e.message);

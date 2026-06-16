@@ -1,9 +1,13 @@
-import { Client, GatewayIntentBits, Events, AttachmentBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder } from 'discord.js';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
 import ChatHistory from './chat-history.js';
 import ImageGen from './image-gen.js';
+import Modes from './modes.js';
+import Reminders from './reminders.js';
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let client = null;
 let config = {};
@@ -24,15 +28,68 @@ const Bot = {
             ],
         });
 
-        client.once(Events.ClientReady, (c) => {
+        client.once(Events.ClientReady, async (c) => {
             console.log(`[Bot] 로그인 완료: ${c.user.tag}`);
             console.log(`[Bot] 매핑된 채널: ${Object.keys(config.channels).length}개`);
+            await this._registerCommands();
         });
 
         client.on(Events.MessageCreate, (message) => this._onMessage(message));
         client.on(Events.MessageDelete, (message) => this._onMessageDelete(message));
+        client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction));
 
         await client.login(config.discordToken);
+    },
+
+    // --- 슬래시 명령어 등록 (서버별로 즉시 반영) ---
+    async _registerCommands() {
+        const commands = [
+            new SlashCommandBuilder()
+                .setName('mode')
+                .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
+                .addStringOption((o) =>
+                    o
+                        .setName('type')
+                        .setDescription('chat = 디스코드 채팅, rp = 문자 롤플')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: '채팅 (chat)', value: 'chat' },
+                            { name: '롤플 (rp)', value: 'rp' },
+                        ),
+                ),
+            new SlashCommandBuilder()
+                .setName('clear')
+                .setDescription('이 채널의 대화 기록 초기화'),
+        ].map((c) => c.toJSON());
+
+        try {
+            for (const guild of client.guilds.cache.values()) {
+                await guild.commands.set(commands);
+            }
+            console.log(`[Bot] 슬래시 명령어 등록: ${client.guilds.cache.size}개 서버`);
+        } catch (e) {
+            console.error('[Bot] 슬래시 명령어 등록 실패:', e.message);
+        }
+    },
+
+    // --- 슬래시 명령어 처리 ---
+    async _onInteraction(interaction) {
+        if (!interaction.isChatInputCommand()) return;
+        if (!config.channels[interaction.channelId]) {
+            return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ephemeral: true });
+        }
+
+        if (interaction.commandName === 'mode') {
+            const type = interaction.options.getString('type');
+            Modes.set(interaction.channelId, type);
+            const label = type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드';
+            return interaction.reply({ content: `${label}로 전환했어요.`, ephemeral: true });
+        }
+
+        if (interaction.commandName === 'clear') {
+            ChatHistory.clear(interaction.channelId);
+            return interaction.reply({ content: '🧹 대화 기록을 초기화했어요.', ephemeral: true });
+        }
     },
 
     // --- 채널별 웹훅 가져오기/생성 ---
@@ -129,6 +186,9 @@ const Bot = {
             const systemPrompt = ContextBuilder.build(character, {
                 userName,
                 language: config.language || 'ko',
+                mode: Modes.get(message.channelId),
+                chatSlang: config.chatSlang !== false,
+                timezone: config.timezone || 'Asia/Seoul',
             });
 
             // 대화 기록 조립
@@ -162,38 +222,22 @@ const Bot = {
                 response = response.replace(photoMatch[0], '').trim();
             }
 
+            // [REMIND: 시각 | 메시지] 태그 감지 → 리마인더 등록 (여러 개 가능)
+            response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
+                const fireAt = Reminders.parseToFireAt(timeStr);
+                if (fireAt) {
+                    Reminders.add(message.channelId, fireAt, text.trim());
+                } else {
+                    console.warn(`[Bot] 리마인더 시각 해석 실패/과거: "${timeStr.trim()}"`);
+                }
+                return ''; // 태그는 메시지에서 제거
+            }).trim();
+
             // 응답 저장
             ChatHistory.addMessage(message.channelId, 'assistant', response, charName);
 
-            // 웹훅으로 응답 전송
-            const webhook = await this._getWebhook(message.channel, character);
-            if (webhook) {
-                const sendOptions = {
-                    content: response,
-                    username: charName,
-                };
-
-                // 아바타는 웹훅 생성 시 설정된 것을 사용
-                // (Discord는 공개 URL만 받으므로 localhost/base64 불가)
-
-                // 이미지 생성 + 첨부
-                if (photoPrompt) {
-                    try {
-                        const imageBuffer = await ImageGen.generate(photoPrompt, character);
-                        if (imageBuffer) {
-                            const attachment = new AttachmentBuilder(imageBuffer, { name: 'photo.png' });
-                            sendOptions.files = [attachment];
-                        }
-                    } catch (e) {
-                        console.error('[Bot] 이미지 생성 실패:', e.message);
-                    }
-                }
-
-                await webhook.send(sendOptions);
-            } else {
-                // 웹훅 실패 시 일반 메시지로 폴백
-                await message.channel.send(`**${charName}**: ${response}`);
-            }
+            // 전송 (빈 줄 기준으로 여러 메시지로 분할)
+            await this._sendResponse(message.channel, character, response, photoPrompt);
 
         } catch (e) {
             console.error(`[Bot] 메시지 처리 오류:`, e);
@@ -201,6 +245,98 @@ const Bot = {
                 ? '⚠️ API 쿼터 초과! 잠시 후 다시 시도해주세요.'
                 : `⚠️ 오류 발생: ${e.message?.substring(0, 100)}`;
             this._tempReply(message, errMsg);
+        }
+    },
+
+    // --- 응답 전송: 빈 줄 기준으로 여러 메시지로 분할 + 이미지 첨부 ---
+    async _sendResponse(channel, character, response, photoPrompt) {
+        const charName = character.name || 'Character';
+        const webhook = await this._getWebhook(channel, character);
+
+        // 빈 줄(\n\n) 기준 분할. splitMessages가 false면 통째로.
+        let parts =
+            config.splitMessages === false
+                ? [response]
+                : response.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+        if (parts.length === 0) parts = [response];
+
+        // 이미지 첨부 준비 (마지막 메시지에 붙임)
+        let attachment = null;
+        if (photoPrompt) {
+            try {
+                const imageBuffer = await ImageGen.generate(photoPrompt, character);
+                if (imageBuffer) {
+                    attachment = new AttachmentBuilder(imageBuffer, { name: 'photo.png' });
+                }
+            } catch (e) {
+                console.error('[Bot] 이미지 생성 실패:', e.message);
+            }
+        }
+
+        for (let i = 0; i < parts.length; i++) {
+            const isLast = i === parts.length - 1;
+            const opts = { content: parts[i], username: charName };
+            if (isLast && attachment) opts.files = [attachment];
+
+            if (webhook) {
+                await webhook.send(opts);
+            } else {
+                await channel.send(`**${charName}**: ${parts[i]}`);
+            }
+
+            // 다음 메시지 전 타이핑 + 약간의 텀 (실채팅 느낌)
+            if (!isLast) {
+                try {
+                    await channel.sendTyping();
+                } catch {
+                    /* 무시 */
+                }
+                await delay(800 + Math.min(parts[i].length * 20, 2500));
+            }
+        }
+    },
+
+    // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
+    async sendProactive(channelId, note = '') {
+        const channel = await client.channels.fetch(channelId).catch(() => null);
+        if (!channel) return;
+        const character = this._getCharacter(channelId);
+        if (!character) return;
+        const charName = character.name || 'Character';
+
+        try {
+            const systemPrompt = ContextBuilder.build(character, {
+                userName: 'User',
+                language: config.language || 'ko',
+                mode: Modes.get(channelId),
+                chatSlang: config.chatSlang !== false,
+                timezone: config.timezone || 'Asia/Seoul',
+                proactive: true,
+                proactiveNote: note,
+            });
+
+            const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                ...history,
+                { role: 'user', content: '(지금 네가 먼저 말을 거는 상황이야. 짧게 메시지를 보내.)' },
+            ];
+
+            let response = await AIClient.sendMessage(messages);
+            if (!response) return;
+
+            let photoPrompt = null;
+            const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
+            if (photoMatch) {
+                photoPrompt = photoMatch[1].trim();
+                response = response.replace(photoMatch[0], '').trim();
+            }
+
+            ChatHistory.addMessage(channelId, 'assistant', response, charName);
+            await this._sendResponse(channel, character, response, photoPrompt);
+            console.log(`[Bot] 선톡 전송: 채널 ${channelId}`);
+        } catch (e) {
+            console.error('[Bot] 선톡 실패:', e.message);
         }
     },
 

@@ -1,0 +1,256 @@
+/**
+ * SillyTavern Server Plugin — discord-bridge-config
+ *
+ * discord-bridge의 config.json을 ST UI(확장)에서 편집할 수 있게 해주는 서버 플러그인.
+ * 브라우저(확장)는 서버 파일을 직접 못 쓰므로, 이 플러그인이 파일 I/O와 목록 조회를 대신한다.
+ *
+ * 마운트 경로: /api/plugins/discord-bridge-config
+ *
+ * 환경변수:
+ *   DISCORD_BRIDGE_PATH  — discord-bridge 폴더 경로 (기본: /home/ubuntu/discord-bridge)
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
+const express = require('express');
+
+const jsonParser = express.json({ limit: '4mb' });
+
+// --- 경로 계산 ---
+// 플러그인은 ST 루트에서 실행된다 (./start.sh 기준 cwd = ST 루트)
+const ST_ROOT = process.cwd();
+
+// discord-bridge는 SillyTavern과 형제 폴더라고 가정 (부모 폴더 안의 discord-bridge).
+// 위치가 다르면 환경변수 DISCORD_BRIDGE_PATH로 지정.
+const BRIDGE_PATH = process.env.DISCORD_BRIDGE_PATH || path.join(ST_ROOT, '..', 'discord-bridge');
+const CONFIG_PATH = path.join(BRIDGE_PATH, 'config.json');
+const STATUS_PATH = path.join(BRIDGE_PATH, 'data', 'bot-status.json');
+const SETTINGS_CANDIDATES = [
+    path.join(ST_ROOT, 'data', 'default-user', 'settings.json'),
+    path.join(ST_ROOT, 'settings.json'),
+];
+const CHAR_DIR_CANDIDATES = [
+    path.join(ST_ROOT, 'data', 'default-user', 'characters'),
+    path.join(ST_ROOT, 'public', 'characters'),
+];
+
+const DISCORD_API = 'https://discord.com/api/v10';
+
+// --- 유틸 ---
+function readJson(p, fallback = null) {
+    try {
+        if (!fs.existsSync(p)) return fallback;
+        return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    } catch {
+        return fallback;
+    }
+}
+
+function firstExisting(candidates) {
+    for (const p of candidates) if (fs.existsSync(p)) return p;
+    return null;
+}
+
+// PNG tEXt 'chara' 청크에서 캐릭터 카드 JSON 추출 (st-reader.js와 동일 로직)
+function readPngCard(filePath) {
+    try {
+        const buf = fs.readFileSync(filePath);
+        if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) return null;
+        let offset = 8;
+        while (offset + 8 < buf.length) {
+            const length = buf.readUInt32BE(offset);
+            const type = buf.toString('ascii', offset + 4, offset + 8);
+            const dataStart = offset + 8;
+            const dataEnd = dataStart + length;
+            if (type === 'tEXt' && dataEnd <= buf.length) {
+                const chunk = buf.subarray(dataStart, dataEnd);
+                const nullIdx = chunk.indexOf(0);
+                if (nullIdx !== -1 && chunk.toString('ascii', 0, nullIdx) === 'chara') {
+                    const b64 = chunk.toString('ascii', nullIdx + 1);
+                    return JSON.parse(Buffer.from(b64, 'base64').toString('utf-8'));
+                }
+            }
+            offset = dataEnd + 4;
+        }
+    } catch {
+        /* skip broken cards */
+    }
+    return null;
+}
+
+// --- 라우트 핸들러 ---
+
+// 봇 config.json 읽기
+function getConfig(req, res) {
+    const config = readJson(CONFIG_PATH, null);
+    if (!config) {
+        return res.status(404).json({ error: `config.json을 찾을 수 없습니다: ${CONFIG_PATH}` });
+    }
+    // 토큰은 마스킹해서 보냄 (있는지 여부만 알 수 있게)
+    const hasToken = !!(config.discordToken && !config.discordToken.includes('여기에'));
+    res.json({ config: { ...config, discordToken: hasToken ? '__SAVED__' : '' }, hasToken, configPath: CONFIG_PATH });
+}
+
+// 봇 config.json 쓰기
+function postConfig(req, res) {
+    const incoming = req.body || {};
+    const current = readJson(CONFIG_PATH, {});
+
+    // 토큰이 '__SAVED__'면 기존 값 유지 (마스킹된 채로 다시 저장되는 것 방지)
+    if (incoming.discordToken === '__SAVED__' || incoming.discordToken === undefined) {
+        incoming.discordToken = current.discordToken || '';
+    }
+
+    const merged = { ...current, ...incoming };
+
+    try {
+        if (!fs.existsSync(path.dirname(CONFIG_PATH))) {
+            return res.status(500).json({ error: `폴더 없음: ${path.dirname(CONFIG_PATH)}` });
+        }
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), 'utf-8');
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+}
+
+// ST 커넥션 프로필 목록
+function getProfiles(req, res) {
+    const settingsPath = firstExisting(SETTINGS_CANDIDATES);
+    const settings = readJson(settingsPath, {});
+    const cm = settings.extension_settings?.connectionManager;
+    const profiles = (cm?.profiles || []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        api: p.api || '',
+        model: p.model || '',
+        selected: p.id === cm?.selectedProfile,
+    }));
+    res.json({ profiles });
+}
+
+// ST 캐릭터 이름 목록
+function getCharacters(req, res) {
+    const dir = firstExisting(CHAR_DIR_CANDIDATES);
+    if (!dir) return res.json({ characters: [] });
+    const names = new Set();
+    for (const file of fs.readdirSync(dir)) {
+        if (file.endsWith('.png')) {
+            const card = readPngCard(path.join(dir, file));
+            const name = card?.name || card?.data?.name;
+            if (name) names.add(name);
+        } else if (file.endsWith('.json')) {
+            const card = readJson(path.join(dir, file), null);
+            const name = card?.name || card?.data?.name;
+            if (name) names.add(name);
+        }
+    }
+    res.json({ characters: [...names].sort() });
+}
+
+// 디스코드 채널 목록 (봇이 들어가 있는 길드의 텍스트 채널)
+async function getChannels(req, res) {
+    const config = readJson(CONFIG_PATH, {});
+    const token = config.discordToken;
+    if (!token || token.includes('여기에')) {
+        return res.json({ channels: [], error: '디스코드 토큰이 설정되지 않았습니다.' });
+    }
+    const headers = { Authorization: `Bot ${token}` };
+    try {
+        const guildsResp = await fetch(`${DISCORD_API}/users/@me/guilds`, { headers });
+        if (!guildsResp.ok) {
+            return res.json({ channels: [], error: `디스코드 API 오류 (${guildsResp.status}). 토큰 확인 필요.` });
+        }
+        const guilds = await guildsResp.json();
+        const channels = [];
+        for (const g of guilds) {
+            const chResp = await fetch(`${DISCORD_API}/guilds/${g.id}/channels`, { headers });
+            if (!chResp.ok) continue;
+            const chs = await chResp.json();
+            for (const c of chs) {
+                if (c.type === 0) {
+                    // 0 = GUILD_TEXT
+                    channels.push({ id: c.id, name: c.name, guild: g.name });
+                }
+            }
+        }
+        res.json({ channels });
+    } catch (e) {
+        res.json({ channels: [], error: e.message });
+    }
+}
+
+// 봇 실행 상태 (heartbeat 파일 기반)
+function getStatus(req, res) {
+    const status = readJson(STATUS_PATH, null);
+    if (!status?.ts) return res.json({ running: false, reason: 'heartbeat 없음' });
+    const ageSec = (Date.now() - status.ts) / 1000;
+    res.json({ running: ageSec < 90, ageSec: Math.round(ageSec), ts: status.ts });
+}
+
+// 봇 재시작 (pm2)
+function postRestart(req, res) {
+    const name = process.env.PM2_NAME || 'discord-bridge';
+    exec(`pm2 restart ${name}`, { timeout: 15000 }, (err, stdout, stderr) => {
+        if (err) {
+            return res.status(500).json({ error: (stderr || err.message || '').trim() || 'pm2 restart 실패' });
+        }
+        res.json({ ok: true, output: (stdout || '').trim() });
+    });
+}
+
+// 업데이트: git pull → npm install → 플러그인/확장 재배포 → 봇 재시작
+function postUpdate(req, res) {
+    const name = process.env.PM2_NAME || 'discord-bridge';
+    const pluginDest = path.join(ST_ROOT, 'plugins', 'discord-bridge-config.js');
+    const extDir =
+        firstExisting([
+            path.join(ST_ROOT, 'data', 'default-user', 'extensions', 'discord-bridge'),
+            path.join(ST_ROOT, 'public', 'scripts', 'extensions', 'third-party', 'discord-bridge'),
+        ]) || path.join(ST_ROOT, 'data', 'default-user', 'extensions', 'discord-bridge');
+
+    const cmd = [
+        `cd "${BRIDGE_PATH}"`,
+        'git pull',
+        'npm install --no-audit --no-fund',
+        `cp st-plugin/index.js "${pluginDest}"`,
+        `mkdir -p "${extDir}"`,
+        `cp st-extension/manifest.json st-extension/index.js st-extension/style.css "${extDir}/"`,
+        `pm2 restart ${name}`,
+    ].join(' && ');
+
+    exec(cmd, { timeout: 120000, shell: '/bin/bash' }, (err, stdout, stderr) => {
+        if (err) {
+            return res.status(500).json({ error: (stderr || err.message || '').trim(), output: (stdout || '').trim() });
+        }
+        res.json({ ok: true, output: (stdout || '').trim() });
+    });
+}
+
+// --- 플러그인 진입점 ---
+async function init(router) {
+    router.get('/config', getConfig);
+    router.post('/config', jsonParser, postConfig);
+    router.get('/profiles', getProfiles);
+    router.get('/characters', getCharacters);
+    router.get('/channels', getChannels);
+    router.get('/status', getStatus);
+    router.post('/restart', jsonParser, postRestart);
+    router.post('/update', jsonParser, postUpdate);
+    console.log('[discord-bridge-config] 플러그인 로드됨. bridge 경로:', BRIDGE_PATH);
+}
+
+async function exit() {
+    /* nothing to clean up */
+}
+
+module.exports = {
+    init,
+    exit,
+    info: {
+        id: 'discord-bridge-config',
+        name: 'Discord Bridge Config',
+        description: 'discord-bridge의 config.json을 ST UI에서 편집',
+    },
+};

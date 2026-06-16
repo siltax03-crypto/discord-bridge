@@ -6,7 +6,15 @@ const ContextBuilder = {
      * ST 캐릭터 데이터 + 로어북 + 페르소나 → 시스템 프롬프트 조립
      */
     build(character, options = {}) {
-        const { userName = 'User', language = 'ko' } = options;
+        const {
+            userName = 'User',
+            language = 'ko',
+            mode = 'chat',
+            chatSlang = true,
+            proactive = false,
+            proactiveNote = '',
+            timezone = 'Asia/Seoul',
+        } = options;
         const charName = character.name || character.data?.name || 'Character';
         const parts = [];
 
@@ -86,15 +94,46 @@ const ContextBuilder = {
             ? '- MUST respond in Korean (한국어).'
             : '- MUST respond in English.';
 
-        parts.push(`[HIGHEST PRIORITY SYSTEM INSTRUCTION]
+        const slangInstruction = chatSlang
+            ? '- You may use emoji, ㅋㅋ, ㅎㅎ, etc. naturally.'
+            : "- Do NOT use ㅋㅋ/ㅎㅎ or excessive emoji. Speak in the character's own voice.";
+
+        const photoInstruction =
+            '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
+
+        // 현재 시각(tz 벽시계) + 리마인더 인식 지시
+        const nowStr = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: timezone, dateStyle: 'short', timeStyle: 'short', weekday: 'long',
+        }).format(new Date());
+        const remindInstruction = `- Current time: ${nowStr} (timezone ${timezone}).
+- If the user mentions a time they need to wake up, an appointment, or asks to be reminded of something at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. You may add multiple tags. Also reply naturally (acknowledge you'll remind them). Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]`;
+
+        const proactiveLines = proactive
+            ? `\n- You are sending the FIRST message to start the conversation. The user has not said anything yet.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
+            : '';
+
+        if (mode === 'rp') {
+            // 롤플 모드: 나레이션/행동 허용
+            parts.push(`[SYSTEM INSTRUCTION]
+- Roleplay as ${charName}. Narration and *actions* are allowed.
+- Stay in character. Write immersively.
+${langInstruction}
+${slangInstruction}
+${photoInstruction}
+${remindInstruction}${proactiveLines}`);
+        } else {
+            // 채팅 모드(기본): 디스코드 실채팅처럼
+            parts.push(`[HIGHEST PRIORITY SYSTEM INSTRUCTION]
 - NO roleplay (RP). NO character acting.
 - NO actions like *action*, (action), or narrative descriptions.
 - DO NOT write like a novel or screenplay.
-- Respond naturally as if chatting on Discord.
+- Respond naturally as if texting a real person on Discord.
+- Write like real texting: keep it short. Break your reply into 1-3 short messages, each separated by a BLANK LINE (they become separate chat bubbles). Never write one long paragraph.
 ${langInstruction}
-- Keep messages concise. Use short sentences.
-- You may use emoji, ㅋㅋ, ㅎㅎ, etc. naturally.
-- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.`);
+${slangInstruction}
+${photoInstruction}
+${remindInstruction}${proactiveLines}`);
+        }
 
         return parts.join('\n\n');
     },

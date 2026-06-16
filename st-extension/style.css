@@ -1,0 +1,77 @@
+.discord-bridge-settings label {
+    display: block;
+    margin-top: 8px;
+    font-weight: 600;
+}
+
+.discord-bridge-settings .dbridge_statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 0;
+}
+
+.discord-bridge-settings .dbridge_inline {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.discord-bridge-settings .dbridge_inline .text_pole {
+    flex: 1;
+}
+
+.discord-bridge-settings .dbridge_grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.discord-bridge-settings .dbridge_section_head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.discord-bridge-settings .dbridge_row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+}
+.discord-bridge-settings .dbridge_row > span {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+.discord-bridge-settings .dbridge_row .text_pole {
+    flex: 1;
+    min-width: 0;
+}
+.discord-bridge-settings .dbridge_row_del {
+    flex: 0 0 auto;
+}
+
+.discord-bridge-settings .dbridge_hint {
+    font-size: 0.8em;
+    opacity: 0.65;
+    margin: 4px 0;
+}
+
+.discord-bridge-settings #dbridge_save {
+    width: 100%;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+.discord-bridge-settings .dbridge_check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: normal;
+    margin-top: 6px;
+    cursor: pointer;
+}
+.discord-bridge-settings .dbridge_check input { width: auto; }
+.discord-bridge-settings #dbridge_proactive_opts { margin-top: 6px; }

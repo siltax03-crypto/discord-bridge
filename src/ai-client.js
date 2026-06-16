@@ -54,6 +54,13 @@ const AIClient = {
         const body = {
             contents,
             generationConfig: { maxOutputTokens: maxTokens },
+            safetySettings: [
+                { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' },
+                { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
+                { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'OFF' },
+                { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'OFF' },
+                { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'OFF' },
+            ],
         };
         if (systemInstruction) {
             body.system_instruction = { parts: [{ text: systemInstruction }] };

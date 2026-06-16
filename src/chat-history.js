@@ -68,6 +68,15 @@ const ChatHistory = {
         }));
     },
 
+    // 마지막 메시지 시각(ms). 없으면 0
+    lastTimestamp(channelId) {
+        const data = this._load(channelId);
+        const last = data.messages[data.messages.length - 1];
+        if (!last?.timestamp) return 0;
+        const t = Date.parse(last.timestamp);
+        return Number.isNaN(t) ? 0 : t;
+    },
+
     removeLastUserMessage(channelId) {
         const data = this._load(channelId);
         for (let i = data.messages.length - 1; i >= 0; i--) {

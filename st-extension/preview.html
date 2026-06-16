@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Discord Bridge — UI 미리보기</title>
+<style>
+    /* --- SillyTavern 다크테마 흉내 (미리보기 전용) --- */
+    :root {
+        --bg: #1a1a1a;
+        --panel: #2a2a2e;
+        --field: #19191b;
+        --border: #444;
+        --text: #d9d9d9;
+        --accent: #5b9bd5;
+        --btn: #3a3a40;
+    }
+    body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", system-ui, sans-serif;
+        font-size: 14px;
+        margin: 0;
+        padding: 24px;
+    }
+    .preview-frame {
+        max-width: 420px;
+        margin: 0 auto;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 14px;
+    }
+    .preview-note {
+        max-width: 420px;
+        margin: 0 auto 16px;
+        font-size: 12px;
+        opacity: 0.6;
+        text-align: center;
+    }
+    .inline-drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        padding: 4px 0;
+        user-select: none;
+    }
+    .inline-drawer-content { padding-top: 8px; }
+    .text_pole {
+        width: 100%;
+        box-sizing: border-box;
+        background: var(--field);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 8px;
+        margin-top: 2px;
+    }
+    select.text_pole { cursor: pointer; }
+    .menu_button {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        background: var(--btn);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 10px;
+        cursor: pointer;
+        font-size: 13px;
+        white-space: nowrap;
+    }
+    .menu_button:hover { border-color: var(--accent); }
+    hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+    code { background: var(--field); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+    .fa-icon { font-style: normal; }
+
+    /* --- 확장 실제 style.css 그대로 --- */
+    .discord-bridge-settings label { display: block; margin-top: 8px; font-weight: 600; }
+    .discord-bridge-settings .dbridge_statusbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; }
+    .discord-bridge-settings .dbridge_inline { display: flex; gap: 6px; align-items: center; }
+    .discord-bridge-settings .dbridge_inline .text_pole { flex: 1; }
+    .discord-bridge-settings .dbridge_grid2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 4px; }
+    .discord-bridge-settings .dbridge_section_head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .discord-bridge-settings .dbridge_row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+    .discord-bridge-settings .dbridge_row > span { font-size: 0.85em; opacity: 0.7; }
+    .discord-bridge-settings .dbridge_row .text_pole { flex: 1; min-width: 0; }
+    .discord-bridge-settings .dbridge_row_del { flex: 0 0 auto; }
+    .discord-bridge-settings .dbridge_hint { font-size: 0.8em; opacity: 0.65; margin: 4px 0; }
+    .discord-bridge-settings #dbridge_save { width: 100%; justify-content: center; margin-top: 4px; }
+    .discord-bridge-settings .dbridge_check { display: flex; align-items: center; gap: 8px; font-weight: normal; margin-top: 6px; cursor: pointer; }
+    .discord-bridge-settings .dbridge_check input { width: auto; }
+</style>
+</head>
+<body>
+<div class="preview-note">⚠ 미리보기 전용 — 샘플 데이터로 채워진 정적 화면입니다. 실제 동작은 ST에 배포 후 확인.</div>
+
+<div class="preview-frame">
+<div class="discord-bridge-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>🤖 Discord Bridge</b>
+            <div class="inline-drawer-icon">▾</div>
+        </div>
+        <div class="inline-drawer-content">
+            <div class="dbridge_statusbar">
+                <span id="dbridge_status">🟢 봇 실행 중 (12초 전 갱신)</span>
+                <div class="dbridge_inline">
+                    <div class="menu_button"><span class="fa-icon">🔄</span> 새로고침</div>
+                    <div class="menu_button"><span class="fa-icon">⏻</span> 봇 재시작</div>
+                    <div class="menu_button"><span class="fa-icon">⬇</span> 업데이트</div>
+                </div>
+            </div>
+
+            <label>Discord 봇 토큰</label>
+            <div class="dbridge_inline">
+                <input type="password" class="text_pole" value="MT234567890abcdef" />
+                <div class="menu_button"><span class="fa-icon">👁</span></div>
+            </div>
+
+            <label>커넥션 프로필 (AI 백엔드)</label>
+            <select class="text_pole">
+                <option>(ST에서 선택된 프로필 사용)</option>
+                <option selected>! 메인  (vertexai / gemini-3.1-pro)  ★</option>
+                <option>클로드  (claude / claude-sonnet-4)</option>
+                <option>지피티  (openai / gpt-4o)</option>
+            </select>
+
+            <div class="dbridge_grid2">
+                <div>
+                    <label>응답 언어</label>
+                    <select class="text_pole"><option selected>한국어</option><option>English</option></select>
+                </div>
+                <div>
+                    <label>최근 메시지 수</label>
+                    <input type="number" class="text_pole" value="50" />
+                </div>
+                <div>
+                    <label>응답 토큰</label>
+                    <input type="number" class="text_pole" value="1000" />
+                </div>
+            </div>
+
+            <hr/>
+            <div class="dbridge_section_head">
+                <label>채널 ↔ 캐릭터 매핑</label>
+                <div class="menu_button"><span class="fa-icon">＋</span> 추가</div>
+            </div>
+            <div class="dbridge_hint">3개 채널 감지됨</div>
+            <div id="dbridge_channel_list">
+                <div class="dbridge_row">
+                    <span>채널</span>
+                    <select class="text_pole">
+                        <option selected># snow-dm  (내 서버)</option>
+                        <option># blaise-dm  (내 서버)</option>
+                        <option># general  (내 서버)</option>
+                    </select>
+                    <span>캐릭터</span>
+                    <select class="text_pole"><option selected>Snow</option><option>Blaise</option></select>
+                    <div class="menu_button dbridge_row_del"><span class="fa-icon">🗑</span></div>
+                </div>
+                <div class="dbridge_row">
+                    <span>채널</span>
+                    <select class="text_pole">
+                        <option># snow-dm  (내 서버)</option>
+                        <option selected># blaise-dm  (내 서버)</option>
+                        <option># general  (내 서버)</option>
+                    </select>
+                    <span>캐릭터</span>
+                    <select class="text_pole"><option>Snow</option><option selected>Blaise</option></select>
+                    <div class="menu_button dbridge_row_del"><span class="fa-icon">🗑</span></div>
+                </div>
+            </div>
+
+            <hr/>
+            <label>메시지 / 말투</label>
+            <label class="dbridge_check"><input type="checkbox" checked /> <span>긴 답을 여러 메시지로 나눠 보내기 (실채팅 느낌)</span></label>
+            <label class="dbridge_check"><input type="checkbox" /> <span>ㅋㅋ·ㅎㅎ·이모지 사용 허용</span></label>
+
+            <hr/>
+            <label class="dbridge_check"><input type="checkbox" checked /> <span><b>틈틈이 선톡</b> — 한동안 조용하면 봇이 먼저 말 걸기</span></label>
+            <div>
+                <div class="dbridge_grid2">
+                    <div><label>조용하면 최소(h)</label><input type="number" class="text_pole" value="3" /></div>
+                    <div><label>최대(h)</label><input type="number" class="text_pole" value="8" /></div>
+                    <div></div>
+                </div>
+                <div class="dbridge_grid2">
+                    <div><label>활동 시작(시)</label><input type="number" class="text_pole" value="9" /></div>
+                    <div><label>활동 종료(시)</label><input type="number" class="text_pole" value="23" /></div>
+                    <div></div>
+                </div>
+                <div class="dbridge_hint">변경 후 봇 재시작 필요.</div>
+            </div>
+            <div class="dbridge_hint">⏰ "8시에 깨워줘", "2시에 약속 리마인드 해줘" 같은 <b>특정 시각 알람은 봇한테 채팅으로 말하면</b> 알아서 그 시각에 연락합니다 (설정 불필요).</div>
+
+            <hr/>
+            <div class="menu_button" id="dbridge_save"><span class="fa-icon">💾</span> 저장</div>
+            <div class="dbridge_hint">⚠ 토큰/채널 변경 후 봇을 재시작해야 적용됩니다 (pm2 restart discord-bridge).</div>
+        </div>
+    </div>
+</div>
+</div>
+
+<script>
+    // 토큰 눈 토글 데모
+    document.querySelector('.dbridge_inline .menu_button').addEventListener('click', () => {
+        const inp = document.querySelector('.dbridge_inline .text_pole');
+        inp.type = inp.type === 'password' ? 'text' : 'password';
+    });
+</script>
+</body>
+</html>
