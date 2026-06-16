@@ -87,7 +87,17 @@ const AIClient = {
         }
 
         const data = await resp.json();
-        return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const cand = data.candidates?.[0];
+        // thinking 모델은 part가 여러 개(사고/출력)일 수 있으니 텍스트 part를 전부 합친다
+        const parts = cand?.content?.parts || [];
+        const text = parts.map((p) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+        if (!text) {
+            console.warn(
+                `[AI] 빈 응답. finishReason=${cand?.finishReason}, parts=${parts.length}, ` +
+                `promptFeedback=${JSON.stringify(data.promptFeedback || {})}`,
+            );
+        }
+        return text;
     },
 
     // --- Claude ---
