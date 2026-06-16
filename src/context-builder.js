@@ -15,7 +15,6 @@ const ContextBuilder = {
             proactiveNote = '',
             timezone = 'Asia/Seoul',
             notes = [],
-            personaText = '',
         } = options;
         const charName = character.name || character.data?.name || 'Character';
         const parts = [];
@@ -44,10 +43,10 @@ const ContextBuilder = {
 
         // --- 유저 페르소나 ---
         try {
-            const persona = personaText || STReader.getPersonaDescription();
+            const persona = STReader.getPersonaDescription();
             if (persona) {
                 parts.push(`[User Persona - ${userName}]\n${persona}`);
-                console.log(`[Context] ✓ Persona 로드${personaText ? ` (채널 지정: ${userName})` : ''}`);
+                console.log(`[Context] ✓ Persona 로드`);
             }
         } catch (e) {
             // 페르소나 없으면 스킵

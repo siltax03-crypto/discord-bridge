@@ -150,52 +150,31 @@ const Bot = {
         }
     },
 
-    // --- 이름별 웹훅 가져오기/생성 (캐릭터·페르소나 공용) ---
-    async _getNamedWebhook(channel, hookName, avatarPath) {
-        const key = `${channel.id}:${hookName}`;
-        if (webhookCache[key]) return webhookCache[key];
+    // --- 채널별 웹훅 가져오기/생성 ---
+    async _getWebhook(channel, character) {
+        if (webhookCache[channel.id]) return webhookCache[channel.id];
 
         try {
+            // 기존 웹훅 찾기
             const webhooks = await channel.fetchWebhooks();
-            let webhook = webhooks.find(wh => wh.name === hookName);
+            let webhook = webhooks.find(wh => wh.name === `bridge-${character.name}`);
 
             if (!webhook) {
-                const opts = { name: hookName };
-                if (avatarPath) opts.avatar = avatarPath;
-                webhook = await channel.createWebhook(opts);
-                console.log(`[Bot] 웹훅 생성: #${channel.name} → ${hookName}`);
+                // 새 웹훅 생성 (캐릭터 아바타 포함)
+                const avatarPath = STReader.getCharacterAvatarPath(character);
+                const webhookOptions = { name: `bridge-${character.name}` };
+                if (avatarPath) {
+                    webhookOptions.avatar = avatarPath;
+                }
+                webhook = await channel.createWebhook(webhookOptions);
+                console.log(`[Bot] 웹훅 생성: #${channel.name} → ${character.name}`);
             }
 
-            webhookCache[key] = webhook;
+            webhookCache[channel.id] = webhook;
             return webhook;
         } catch (e) {
             console.error(`[Bot] 웹훅 생성 실패:`, e.message);
             return null;
-        }
-    },
-
-    _getWebhook(channel, character) {
-        return this._getNamedWebhook(channel, `bridge-${character.name}`, STReader.getCharacterAvatarPath(character));
-    },
-
-    // --- 페르소나 프록시: 사용자 메시지를 지우고 페르소나 이름+사진으로 재전송 ---
-    async _proxyUserMessage(message, personaName) {
-        try {
-            const avatarPath = STReader.getPersonaAvatarPath(personaName);
-            const webhook = await this._getNamedWebhook(message.channel, `bridge-persona-${personaName}`, avatarPath);
-            if (!webhook) return;
-
-            const opts = { username: personaName };
-            const content = message.content || '';
-            const files = [...message.attachments.values()].map(a => a.url);
-            if (content) opts.content = content;
-            if (files.length) opts.files = files;
-            if (!opts.content && !opts.files) opts.content = '​'; // 빈 메시지 방지
-
-            await webhook.send(opts);
-            await message.delete().catch(() => {});
-        } catch (e) {
-            console.error('[Bot] 페르소나 프록시 실패:', e.message);
         }
     },
 
@@ -260,10 +239,6 @@ const Bot = {
 
             ChatHistory.addMessage(message.channelId, 'user', userContent, userName);
 
-            // 페르소나가 지정된 채널이면 내 메시지를 페르소나 이름+사진으로 갈아끼움
-            const personaName = config.channels[message.channelId]?.persona;
-            if (personaName) await this._proxyUserMessage(message, personaName);
-
             const ok = await this._respond(message.channel, message.channelId, { imageBase64, userName });
             if (!ok) this._tempReply(message, '⚠️ 응답을 생성하지 못했어요.');
 
@@ -282,11 +257,6 @@ const Bot = {
         if (!character) return false;
         const charName = character.name || 'Character';
 
-        // 채널별 페르소나 (지정 시 그 페르소나로 인식)
-        const personaName = config.channels[channelId]?.persona;
-        const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
-        const effUserName = personaName || userName;
-
         // 모드 + 모드별 응답 토큰 (RP는 thinking 여유분 포함해 자동 증가)
         const mode = Modes.get(channelId);
         const maxTokens = mode === 'rp'
@@ -294,13 +264,12 @@ const Bot = {
             : (config.maxResponseTokens || 1000);
 
         const systemPrompt = ContextBuilder.build(character, {
-            userName: effUserName,
+            userName,
             language: config.language || 'ko',
             mode,
             chatSlang: config.chatSlang !== false,
             timezone: config.timezone || 'Asia/Seoul',
             notes: Notes.list(channelId),
-            personaText,
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
