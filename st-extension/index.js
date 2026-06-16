@@ -29,6 +29,7 @@ let state = {
 };
 let profiles = [];
 let characters = [];
+let personas = [];
 let discordChannels = [];
 
 // --- API 헬퍼 ---
@@ -53,10 +54,11 @@ async function apiPost(pathname, body) {
 // --- 데이터 로드 ---
 async function loadAll() {
     try {
-        const [cfgRes, profRes, charRes] = await Promise.all([
+        const [cfgRes, profRes, charRes, persRes] = await Promise.all([
             apiGet('/config'),
             apiGet('/profiles'),
             apiGet('/characters'),
+            apiGet('/personas'),
         ]);
 
         const c = cfgRes.config || {};
@@ -81,6 +83,7 @@ async function loadAll() {
         };
         profiles = profRes.profiles || [];
         characters = charRes.characters || [];
+        personas = persRes.personas || [];
 
         render();
         refreshStatus();
@@ -193,12 +196,22 @@ function renderChannelRows() {
                 ? `<option value="${escapeHtml(conf.character)}" selected>${escapeHtml(conf.character)} (카드 없음)</option>`
                 : '';
 
+        const personaOpts =
+            '<option value="">(기본 페르소나)</option>' +
+            optionList(personas, conf.persona || '', (name) => ({ value: name, label: name }));
+        const ensurePersona =
+            conf.persona && !personas.includes(conf.persona)
+                ? `<option value="${escapeHtml(conf.persona)}" selected>${escapeHtml(conf.persona)} (없음)</option>`
+                : '';
+
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
                 <select class="text_pole dbridge_row_channel">${ensureOpt}${chanOpts}</select>
                 <span>캐릭터</span>
                 <select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>
+                <span>나(페르소나)</span>
+                <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
             </div>
         `);
@@ -231,7 +244,10 @@ function syncFromDom() {
     $('#dbridge_channel_list .dbridge_row').each(function () {
         const chId = $(this).find('.dbridge_row_channel').val();
         const char = $(this).find('.dbridge_row_char').val();
-        if (chId && char) channels[chId] = { character: char };
+        const persona = $(this).find('.dbridge_row_persona').val();
+        if (chId && char) {
+            channels[chId] = persona ? { character: char, persona } : { character: char };
+        }
     });
     state.channels = channels;
 }

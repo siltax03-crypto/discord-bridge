@@ -149,6 +149,14 @@ function getCharacters(req, res) {
     res.json({ characters: [...names].sort() });
 }
 
+// ST 페르소나 이름 목록
+function getPersonas(req, res) {
+    const settings = readJson(firstExisting(SETTINGS_CANDIDATES), {});
+    const personas = settings.power_user?.personas || {};
+    const names = [...new Set(Object.values(personas))].filter(Boolean).sort();
+    res.json({ personas: names });
+}
+
 // 디스코드 채널 목록 (봇이 들어가 있는 길드의 텍스트 채널)
 async function getChannels(req, res) {
     const config = readJson(CONFIG_PATH, {});
@@ -234,6 +242,7 @@ async function init(router) {
     router.post('/config', jsonParser, postConfig);
     router.get('/profiles', getProfiles);
     router.get('/characters', getCharacters);
+    router.get('/personas', getPersonas);
     router.get('/channels', getChannels);
     router.get('/status', getStatus);
     router.post('/restart', jsonParser, postRestart);
