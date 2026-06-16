@@ -96,6 +96,8 @@ const AIClient = {
                 `[AI] 빈 응답. finishReason=${cand?.finishReason}, parts=${parts.length}, ` +
                 `promptFeedback=${JSON.stringify(data.promptFeedback || {})}`,
             );
+        } else if (cand?.finishReason === 'MAX_TOKENS') {
+            console.warn(`[AI] 응답이 토큰 한도에서 잘림 (MAX_TOKENS, maxTokens=${maxTokens}). 응답 토큰을 더 올리세요.`);
         }
         return text;
     },
@@ -162,9 +164,9 @@ const AIClient = {
         return data.choices?.[0]?.message?.content || '';
     },
 
-    async sendMessageWithImage(messages, imageBase64) {
+    async sendMessageWithImage(messages, imageBase64, options = {}) {
         const lastUserIdx = messages.findLastIndex(m => m.role === 'user');
-        if (lastUserIdx === -1) return this.sendMessage(messages);
+        if (lastUserIdx === -1) return this.sendMessage(messages, options);
 
         const modified = [...messages];
         const lastMsg = modified[lastUserIdx];
@@ -178,7 +180,7 @@ const AIClient = {
             ],
         };
 
-        return this.sendMessage(modified);
+        return this.sendMessage(modified, options);
     },
 };
 

@@ -182,11 +182,17 @@ const Bot = {
 
             ChatHistory.addMessage(message.channelId, 'user', userContent, userName);
 
+            // 모드 + 모드별 응답 토큰 (RP는 thinking 여유분 포함해 자동 증가)
+            const mode = Modes.get(message.channelId);
+            const maxTokens = mode === 'rp'
+                ? (config.rpResponseTokens || 8192)
+                : (config.maxResponseTokens || 1000);
+
             // 시스템 프롬프트 빌드
             const systemPrompt = ContextBuilder.build(character, {
                 userName,
                 language: config.language || 'ko',
-                mode: Modes.get(message.channelId),
+                mode,
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
             });
@@ -203,9 +209,9 @@ const Bot = {
             // AI 호출
             let response;
             if (imageBase64) {
-                response = await AIClient.sendMessageWithImage(messages, imageBase64);
+                response = await AIClient.sendMessageWithImage(messages, imageBase64, { maxTokens });
             } else {
-                response = await AIClient.sendMessage(messages);
+                response = await AIClient.sendMessage(messages, { maxTokens });
             }
 
             if (!response) {
@@ -305,10 +311,15 @@ const Bot = {
         const charName = character.name || 'Character';
 
         try {
+            const mode = Modes.get(channelId);
+            const maxTokens = mode === 'rp'
+                ? (config.rpResponseTokens || 8192)
+                : (config.maxResponseTokens || 1000);
+
             const systemPrompt = ContextBuilder.build(character, {
                 userName: 'User',
                 language: config.language || 'ko',
-                mode: Modes.get(channelId),
+                mode,
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
                 proactive: true,
@@ -322,7 +333,7 @@ const Bot = {
                 { role: 'user', content: '(지금 네가 먼저 말을 거는 상황이야. 짧게 메시지를 보내.)' },
             ];
 
-            let response = await AIClient.sendMessage(messages);
+            let response = await AIClient.sendMessage(messages, { maxTokens });
             if (!response) return;
 
             let photoPrompt = null;

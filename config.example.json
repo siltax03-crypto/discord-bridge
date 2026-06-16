@@ -4,6 +4,7 @@
   "connectionProfile": "",
   "maxHistoryMessages": 50,
   "maxResponseTokens": 1000,
+  "rpResponseTokens": 8192,
   "language": "ko",
   "timezone": "Asia/Seoul",
   "splitMessages": true,
