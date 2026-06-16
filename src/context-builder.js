@@ -103,7 +103,7 @@ const ContextBuilder = {
 
         // 현재 시각(tz 벽시계) + 리마인더 인식 지시
         const nowStr = new Intl.DateTimeFormat('sv-SE', {
-            timeZone: timezone, dateStyle: 'short', timeStyle: 'short', weekday: 'long',
+            timeZone: timezone, dateStyle: 'short', timeStyle: 'short',
         }).format(new Date());
         const remindInstruction = `- Current time: ${nowStr} (timezone ${timezone}).
 - If the user mentions a time they need to wake up, an appointment, or asks to be reminded of something at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. You may add multiple tags. Also reply naturally (acknowledge you'll remind them). Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]`;
