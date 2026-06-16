@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags } from 'discord.js';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
@@ -6,6 +6,7 @@ import ChatHistory from './chat-history.js';
 import ImageGen from './image-gen.js';
 import Modes from './modes.js';
 import Reminders from './reminders.js';
+import Notes from './notes.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -60,6 +61,20 @@ const Bot = {
             new SlashCommandBuilder()
                 .setName('clear')
                 .setDescription('이 채널의 대화 기록 초기화'),
+            new SlashCommandBuilder()
+                .setName('retry')
+                .setDescription('마지막 메시지에 다시 답하기 (오류로 답이 안 왔을 때)'),
+            new SlashCommandBuilder()
+                .setName('note')
+                .setDescription('작가노트(추가 지시) 관리')
+                .addSubcommand((s) =>
+                    s.setName('add').setDescription('노트 추가').addStringOption((o) =>
+                        o.setName('text').setDescription('추가할 지시 내용').setRequired(true)))
+                .addSubcommand((s) => s.setName('list').setDescription('노트 목록 보기'))
+                .addSubcommand((s) =>
+                    s.setName('del').setDescription('노트 삭제').addIntegerOption((o) =>
+                        o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true)))
+                .addSubcommand((s) => s.setName('clear').setDescription('노트 전체 삭제')),
         ].map((c) => c.toJSON());
 
         try {
@@ -75,20 +90,63 @@ const Bot = {
     // --- 슬래시 명령어 처리 ---
     async _onInteraction(interaction) {
         if (!interaction.isChatInputCommand()) return;
-        if (!config.channels[interaction.channelId]) {
-            return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ephemeral: true });
+        const channelId = interaction.channelId;
+        const eph = { flags: MessageFlags.Ephemeral };
+
+        if (!config.channels[channelId]) {
+            return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ...eph });
         }
 
-        if (interaction.commandName === 'mode') {
+        const cmd = interaction.commandName;
+
+        if (cmd === 'mode') {
             const type = interaction.options.getString('type');
-            Modes.set(interaction.channelId, type);
+            Modes.set(channelId, type);
             const label = type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드';
-            return interaction.reply({ content: `${label}로 전환했어요.`, ephemeral: true });
+            return interaction.reply({ content: `${label}로 전환했어요.`, ...eph });
         }
 
-        if (interaction.commandName === 'clear') {
-            ChatHistory.clear(interaction.channelId);
-            return interaction.reply({ content: '🧹 대화 기록을 초기화했어요.', ephemeral: true });
+        if (cmd === 'clear') {
+            ChatHistory.clear(channelId);
+            return interaction.reply({ content: '🧹 대화 기록을 초기화했어요.', ...eph });
+        }
+
+        if (cmd === 'retry') {
+            // 마지막이 봇 응답이면 지우고 사용자 마지막 메시지에 다시 답한다
+            ChatHistory.removeLastAssistantMessage(channelId);
+            await interaction.reply({ content: '🔄 다시 답하는 중...', ...eph });
+            try {
+                const userName = interaction.member?.displayName || interaction.user.username;
+                const ok = await this._respond(interaction.channel, channelId, { userName });
+                await interaction.editReply(ok ? '✅ 다시 답했어요.' : '⚠️ 또 실패했어요. 잠시 후 다시 시도해주세요.');
+            } catch (e) {
+                await interaction.editReply(`⚠️ 오류: ${e.message?.substring(0, 100)}`);
+            }
+            return;
+        }
+
+        if (cmd === 'note') {
+            const sub = interaction.options.getSubcommand();
+            if (sub === 'add') {
+                Notes.add(channelId, interaction.options.getString('text'));
+                return interaction.reply({ content: '📝 작가노트를 추가했어요. 다음 답변부터 반영됩니다.', ...eph });
+            }
+            if (sub === 'list') {
+                const arr = Notes.list(channelId);
+                const body = arr.length
+                    ? arr.map((n, i) => `${i + 1}. ${n}`).join('\n')
+                    : '(작가노트 없음)';
+                return interaction.reply({ content: `📝 작가노트\n${body}`, ...eph });
+            }
+            if (sub === 'del') {
+                const idx = interaction.options.getInteger('index');
+                const ok = Notes.remove(channelId, idx - 1);
+                return interaction.reply({ content: ok ? `🗑 ${idx}번 노트를 삭제했어요.` : '⚠️ 그 번호의 노트가 없어요.', ...eph });
+            }
+            if (sub === 'clear') {
+                Notes.clear(channelId);
+                return interaction.reply({ content: '🗑 작가노트를 전부 삭제했어요.', ...eph });
+            }
         }
     },
 
@@ -153,7 +211,6 @@ const Bot = {
             return;
         }
 
-        const charName = character.name || 'Character';
         const userName = message.author.displayName || message.author.username;
 
         try {
@@ -182,68 +239,8 @@ const Bot = {
 
             ChatHistory.addMessage(message.channelId, 'user', userContent, userName);
 
-            // 모드 + 모드별 응답 토큰 (RP는 thinking 여유분 포함해 자동 증가)
-            const mode = Modes.get(message.channelId);
-            const maxTokens = mode === 'rp'
-                ? (config.rpResponseTokens || 8192)
-                : (config.maxResponseTokens || 1000);
-
-            // 시스템 프롬프트 빌드
-            const systemPrompt = ContextBuilder.build(character, {
-                userName,
-                language: config.language || 'ko',
-                mode,
-                chatSlang: config.chatSlang !== false,
-                timezone: config.timezone || 'Asia/Seoul',
-            });
-
-            // 대화 기록 조립
-            const history = ChatHistory.toAPIMessages(message.channelId, config.maxHistoryMessages);
-            // 마지막 메시지(방금 저장한 것)는 이미 history에 있음
-
-            const messages = [
-                { role: 'system', content: systemPrompt },
-                ...history,
-            ];
-
-            // AI 호출
-            let response;
-            if (imageBase64) {
-                response = await AIClient.sendMessageWithImage(messages, imageBase64, { maxTokens });
-            } else {
-                response = await AIClient.sendMessage(messages, { maxTokens });
-            }
-
-            if (!response) {
-                console.error('[Bot] AI 응답 없음');
-                this._tempReply(message, '⚠️ 응답을 생성하지 못했어요.');
-                return;
-            }
-
-            // [SEND_PHOTO: ...] 태그 감지 및 처리
-            let photoPrompt = null;
-            const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
-            if (photoMatch) {
-                photoPrompt = photoMatch[1].trim();
-                response = response.replace(photoMatch[0], '').trim();
-            }
-
-            // [REMIND: 시각 | 메시지] 태그 감지 → 리마인더 등록 (여러 개 가능)
-            response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
-                const fireAt = Reminders.parseToFireAt(timeStr);
-                if (fireAt) {
-                    Reminders.add(message.channelId, fireAt, text.trim());
-                } else {
-                    console.warn(`[Bot] 리마인더 시각 해석 실패/과거: "${timeStr.trim()}"`);
-                }
-                return ''; // 태그는 메시지에서 제거
-            }).trim();
-
-            // 응답 저장
-            ChatHistory.addMessage(message.channelId, 'assistant', response, charName);
-
-            // 전송 (빈 줄 기준으로 여러 메시지로 분할)
-            await this._sendResponse(message.channel, character, response, photoPrompt);
+            const ok = await this._respond(message.channel, message.channelId, { imageBase64, userName });
+            if (!ok) this._tempReply(message, '⚠️ 응답을 생성하지 못했어요.');
 
         } catch (e) {
             console.error(`[Bot] 메시지 처리 오류:`, e);
@@ -252,6 +249,60 @@ const Bot = {
                 : `⚠️ 오류 발생: ${e.message?.substring(0, 100)}`;
             this._tempReply(message, errMsg);
         }
+    },
+
+    // --- 응답 생성 핵심 (수신/재시도 공용). 성공 시 true ---
+    async _respond(channel, channelId, { imageBase64 = null, userName = 'User' } = {}) {
+        const character = this._getCharacter(channelId);
+        if (!character) return false;
+        const charName = character.name || 'Character';
+
+        // 모드 + 모드별 응답 토큰 (RP는 thinking 여유분 포함해 자동 증가)
+        const mode = Modes.get(channelId);
+        const maxTokens = mode === 'rp'
+            ? (config.rpResponseTokens || 8192)
+            : (config.maxResponseTokens || 1000);
+
+        const systemPrompt = ContextBuilder.build(character, {
+            userName,
+            language: config.language || 'ko',
+            mode,
+            chatSlang: config.chatSlang !== false,
+            timezone: config.timezone || 'Asia/Seoul',
+            notes: Notes.list(channelId),
+        });
+
+        const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
+        const messages = [{ role: 'system', content: systemPrompt }, ...history];
+
+        let response = imageBase64
+            ? await AIClient.sendMessageWithImage(messages, imageBase64, { maxTokens })
+            : await AIClient.sendMessage(messages, { maxTokens });
+
+        if (!response) {
+            console.error('[Bot] AI 응답 없음');
+            return false;
+        }
+
+        // [SEND_PHOTO: ...] 태그
+        let photoPrompt = null;
+        const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
+        if (photoMatch) {
+            photoPrompt = photoMatch[1].trim();
+            response = response.replace(photoMatch[0], '').trim();
+        }
+
+        // [REMIND: 시각 | 메시지] 태그 → 리마인더 등록
+        response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
+            const fireAt = Reminders.parseToFireAt(timeStr);
+            if (fireAt) Reminders.add(channelId, fireAt, text.trim());
+            else console.warn(`[Bot] 리마인더 시각 해석 실패/과거: "${timeStr.trim()}"`);
+            return '';
+        }).trim();
+
+        ChatHistory.addMessage(channelId, 'assistant', response, charName);
+        await this._sendResponse(channel, character, response, photoPrompt);
+        return true;
     },
 
     // --- 응답 전송: 빈 줄 기준으로 여러 메시지로 분할 + 이미지 첨부 ---

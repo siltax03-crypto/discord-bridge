@@ -89,6 +89,18 @@ const ChatHistory = {
         return false;
     },
 
+    // 마지막 메시지가 봇(assistant) 응답이면 제거 (재시도용)
+    removeLastAssistantMessage(channelId) {
+        const data = this._load(channelId);
+        const last = data.messages[data.messages.length - 1];
+        if (last?.role === 'assistant') {
+            data.messages.pop();
+            this._save(channelId, data);
+            return true;
+        }
+        return false;
+    },
+
     clear(channelId) {
         const data = { channelId, messages: [] };
         this._save(channelId, data);

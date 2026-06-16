@@ -14,6 +14,7 @@ const ContextBuilder = {
             proactive = false,
             proactiveNote = '',
             timezone = 'Asia/Seoul',
+            notes = [],
         } = options;
         const charName = character.name || character.data?.name || 'Character';
         const parts = [];
@@ -84,6 +85,12 @@ const ContextBuilder = {
             }
         } catch (e) {
             // CHARM 메모리 없으면 스킵
+        }
+
+        // --- 작가노트 (사용자가 /note로 추가한 추가 지시) ---
+        if (Array.isArray(notes) && notes.length > 0) {
+            parts.push(`[Author's Note — follow these instructions]\n${notes.map((n) => `- ${n}`).join('\n')}`);
+            console.log(`[Context] ✓ 작가노트 주입 (${notes.length}개)`);
         }
 
         // --- 이름 ---
