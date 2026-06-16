@@ -53,12 +53,21 @@ async function apiPost(pathname, body) {
 
 // --- 데이터 로드 ---
 async function loadAll() {
+    // config는 필수. 나머지(프로필/캐릭터/페르소나)는 하나 실패해도 UI는 떠야 한다.
+    let cfgRes;
     try {
-        const [cfgRes, profRes, charRes, persRes] = await Promise.all([
-            apiGet('/config'),
-            apiGet('/profiles'),
-            apiGet('/characters'),
-            apiGet('/personas'),
+        cfgRes = await apiGet('/config');
+    } catch (e) {
+        $('#dbridge_status').html(`🔴 플러그인 연결 실패 — ${e.message} (플러그인 최신화 + ST 재시작 필요)`);
+        console.error('[DiscordBridge] /config 실패', e);
+        return;
+    }
+
+    try {
+        const [profRes, charRes, persRes] = await Promise.all([
+            apiGet('/profiles').catch((e) => (console.warn('[DiscordBridge] /profiles', e), { profiles: [] })),
+            apiGet('/characters').catch((e) => (console.warn('[DiscordBridge] /characters', e), { characters: [] })),
+            apiGet('/personas').catch((e) => (console.warn('[DiscordBridge] /personas', e), { personas: [] })),
         ]);
 
         const c = cfgRes.config || {};
