@@ -37,9 +37,12 @@
 
 .discord-bridge-settings .dbridge_row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    margin: 6px 0;
+    margin: 8px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(128,128,128,0.2);
 }
 .discord-bridge-settings .dbridge_row > span {
     font-size: 0.85em;

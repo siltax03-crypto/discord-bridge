@@ -91,6 +91,34 @@ const STReader = {
         return settings.persona_description || settings.power_user?.persona_description || '';
     },
 
+    // 이름으로 특정 페르소나 설명 조회 (채널별 페르소나용)
+    // ST 구조: power_user.personas = { [avatar]: name }, power_user.persona_descriptions = { [avatar]: { description } }
+    getPersonaByName(name) {
+        if (!name) return '';
+        const pu = this.getSettings().power_user || {};
+        const personas = pu.personas || {};
+        let avatar = Object.keys(personas).find((k) => personas[k] === name);
+        if (!avatar && personas[name] !== undefined) avatar = name; // name이 avatar 키인 경우
+        const desc = avatar && pu.persona_descriptions?.[avatar]?.description;
+        return desc || '';
+    },
+
+    // 페르소나 아바타 이미지 경로 (프록시 웹훅 사진용)
+    getPersonaAvatarPath(name) {
+        if (!name) return null;
+        const pu = this.getSettings().power_user || {};
+        const personas = pu.personas || {};
+        let avatar = Object.keys(personas).find((k) => personas[k] === name);
+        if (!avatar && personas[name] !== undefined) avatar = name;
+        if (!avatar) return null;
+        const dirs = [
+            path.join(stPath, 'data', 'default-user', 'User Avatars', avatar),
+            path.join(stPath, 'public', 'User Avatars', avatar),
+        ];
+        for (const p of dirs) if (fs.existsSync(p)) return p;
+        return null;
+    },
+
     // --- 캐릭터 카드 읽기 ---
     getCharactersDir() {
         const dirs = [
