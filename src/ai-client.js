@@ -85,32 +85,41 @@ const AIClient = {
             : `https://${region}-aiplatform.googleapis.com`;
         const url = `${baseUrl}/v1/publishers/google/models/${modelName}:generateContent?key=${apiKey}`;
 
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
+        // Gemini가 STOP인데 빈 텍스트를 뱉는 경우(RP/민감 컨텍스트 간헐 현상) 자동 재시도
+        const MAX_ATTEMPTS = 3;
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
 
-        if (!resp.ok) {
-            const err = await resp.text();
-            throw new Error(`Gemini API 오류 (${resp.status}): ${err}`);
-        }
+            if (!resp.ok) {
+                const err = await resp.text();
+                throw new Error(`Gemini API 오류 (${resp.status}): ${err}`);
+            }
 
-        const data = await resp.json();
-        const cand = data.candidates?.[0];
-        // thinking 모델은 part가 여러 개(사고/출력)일 수 있으니 텍스트 part를 전부 합친다
-        const parts = cand?.content?.parts || [];
-        const text = parts.map((p) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
-        if (!text) {
+            const data = await resp.json();
+            const cand = data.candidates?.[0];
+            // thinking 모델은 part가 여러 개(사고/출력)일 수 있으니 텍스트 part를 전부 합친다
+            const parts = cand?.content?.parts || [];
+            const text = parts.map((p) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+
+            if (text) {
+                if (cand?.finishReason === 'MAX_TOKENS') {
+                    console.warn(`[AI] 응답이 토큰 한도에서 잘림 (MAX_TOKENS, maxTokens=${maxTokens}). 응답 토큰을 더 올리세요.`);
+                }
+                return text;
+            }
+
             console.warn(
-                `[AI] 빈 응답. finishReason=${cand?.finishReason}, parts=${parts.length}, ` +
-                `promptFeedback=${JSON.stringify(data.promptFeedback || {})}`,
+                `[AI] 빈 응답 (시도 ${attempt}/${MAX_ATTEMPTS}). finishReason=${cand?.finishReason}, ` +
+                `parts=${parts.length}, promptFeedback=${JSON.stringify(data.promptFeedback || {})}`,
             );
-            console.warn(`[AI] parts 덤프: ${JSON.stringify(parts).slice(0, 600)}`);
-        } else if (cand?.finishReason === 'MAX_TOKENS') {
-            console.warn(`[AI] 응답이 토큰 한도에서 잘림 (MAX_TOKENS, maxTokens=${maxTokens}). 응답 토큰을 더 올리세요.`);
+            if (attempt === 1) console.warn(`[AI] parts 덤프: ${JSON.stringify(parts).slice(0, 400)}`);
         }
-        return text;
+
+        return ''; // 재시도 모두 빈 응답
     },
 
     // --- Claude ---
