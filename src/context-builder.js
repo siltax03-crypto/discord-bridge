@@ -120,6 +120,9 @@ const ContextBuilder = {
         const photoInstruction =
             '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
 
+        const antiRepeat =
+            '- Do NOT reuse sentences, phrases, or sentence patterns from your recent messages. Each reply must be freshly worded and move the conversation forward.';
+
         // 현재 시각(tz 벽시계) + 리마인더 인식 지시
         const nowStr = new Intl.DateTimeFormat('sv-SE', {
             timeZone: timezone, dateStyle: 'short', timeStyle: 'short',
@@ -139,6 +142,7 @@ const ContextBuilder = {
 - Stay in character. Write immersively.
 ${langInstruction}
 ${slangInstruction}
+${antiRepeat}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
         } else {
@@ -151,6 +155,7 @@ ${remindInstruction}${proactiveLines}`);
 - Write like real texting: keep it short. Break your reply into 1-3 short messages, each separated by a BLANK LINE (they become separate chat bubbles). Never write one long paragraph.
 ${langInstruction}
 ${slangInstruction}
+${antiRepeat}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
         }

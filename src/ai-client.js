@@ -63,7 +63,14 @@ const AIClient = {
         const modelName = model || 'gemini-2.0-flash';
         const body = {
             contents,
-            generationConfig: { maxOutputTokens: maxTokens },
+            generationConfig: {
+                maxOutputTokens: maxTokens,
+                temperature: config.temperature ?? 1.0,
+                topP: config.topP ?? 0.95,
+                // 같은 표현 반복 억제
+                frequencyPenalty: config.frequencyPenalty ?? 0.6,
+                presencePenalty: config.presencePenalty ?? 0.4,
+            },
             safetySettings: [
                 { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'OFF' },
                 { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'OFF' },
