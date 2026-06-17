@@ -16,6 +16,8 @@ let config = {};
 const webhookCache = {};
 // 채널별 캐릭터 데이터 캐시
 const characterCache = {};
+// 페르소나 프록시가 직접 지운 메시지 ID (삭제 동기화에서 무시하기 위함)
+const proxiedMessageIds = new Set();
 
 const Bot = {
     async start(cfg) {
@@ -260,7 +262,10 @@ const Bot = {
             if (!opts.content && !opts.files) opts.content = '​'; // 빈 메시지 방지
 
             await webhook.send(opts);
-            await message.delete().catch(() => {});
+            // 이 삭제가 _onMessageDelete의 히스토리 삭제를 트리거하지 않도록 표시
+            proxiedMessageIds.add(message.id);
+            setTimeout(() => proxiedMessageIds.delete(message.id), 30_000); // 안전 정리
+            await message.delete().catch(() => proxiedMessageIds.delete(message.id));
         } catch (e) {
             console.error('[Bot] 페르소나 프록시 실패:', e.message);
         }
@@ -539,6 +544,11 @@ const Bot = {
     async _onMessageDelete(message) {
         if (message.author?.bot) return;
         if (!config.channels[message.channelId]) return;
+        // 페르소나 프록시가 지운 메시지는 동기화 대상이 아님 (히스토리 유지)
+        if (proxiedMessageIds.has(message.id)) {
+            proxiedMessageIds.delete(message.id);
+            return;
+        }
 
         const removed = ChatHistory.removeLastUserMessage(message.channelId);
         if (removed) {
