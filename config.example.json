@@ -11,6 +11,7 @@
   "chatSlang": true,
   "proactive": {
     "enabled": false,
+    "photos": false,
     "idleMinHours": 3,
     "idleMaxHours": 8,
     "activeHours": [9, 23]

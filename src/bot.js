@@ -18,6 +18,8 @@ const webhookCache = {};
 const characterCache = {};
 // 페르소나 프록시가 직접 지운 메시지 ID (삭제 동기화에서 무시하기 위함)
 const proxiedMessageIds = new Set();
+// 채널별 "답 없으면 재촉" 타이머 (유저가 답하면 취소)
+const followupTimers = {};
 
 const Bot = {
     async start(cfg) {
@@ -298,6 +300,12 @@ const Bot = {
         // 매핑된 채널이 아니면 무시
         if (!config.channels[message.channelId]) return;
 
+        // 유저가 답했으니 대기 중인 "재촉" 타이머 취소
+        if (followupTimers[message.channelId]) {
+            clearTimeout(followupTimers[message.channelId]);
+            delete followupTimers[message.channelId];
+        }
+
         const character = this._getCharacter(message.channelId);
         if (!character) {
             console.error(`[Bot] 캐릭터 없음: 채널 ${message.channelId}`);
@@ -407,6 +415,12 @@ const Bot = {
             return '';
         }).trim();
 
+        // [FOLLOWUP: 분 | 의도] → 그 시간 뒤 유저가 답 없으면 재촉
+        response = response.replace(/\[FOLLOWUP:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
+            this._scheduleFollowup(channelId, parseInt(min, 10), (note || '').trim());
+            return '';
+        }).trim();
+
         // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
         if (!response && !photoPrompt) {
             console.warn('[Bot] 응답 본문 없음(태그뿐) — 저장/전송 생략');
@@ -475,6 +489,26 @@ const Bot = {
         }
     },
 
+    // --- "답 없으면 재촉": N분 뒤 유저가 답 없으면 다시 연락 ---
+    _scheduleFollowup(channelId, minutes, note) {
+        if (!Number.isFinite(minutes)) return;
+        const mins = Math.min(Math.max(minutes, 1), 120); // 1~120분
+        if (followupTimers[channelId]) clearTimeout(followupTimers[channelId]);
+        const t = setTimeout(async () => {
+            delete followupTimers[channelId];
+            // 마지막 메시지가 아직 봇(assistant)이면 = 유저 무응답
+            const last = ChatHistory.getMessages(channelId, 1)[0];
+            if (last?.role !== 'assistant') return; // 유저가 답함 → 취소
+            const noteText = note
+                ? `방금 "${note}"라고 했는데 ${mins}분 동안 답이 없어. 그 말대로 살짝 재촉하며 다시 연락해.`
+                : `${mins}분째 답이 없어. 아까 한 말대로 살짝 재촉하며 다시 연락해.`;
+            await this.sendProactive(channelId, noteText);
+        }, mins * 60_000);
+        t.unref?.();
+        followupTimers[channelId] = t;
+        console.log(`[Bot] 재촉 예약: 채널 ${channelId}, ${mins}분 후`);
+    },
+
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
     async sendProactive(channelId, note = '') {
         const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -489,6 +523,13 @@ const Bot = {
                 ? (config.rpResponseTokens || 8192)
                 : (config.maxResponseTokens || 1000);
 
+            // 선톡 사진(이미지 생성 비용) — config에서 켰을 때만, 35% 확률
+            const photosOn = !!config.proactive?.photos;
+            const wantPhoto = photosOn && Math.random() < 0.35;
+            const fullNote = wantPhoto
+                ? `${note} 이번엔 지금 너의 모습(셀카)이나 보고 있는 풍경 등을 담은 사진을 메시지 끝에 [SEND_PHOTO: 영어 묘사]로 같이 보내.`
+                : note;
+
             const systemPrompt = ContextBuilder.build(character, {
                 userName: 'User',
                 language: config.language || 'ko',
@@ -496,7 +537,7 @@ const Bot = {
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
                 proactive: true,
-                proactiveNote: note,
+                proactiveNote: fullNote,
                 presetText: mode === 'rp' ? STReader.getPresetPromptsByName(AIClient.getProfile()?.preset || '') : '',
             });
 

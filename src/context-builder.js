@@ -129,10 +129,13 @@ const ContextBuilder = {
         }).format(new Date());
         const remindInstruction = `- Current time: ${nowStr} (timezone ${timezone}).
 - If the user NEWLY asks to be woken or reminded at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]
-- IMPORTANT: Add the tag ONLY ONCE, in the single reply where the user first asks. Do NOT repeat a [REMIND] tag in later replies for a reminder you already set. The tag must never be your entire message — always write a natural reply too.`;
+- IMPORTANT: Add the tag ONLY ONCE, in the single reply where the user first asks. Do NOT repeat a [REMIND] tag in later replies for a reminder you already set. The tag must never be your entire message — always write a natural reply too.
+- If you tell ${userName} to reply within a short time (e.g. "answer within 1 minute or I'm coming to get you"), append [FOLLOWUP: <minutes> | what you threatened/promised] at the very END. If they don't reply within that time, you'll automatically send a follow-up nudge. Only use it when you actually say something like that, and never make the tag your whole message.`;
 
         const proactiveLines = proactive
-            ? `\n- You are sending the FIRST message to start the conversation. The user has not said anything yet.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
+            ? `
+- You are texting ${userName} FIRST, unprompted — they have not said anything.
+- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — fully in line with your character description. Make it feel like you truly live your own life even when ${userName} isn't around. Keep it short and natural, like a real text.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
             : '';
 
         if (mode === 'rp') {

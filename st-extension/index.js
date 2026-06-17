@@ -24,7 +24,7 @@ let state = {
     stPath: '',
     splitMessages: true,
     chatSlang: true,
-    proactive: { enabled: false, idleMinHours: 3, idleMaxHours: 8, activeHours: [9, 23] },
+    proactive: { enabled: false, photos: false, idleMinHours: 3, idleMaxHours: 8, activeHours: [9, 23] },
     channels: {}, // { channelId: { character } }
 };
 let profiles = [];
@@ -84,6 +84,7 @@ async function loadAll() {
             chatSlang: c.chatSlang !== false,
             proactive: {
                 enabled: !!p.enabled,
+                photos: !!p.photos,
                 idleMinHours: p.idleMinHours ?? 3,
                 idleMaxHours: p.idleMaxHours ?? 8,
                 activeHours: Array.isArray(p.activeHours) ? p.activeHours : [9, 23],
@@ -168,6 +169,7 @@ function render() {
     // 선톡
     const p = state.proactive;
     $('#dbridge_proactive').prop('checked', p.enabled);
+    $('#dbridge_proactive_photos').prop('checked', p.photos);
     $('#dbridge_idlemin').val(p.idleMinHours);
     $('#dbridge_idlemax').val(p.idleMaxHours);
     $('#dbridge_active_start').val(p.activeHours[0]);
@@ -241,6 +243,7 @@ function syncFromDom() {
     state.chatSlang = $('#dbridge_slang').prop('checked');
     state.proactive = {
         enabled: $('#dbridge_proactive').prop('checked'),
+        photos: $('#dbridge_proactive_photos').prop('checked'),
         idleMinHours: parseInt($('#dbridge_idlemin').val(), 10) || 3,
         idleMaxHours: parseInt($('#dbridge_idlemax').val(), 10) || 8,
         activeHours: [
@@ -384,6 +387,10 @@ const SETTINGS_HTML = `
                     </div>
                     <div></div>
                 </div>
+                <label class="checkbox_label dbridge_check">
+                    <input type="checkbox" id="dbridge_proactive_photos" />
+                    <span>선톡에 가끔 사진 첨부 (⚠ 이미지 생성 비용 발생)</span>
+                </label>
                 <div class="dbridge_hint">변경 후 봇 재시작 필요.</div>
             </div>
             <div class="dbridge_hint">⏰ "8시에 깨워줘", "2시에 약속 리마인드 해줘" 같은 <b>특정 시각 알람은 봇한테 채팅으로 말하면</b> 알아서 그 시각에 연락합니다 (설정 불필요).</div>
