@@ -16,9 +16,20 @@ const ContextBuilder = {
             timezone = 'Asia/Seoul',
             notes = [],
             personaText = '',
+            presetText = '',
         } = options;
         const charName = character.name || character.data?.name || 'Character';
         const parts = [];
+
+        // --- 프리셋 (RP 모드에서 커넥션 프로필 프리셋 주입, 맨 앞) ---
+        if (presetText && mode === 'rp') {
+            const subst = (t) => String(t)
+                .replace(/\{\{char\}\}/gi, charName)
+                .replace(/\{\{user\}\}/gi, userName)
+                .replace(/\{\{persona\}\}/gi, personaText || '');
+            parts.push(`[Preset Instructions]\n${subst(presetText)}`);
+            console.log(`[Context] ✓ 프리셋 주입 (${presetText.length}자)`);
+        }
 
         // --- 캐릭터 기본 정보 ---
         if (character.description) {

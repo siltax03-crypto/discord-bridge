@@ -86,6 +86,66 @@ const STReader = {
         return null;
     },
 
+    // 프로필 찾기 (로그 없이)
+    _findProfile(profileName) {
+        const cm = this.getSettings().extension_settings?.connectionManager;
+        if (!cm?.profiles?.length) return null;
+        let profile;
+        if (profileName) profile = cm.profiles.find(p => p.name === profileName || p.id === profileName);
+        if (!profile) profile = cm.profiles.find(p => p.id === cm.selectedProfile) || cm.profiles[0];
+        return profile || null;
+    },
+
+    // 커넥션 프로필에 연결된 챗컴플리션 프리셋 이름
+    getPresetName(profileName) {
+        return this._findProfile(profileName)?.preset || '';
+    },
+
+    // 프리셋의 활성 프롬프트들을 조립 (마커는 제외 — 캐릭터/페르소나/로어북은 따로 주입하므로)
+    getPresetPrompts(profileName) {
+        const presetName = this.getPresetName(profileName);
+        if (!presetName) return '';
+
+        const candidates = [
+            path.join(stPath, 'data', 'default-user', 'OpenAI Settings', `${presetName}.json`),
+            path.join(stPath, 'public', 'OpenAI Settings', `${presetName}.json`),
+        ];
+        let preset = null;
+        for (const p of candidates) {
+            if (fs.existsSync(p)) {
+                try { preset = JSON.parse(fs.readFileSync(p, 'utf-8')); } catch { /* skip */ }
+                break;
+            }
+        }
+        if (!preset?.prompts) {
+            console.warn(`[ST-Reader] 프리셋 파일 못 찾음/파싱 실패: ${presetName}`);
+            return '';
+        }
+
+        const byId = {};
+        for (const p of preset.prompts) byId[p.identifier] = p;
+
+        // prompt_order에서 활성 순서 가져오기 (없으면 prompts 순서)
+        let entries = null;
+        if (Array.isArray(preset.prompt_order) && preset.prompt_order.length) {
+            const ord = preset.prompt_order.find(o => o.character_id === 100001)
+                || preset.prompt_order[preset.prompt_order.length - 1];
+            entries = ord?.order;
+        }
+        if (!entries) entries = preset.prompts.map(p => ({ identifier: p.identifier, enabled: p.enabled !== false }));
+
+        const parts = [];
+        for (const e of entries) {
+            if (e.enabled === false) continue;
+            const p = byId[e.identifier];
+            if (!p || p.marker) continue;          // 마커(chatHistory/charDescription 등)는 스킵
+            const c = (p.content || '').trim();
+            if (c) parts.push(c);
+        }
+        if (parts.length) console.log(`[ST-Reader] 프리셋 "${presetName}" 조립 (${parts.length}개 프롬프트)`);
+        return parts.join('\n\n');
+    },
+
     getPersonaDescription() {
         const settings = this.getSettings();
         return settings.persona_description || settings.power_user?.persona_description || '';

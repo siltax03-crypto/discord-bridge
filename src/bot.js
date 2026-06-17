@@ -187,7 +187,7 @@ const Bot = {
                 `• CHARM 메모리: ${charmCount}개`,
                 `• 작가노트: ${Notes.list(channelId).length}개`,
                 `• 리마인더: ${Reminders.listForChannel(channelId).length}개`,
-                '• 프리셋: 미연동',
+                `• 프리셋: ${STReader.getPresetName(config.connectionProfile) || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
             ];
             return interaction.reply({ content: lines.join('\n'), ...eph });
         }
@@ -359,6 +359,8 @@ const Bot = {
             ? (config.rpResponseTokens || 8192)
             : (config.maxResponseTokens || 1000);
 
+        const presetText = mode === 'rp' ? STReader.getPresetPrompts(config.connectionProfile) : '';
+
         const systemPrompt = ContextBuilder.build(character, {
             userName: effUserName,
             language: config.language || 'ko',
@@ -367,6 +369,7 @@ const Bot = {
             timezone: config.timezone || 'Asia/Seoul',
             notes: Notes.list(channelId),
             personaText,
+            presetText,
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -487,6 +490,7 @@ const Bot = {
                 timezone: config.timezone || 'Asia/Seoul',
                 proactive: true,
                 proactiveNote: note,
+                presetText: mode === 'rp' ? STReader.getPresetPrompts(config.connectionProfile) : '',
             });
 
             const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
