@@ -15,22 +15,32 @@ import ChatHistory from './chat-history.js';
  */
 
 let timers = [];
+let tz = 'Asia/Seoul';
 const HOUR = 60 * 60 * 1000;
 
 function rand(min, max) {
     return min + Math.random() * (max - min);
 }
 
+// 설정된 timezone 기준의 현재 시(hour). 서버가 UTC여도 서울 시간으로 판정.
+function hourInTz() {
+    const s = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(new Date());
+    const h = parseInt(s, 10);
+    return h === 24 ? 0 : h;
+}
+
 function inActiveHours(activeHours) {
     if (!Array.isArray(activeHours) || activeHours.length !== 2) return true;
-    const h = new Date().getHours();
+    const h = hourInTz();
     const [start, end] = activeHours;
+    // start<=end: 같은 날 구간 / start>end: 자정 넘김(예: 9~3시)
     return start <= end ? h >= start && h <= end : h >= start || h <= end;
 }
 
 const Scheduler = {
     init(config, sendProactive) {
         this.stop();
+        tz = config.timezone || 'Asia/Seoul';
         const p = config.proactive;
         if (!p) return;
 
