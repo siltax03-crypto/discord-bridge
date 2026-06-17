@@ -427,7 +427,7 @@ jQuery(async () => {
     $('#dbridge_update').on('click', async () => {
         if (!confirm('최신 버전을 받아 적용할까요?\n(git pull → 설치 → 재배포 → 봇 재시작)')) return;
         const $btn = $('#dbridge_update');
-        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> 업데이트 중...');
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> ');
         try {
             const r = await apiPost('/update', {});
             toastr.success('업데이트 완료. 확장 변경은 브라우저 새로고침(F5), 플러그인 변경은 ST 재시작 후 적용됩니다.', 'Discord Bridge', { timeOut: 8000 });
@@ -436,7 +436,7 @@ jQuery(async () => {
         } catch (e) {
             toastr.error(e.message, '업데이트 실패 (git remote/충돌 확인)');
         } finally {
-            $btn.prop('disabled', false).html('<i class="fa-solid fa-download"></i> 업데이트');
+            $btn.prop('disabled', false).html('<i class="fa-solid fa-download"></i> ');
         }
     });
     $('#dbridge_proactive').on('change', function () {
