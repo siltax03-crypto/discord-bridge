@@ -525,9 +525,10 @@ const Bot = {
     },
 
     // --- 자동 삭제 에러 메시지 ---
+    // 페르소나 프록시가 원본 메시지를 지웠을 수 있으므로 reply가 아니라 채널로 보낸다
     async _tempReply(message, text) {
         try {
-            const reply = await message.reply(text);
+            const reply = await message.channel.send(text);
             setTimeout(() => reply.delete().catch(() => {}), 10_000);
         } catch (e) {
             console.error('[Bot] 임시 메시지 전송 실패:', e.message);

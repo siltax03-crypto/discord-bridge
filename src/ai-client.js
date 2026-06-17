@@ -106,6 +106,7 @@ const AIClient = {
                 `[AI] 빈 응답. finishReason=${cand?.finishReason}, parts=${parts.length}, ` +
                 `promptFeedback=${JSON.stringify(data.promptFeedback || {})}`,
             );
+            console.warn(`[AI] parts 덤프: ${JSON.stringify(parts).slice(0, 600)}`);
         } else if (cand?.finishReason === 'MAX_TOKENS') {
             console.warn(`[AI] 응답이 토큰 한도에서 잘림 (MAX_TOKENS, maxTokens=${maxTokens}). 응답 토큰을 더 올리세요.`);
         }
