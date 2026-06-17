@@ -187,7 +187,8 @@ const Bot = {
                 `• CHARM 메모리: ${charmCount}개`,
                 `• 작가노트: ${Notes.list(channelId).length}개`,
                 `• 리마인더: ${Reminders.listForChannel(channelId).length}개`,
-                `• 프리셋: ${STReader.getPresetName(config.connectionProfile) || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
+                `• 프로필: ${AIClient.getProfile()?.name || '?'}`,
+                `• 프리셋: ${AIClient.getProfile()?.preset || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
             ];
             return interaction.reply({ content: lines.join('\n'), ...eph });
         }
@@ -359,7 +360,8 @@ const Bot = {
             ? (config.rpResponseTokens || 8192)
             : (config.maxResponseTokens || 1000);
 
-        const presetText = mode === 'rp' ? STReader.getPresetPrompts(config.connectionProfile) : '';
+        const presetName = AIClient.getProfile()?.preset || '';
+        const presetText = (mode === 'rp' && presetName) ? STReader.getPresetPromptsByName(presetName) : '';
 
         const systemPrompt = ContextBuilder.build(character, {
             userName: effUserName,
@@ -490,7 +492,7 @@ const Bot = {
                 timezone: config.timezone || 'Asia/Seoul',
                 proactive: true,
                 proactiveNote: note,
-                presetText: mode === 'rp' ? STReader.getPresetPrompts(config.connectionProfile) : '',
+                presetText: mode === 'rp' ? STReader.getPresetPromptsByName(AIClient.getProfile()?.preset || '') : '',
             });
 
             const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);

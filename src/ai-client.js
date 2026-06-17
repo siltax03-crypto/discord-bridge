@@ -9,6 +9,11 @@ const AIClient = {
         profile = STReader.getConnectionProfile(cfg.connectionProfile);
     },
 
+    // 실제 생성에 쓰는, 해석된 프로필 (프리셋 등 일관성 위해 단일 출처)
+    getProfile() {
+        return profile;
+    },
+
     async sendMessage(messages, options = {}) {
         const api = profile.api || '';
         const model = profile.model || '';

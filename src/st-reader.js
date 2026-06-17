@@ -102,8 +102,8 @@ const STReader = {
     },
 
     // 프리셋의 활성 프롬프트들을 조립 (마커는 제외 — 캐릭터/페르소나/로어북은 따로 주입하므로)
-    getPresetPrompts(profileName) {
-        const presetName = this.getPresetName(profileName);
+    // presetName을 직접 받는다 (실제 생성에 쓰는 프로필의 preset과 일치시키기 위해)
+    getPresetPromptsByName(presetName) {
         if (!presetName) return '';
 
         const candidates = [
