@@ -244,8 +244,8 @@ function syncFromDom() {
     state.proactive = {
         enabled: $('#dbridge_proactive').prop('checked'),
         photos: $('#dbridge_proactive_photos').prop('checked'),
-        idleMinHours: parseInt($('#dbridge_idlemin').val(), 10) || 3,
-        idleMaxHours: parseInt($('#dbridge_idlemax').val(), 10) || 8,
+        idleMinHours: parseFloat($('#dbridge_idlemin').val()) || 3,
+        idleMaxHours: parseFloat($('#dbridge_idlemax').val()) || 8,
         activeHours: [
             parseInt($('#dbridge_active_start').val(), 10) || 0,
             parseInt($('#dbridge_active_end').val(), 10) || 23,
@@ -368,11 +368,11 @@ const SETTINGS_HTML = `
                 <div class="dbridge_grid2">
                     <div>
                         <label>조용하면 최소(h)</label>
-                        <input type="number" id="dbridge_idlemin" class="text_pole" min="1" />
+                        <input type="number" id="dbridge_idlemin" class="text_pole" min="0.1" step="0.1" />
                     </div>
                     <div>
                         <label>최대(h)</label>
-                        <input type="number" id="dbridge_idlemax" class="text_pole" min="1" />
+                        <input type="number" id="dbridge_idlemax" class="text_pole" min="0.1" step="0.1" />
                     </div>
                     <div></div>
                 </div>
