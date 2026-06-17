@@ -140,7 +140,8 @@ const ContextBuilder = {
         const remindInstruction = `- Current time: ${nowStr} (timezone ${timezone}).
 - If the user NEWLY asks to be woken or reminded at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]
 - IMPORTANT: Add the tag ONLY ONCE, in the single reply where the user first asks. Do NOT repeat a [REMIND] tag in later replies for a reminder you already set. The tag must never be your entire message — always write a natural reply too.
-- If you tell ${userName} to reply within a short time (e.g. "answer within 1 minute or I'm coming to get you"), append [FOLLOWUP: <minutes> | what you threatened/promised] at the very END. If they don't reply within that time, you'll automatically send a follow-up nudge. Only use it when you actually say something like that, and never make the tag your whole message.`;
+- If you tell ${userName} to reply within a short time (e.g. "answer within 1 minute or I'm coming to get you"), append [FOLLOWUP: <minutes> | what you threatened/promised] at the very END. If they don't reply within that time, you'll automatically send a follow-up nudge. Only use it when you actually say something like that, and never make the tag your whole message.
+- If you say you'll be UNREACHABLE for a while (boarding a plane, going somewhere with no signal, heading into work/sleep, etc.), append [AWAY: <minutes>] at the very END. During that time you will NOT see or answer ${userName}'s messages, and when it ends you'll automatically message them first ("I'm back"). Use realistic minutes (a few hours = 120~240). Only when you genuinely say you'll be gone; never make the tag your whole message.`;
 
         const proactiveLines = proactive
             ? `

@@ -9,6 +9,7 @@ import Bot from './bot.js';
 import ImageGen from './image-gen.js';
 import Scheduler from './scheduler.js';
 import Reminders from './reminders.js';
+import Away from './away.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -86,11 +87,15 @@ try {
     // --- 봇 시작 ---
     await Bot.start(config);
 
-    // --- 선톡 스케줄러 + 리마인더 ---
+    // --- 선톡 스케줄러 + 리마인더 + 잠수복귀 ---
     const sendProactive = (channelId, note) => Bot.sendProactive(channelId, note);
     Scheduler.init(config, sendProactive);
     Reminders.init(config, sendProactive);
-    console.log('[Init] 스케줄러/리마인더 설정 완료');
+    Away.init((channelId) => Bot.sendProactive(
+        channelId,
+        '비행기/외출 등으로 자리를 비웠다가 지금 막 돌아온 상황이야. 다시 연락하면서, 자리 비운 동안 사용자가 보낸 메시지가 있으면 자연스럽게 거기에 답해.',
+    ));
+    console.log('[Init] 스케줄러/리마인더/잠수 설정 완료');
 
     // --- heartbeat: ST 확장 설정 UI에서 봇 상태 표시용 ---
     const statusPath = path.join(__dirname, '..', 'data', 'bot-status.json');

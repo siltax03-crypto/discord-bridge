@@ -7,6 +7,7 @@ import ImageGen from './image-gen.js';
 import Modes from './modes.js';
 import Reminders from './reminders.js';
 import Notes from './notes.js';
+import Away from './away.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -191,6 +192,7 @@ const Bot = {
                 `• CHARM 메모리: ${charmCount}개`,
                 `• 작가노트: ${Notes.list(channelId).length}개`,
                 `• 리마인더: ${Reminders.listForChannel(channelId).length}개`,
+                `• 상태: ${Away.isAway(channelId) ? '🔇 잠수 중 (응답 안 함)' : '🟢 응답 중'}`,
                 `• 프로필: ${AIClient.getProfile()?.name || '?'}`,
                 `• 프리셋: ${AIClient.getProfile()?.preset || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
             ];
@@ -344,6 +346,12 @@ const Bot = {
             const personaName = config.channels[message.channelId]?.persona;
             if (personaName) await this._proxyUserMessage(message, personaName);
 
+            // 캐릭터가 "잠수" 선언한 시간이면: 메시지는 저장(위에서 됨)하되 답하지 않음
+            if (Away.isAway(message.channelId)) {
+                console.log(`[Bot] 잠수 중 - 응답 안 함 (채널 ${message.channelId})`);
+                return;
+            }
+
             const ok = await this._respond(message.channel, message.channelId, { imageBase64, userName });
             if (!ok) this._tempReply(message, '⚠️ 응답을 생성하지 못했어요.');
 
@@ -428,6 +436,12 @@ const Bot = {
         // [FOLLOWUP: 분 | 의도] → 그 시간 뒤 유저가 답 없으면 재촉
         response = response.replace(/\[FOLLOWUP:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
             this._scheduleFollowup(channelId, parseInt(min, 10), (note || '').trim());
+            return '';
+        }).trim();
+
+        // [AWAY: 분] → 이 답변 후 그 시간 동안 잠수(무응답), 끝나면 자동 복귀 연락
+        response = response.replace(/\[AWAY:\s*(\d+)\]/gi, (_, min) => {
+            Away.setAway(channelId, parseInt(min, 10));
             return '';
         }).trim();
 
@@ -530,6 +544,11 @@ const Bot = {
 
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
     async sendProactive(channelId, note = '') {
+        // 잠수 중이면 선톡/리마인더/재촉 다 생략 (복귀 연락은 Away가 잠수 해제 후 호출하므로 통과됨)
+        if (Away.isAway(channelId)) {
+            console.log(`[Bot] 잠수 중 - 선톡 생략 (채널 ${channelId})`);
+            return;
+        }
         const channel = await client.channels.fetch(channelId).catch(() => null);
         if (!channel) return;
         const character = this._getCharacter(channelId);
