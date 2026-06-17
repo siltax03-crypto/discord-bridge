@@ -9,6 +9,7 @@ const MAX_TIMEOUT = 2 ** 31 - 1; // setTimeout 최대치 (~24.8일)
 let list = [];
 let sendFn = null;
 let timezone = 'Asia/Seoul';
+const timers = {}; // { reminderId: timeoutHandle }
 
 // tz 기준 벽시계 시각의 각 구성요소
 function tzParts(date, tz) {
@@ -100,13 +101,52 @@ const Reminders = {
             else this._fire(r);
         }, wait);
         t.unref?.();
+        timers[r.id] = t;
     },
 
     async _fire(r) {
+        clearTimeout(timers[r.id]);
+        delete timers[r.id];
         list = list.filter((x) => x.id !== r.id);
         this._save();
         if (!sendFn) return;
         await sendFn(r.channelId, `약속했던 리마인드 시간이야. 다음 내용을 자연스럽게 전해: ${r.text}`);
+    },
+
+    // --- 조회/삭제 (/reminders 명령용) ---
+    listForChannel(channelId) {
+        return list.filter((r) => r.channelId === channelId).sort((a, b) => a.fireAt - b.fireAt);
+    },
+
+    removeById(id) {
+        const r = list.find((x) => x.id === id);
+        if (!r) return false;
+        clearTimeout(timers[id]);
+        delete timers[id];
+        list = list.filter((x) => x.id !== id);
+        this._save();
+        return true;
+    },
+
+    removeByIndex(channelId, index) {
+        const arr = this.listForChannel(channelId);
+        if (index < 0 || index >= arr.length) return null;
+        const r = arr[index];
+        this.removeById(r.id);
+        return r;
+    },
+
+    clearChannel(channelId) {
+        const arr = this.listForChannel(channelId);
+        for (const r of arr) this.removeById(r.id);
+        return arr.length;
+    },
+
+    // 표시용: tz 기준 "MM/DD HH:MM" 포맷
+    formatTime(fireAt) {
+        return new Intl.DateTimeFormat('sv-SE', {
+            timeZone: timezone, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+        }).format(new Date(fireAt));
     },
 };
 

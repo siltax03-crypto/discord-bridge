@@ -75,6 +75,14 @@ const Bot = {
                     s.setName('del').setDescription('노트 삭제').addIntegerOption((o) =>
                         o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true)))
                 .addSubcommand((s) => s.setName('clear').setDescription('노트 전체 삭제')),
+            new SlashCommandBuilder()
+                .setName('reminders')
+                .setDescription('예약된 리마인더 관리')
+                .addSubcommand((s) => s.setName('list').setDescription('리마인더 목록 보기'))
+                .addSubcommand((s) =>
+                    s.setName('del').setDescription('리마인더 삭제').addIntegerOption((o) =>
+                        o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true)))
+                .addSubcommand((s) => s.setName('clear').setDescription('리마인더 전체 삭제')),
         ].map((c) => c.toJSON());
 
         try {
@@ -146,6 +154,29 @@ const Bot = {
             if (sub === 'clear') {
                 Notes.clear(channelId);
                 return interaction.reply({ content: '🗑 작가노트를 전부 삭제했어요.', ...eph });
+            }
+        }
+
+        if (cmd === 'reminders') {
+            const sub = interaction.options.getSubcommand();
+            if (sub === 'list') {
+                const arr = Reminders.listForChannel(channelId);
+                const body = arr.length
+                    ? arr.map((r, i) => `${i + 1}. [${Reminders.formatTime(r.fireAt)}] ${r.text}`).join('\n')
+                    : '(예약된 리마인더 없음)';
+                return interaction.reply({ content: `⏰ 리마인더\n${body}`, ...eph });
+            }
+            if (sub === 'del') {
+                const idx = interaction.options.getInteger('index');
+                const removed = Reminders.removeByIndex(channelId, idx - 1);
+                return interaction.reply({
+                    content: removed ? `🗑 [${Reminders.formatTime(removed.fireAt)}] 리마인더를 삭제했어요.` : '⚠️ 그 번호의 리마인더가 없어요.',
+                    ...eph,
+                });
+            }
+            if (sub === 'clear') {
+                const n = Reminders.clearChannel(channelId);
+                return interaction.reply({ content: `🗑 리마인더 ${n}개를 전부 삭제했어요.`, ...eph });
             }
         }
     },
