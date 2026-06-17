@@ -195,33 +195,31 @@ const STReader = {
         const charDir = this.getCharactersDir();
         const files = fs.readdirSync(charDir);
 
-        // 1) PNG 캐릭터 카드에서 읽기 (ST 기본 형식)
+        // 모든 카드를 읽어 {name, data, avatar} 목록으로 (PNG 우선, JSON 폴백)
+        const cards = [];
         for (const file of files.filter(f => f.endsWith('.png'))) {
             try {
                 const data = this._readPngCharacterCard(path.join(charDir, file));
                 if (!data) continue;
-                const charName = data.name || data.data?.name || '';
-                if (charName === name || charName.toLowerCase() === name.toLowerCase()) {
-                    data.avatar = file; // 아바타 경로 보존
-                    return data;
-                }
-            } catch (e) {
-                // PNG 파싱 실패한 파일은 스킵
-            }
+                data.avatar = file;
+                cards.push({ charName: data.name || data.data?.name || '', data });
+            } catch (e) { /* 깨진 PNG 스킵 */ }
         }
-
-        // 2) JSON 폴백 (구버전 호환)
         for (const file of files.filter(f => f.endsWith('.json'))) {
             try {
                 const data = JSON.parse(fs.readFileSync(path.join(charDir, file), 'utf-8'));
-                const charName = data.name || data.data?.name || '';
-                if (charName === name || charName.toLowerCase() === name.toLowerCase()) {
-                    return data;
-                }
-            } catch (e) {
-                // JSON 파싱 실패한 파일은 스킵
-            }
+                cards.push({ charName: data.name || data.data?.name || '', data });
+            } catch (e) { /* 깨진 JSON 스킵 */ }
         }
+
+        // 1순위: 대소문자까지 정확히 일치
+        const exact = cards.find(c => c.charName === name);
+        if (exact) return exact.data;
+
+        // 2순위: 대소문자 무시 (정확 일치가 하나도 없을 때만)
+        const ci = cards.find(c => c.charName.toLowerCase() === name.toLowerCase());
+        if (ci) return ci.data;
+
         throw new Error(`캐릭터를 찾을 수 없습니다: ${name}`);
     },
 
