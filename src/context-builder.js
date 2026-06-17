@@ -145,7 +145,8 @@ const ContextBuilder = {
         const proactiveLines = proactive
             ? `
 - You are texting ${userName} FIRST, unprompted — they have not said anything.
-- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — fully in line with your character description. Make it feel like you truly live your own life even when ${userName} isn't around. Keep it short and natural, like a real text.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
+- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — fully in line with your character description. Make it feel like you truly live your own life even when ${userName} isn't around. Keep it short and natural, like a real text.
+- Let the CURRENT TIME OF DAY shape your message naturally: morning → waking up / breakfast / heading out; noon → lunch ("점심 먹었어?" / "밥 먹어야지"); evening → dinner / winding down; late night → being sleepy / can't sleep. Match it to what your character would realistically be doing at this hour.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
             : '';
 
         if (mode === 'rp') {
