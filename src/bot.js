@@ -376,6 +376,15 @@ const Bot = {
         const presetName = AIClient.getProfile()?.preset || '';
         const presetText = (mode === 'rp' && presetName) ? STReader.getPresetPromptsByName(presetName) : '';
 
+        // 이전 메시지로부터 흐른 시간 (리얼타임 반영)
+        const recent = ChatHistory.getMessages(channelId, 2);
+        let timeGapText = '';
+        if (recent.length >= 2) {
+            const prev = Date.parse(recent[recent.length - 2].timestamp);
+            const cur = Date.parse(recent[recent.length - 1].timestamp);
+            if (prev && cur && cur > prev) timeGapText = this._humanizeGap((cur - prev) / 60000);
+        }
+
         const systemPrompt = ContextBuilder.build(character, {
             userName: effUserName,
             language: config.language || 'ko',
@@ -385,6 +394,7 @@ const Bot = {
             notes: Notes.list(channelId),
             personaText,
             presetText,
+            timeGapText,
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -487,6 +497,15 @@ const Bot = {
                 await delay(800 + Math.min(parts[i].length * 20, 2500));
             }
         }
+    },
+
+    // 분 단위 시간차 → 사람이 읽는 표현. 30분 미만이면 '' (텀 없음으로 간주)
+    _humanizeGap(min) {
+        if (min < 30) return '';
+        if (min < 60) return `${Math.round(min)}분`;
+        const h = min / 60;
+        if (h < 24) return `${Math.round(h)}시간`;
+        return `${Math.round(h / 24)}일`;
     },
 
     // --- "답 없으면 재촉": N분 뒤 유저가 답 없으면 다시 연락 ---

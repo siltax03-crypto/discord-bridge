@@ -310,9 +310,9 @@ const SETTINGS_HTML = `
             <div class="dbridge_statusbar">
                 <span id="dbridge_status">⚪ 상태 확인 중...</span>
                 <div class="dbridge_inline">
-                    <div class="menu_button" id="dbridge_refresh"><i class="fa-solid fa-rotate"></i> 새로고침</div>
-                    <div class="menu_button" id="dbridge_restart"><i class="fa-solid fa-power-off"></i> 봇 재시작</div>
-                    <div class="menu_button" id="dbridge_update"><i class="fa-solid fa-download"></i> 업데이트</div>
+                    <div class="menu_button" id="dbridge_refresh"><i class="fa-solid fa-rotate"></i> </div>
+                    <div class="menu_button" id="dbridge_restart"><i class="fa-solid fa-power-off"></i> </div>
+                    <div class="menu_button" id="dbridge_update"><i class="fa-solid fa-download"></i> </div>
                 </div>
             </div>
 
@@ -343,7 +343,7 @@ const SETTINGS_HTML = `
             <hr/>
             <div class="dbridge_section_head">
                 <label>채널 ↔ 캐릭터 매핑</label>
-                <div class="menu_button" id="dbridge_add_channel"><i class="fa-solid fa-plus"></i> 추가</div>
+                <div class="menu_button" id="dbridge_add_channel"><i class="fa-solid fa-plus"></i> </div>
             </div>
             <div class="dbridge_hint" id="dbridge_channels_note"></div>
             <div id="dbridge_channel_list"></div>

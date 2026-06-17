@@ -17,6 +17,7 @@ const ContextBuilder = {
             notes = [],
             personaText = '',
             presetText = '',
+            timeGapText = '',
         } = options;
         const charName = character.name || character.data?.name || 'Character';
         const parts = [];
@@ -123,6 +124,15 @@ const ContextBuilder = {
         const antiRepeat =
             '- Do NOT reuse sentences, phrases, or sentence patterns from your recent messages. Each reply must be freshly worded and move the conversation forward.';
 
+        // 채팅 모드: 물리적으로 떨어져 있음 (만나서 하는 행동 금지, 미래/재회 언급은 OK)
+        const distanceInstruction =
+            `- You and ${userName} are physically far apart, texting from a distance. You are NOT together in person. Do NOT do in-person actions (no kissing/touching/hugging right now). References to the future or to when you meet are fine (e.g. "집에 가면 뽀뽀해줘").`;
+
+        // 리얼타임: 이전 메시지로부터 시간이 흐름
+        const timeGapInstruction = timeGapText
+            ? `- About ${timeGapText} have passed since the previous message. Real time has moved on in your life — do NOT seamlessly continue the earlier topic as if no time passed. React to the time gap naturally (what you've been doing, the changed mood/time of day). To bring back an earlier topic, reference it explicitly (e.g. "아까 얘기하던 거"). This is a place where you actually live your life.`
+            : '';
+
         // 현재 시각(tz 벽시계) + 리마인더 인식 지시
         const nowStr = new Intl.DateTimeFormat('sv-SE', {
             timeZone: timezone, dateStyle: 'short', timeStyle: 'short',
@@ -146,6 +156,7 @@ const ContextBuilder = {
 ${langInstruction}
 ${slangInstruction}
 ${antiRepeat}
+${timeGapInstruction}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
         } else {
@@ -156,9 +167,11 @@ ${remindInstruction}${proactiveLines}`);
 - DO NOT write like a novel or screenplay.
 - Respond naturally as if texting a real person on Discord.
 - Write like real texting: keep it short. Break your reply into 1-3 short messages, each separated by a BLANK LINE (they become separate chat bubbles). Never write one long paragraph.
+${distanceInstruction}
 ${langInstruction}
 ${slangInstruction}
 ${antiRepeat}
+${timeGapInstruction}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
         }
