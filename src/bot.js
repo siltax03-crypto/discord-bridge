@@ -76,6 +76,9 @@ const Bot = {
                         o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true)))
                 .addSubcommand((s) => s.setName('clear').setDescription('노트 전체 삭제')),
             new SlashCommandBuilder()
+                .setName('info')
+                .setDescription('이 채널에 주입되는 정보 보기 (캐릭터/페르소나/메모리 등)'),
+            new SlashCommandBuilder()
                 .setName('reminders')
                 .setDescription('예약된 리마인더 관리')
                 .addSubcommand((s) => s.setName('list').setDescription('리마인더 목록 보기'))
@@ -155,6 +158,38 @@ const Bot = {
                 Notes.clear(channelId);
                 return interaction.reply({ content: '🗑 작가노트를 전부 삭제했어요.', ...eph });
             }
+        }
+
+        if (cmd === 'info') {
+            const character = this._getCharacter(channelId);
+            if (!character) return interaction.reply({ content: '⚠️ 캐릭터 로드 실패', ...eph });
+            const charName = character.name || '?';
+            const descLen = (character.description || '').length;
+
+            const personaName = config.channels[channelId]?.persona;
+            const personaText = personaName ? STReader.getPersonaByName(personaName) : STReader.getPersonaDescription();
+
+            const mode = Modes.get(channelId);
+            const charBook = STReader.getCharacterBook(character).length;
+            const worldName = STReader.getCharacterWorldName(character);
+            const worldEntries = STReader.getWorldInfo(worldName).length;
+
+            const charId = character.avatar?.replace(/\.[^/.]+$/, '') || charName;
+            const charm = STReader.getCharmMemory(charId);
+            const charmCount = charm?.memories?.length || 0;
+
+            const lines = [
+                '**📋 채널 주입 정보**',
+                `• 캐릭터: ${charName} (설명 ${descLen}자)`,
+                `• 페르소나: ${personaName || '(기본)'} ${personaText ? `(${personaText.length}자)` : '(없음)'}`,
+                `• 모드: ${mode === 'rp' ? '🎭 롤플' : '💬 채팅'}`,
+                `• 로어북: 캐릭터북 ${charBook}개 + 월드"${worldName || '-'}" ${worldEntries}개`,
+                `• CHARM 메모리: ${charmCount}개`,
+                `• 작가노트: ${Notes.list(channelId).length}개`,
+                `• 리마인더: ${Reminders.listForChannel(channelId).length}개`,
+                '• 프리셋: 미연동',
+            ];
+            return interaction.reply({ content: lines.join('\n'), ...eph });
         }
 
         if (cmd === 'reminders') {
