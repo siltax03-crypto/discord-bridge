@@ -50,6 +50,11 @@ const AIClient = {
                 }),
         }));
 
+        // contents가 비면 Vertex가 400(at least one contents field). 최소 1개 보장.
+        if (contents.length === 0) {
+            contents.push({ role: 'user', parts: [{ text: '(계속)' }] });
+        }
+
         const modelName = model || 'gemini-2.0-flash';
         const body = {
             contents,

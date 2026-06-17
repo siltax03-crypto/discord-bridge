@@ -114,7 +114,8 @@ const ContextBuilder = {
             timeZone: timezone, dateStyle: 'short', timeStyle: 'short',
         }).format(new Date());
         const remindInstruction = `- Current time: ${nowStr} (timezone ${timezone}).
-- If the user mentions a time they need to wake up, an appointment, or asks to be reminded of something at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. You may add multiple tags. Also reply naturally (acknowledge you'll remind them). Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]`;
+- If the user NEWLY asks to be woken or reminded at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]
+- IMPORTANT: Add the tag ONLY ONCE, in the single reply where the user first asks. Do NOT repeat a [REMIND] tag in later replies for a reminder you already set. The tag must never be your entire message — always write a natural reply too.`;
 
         const proactiveLines = proactive
             ? `\n- You are sending the FIRST message to start the conversation. The user has not said anything yet.${proactiveNote ? `\n- ${proactiveNote}` : ''}`

@@ -331,6 +331,12 @@ const Bot = {
             return '';
         }).trim();
 
+        // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
+        if (!response && !photoPrompt) {
+            console.warn('[Bot] 응답 본문 없음(태그뿐) — 저장/전송 생략');
+            return true;
+        }
+
         ChatHistory.addMessage(channelId, 'assistant', response, charName);
         await this._sendResponse(channel, character, response, photoPrompt);
         return true;
@@ -341,12 +347,10 @@ const Bot = {
         const charName = character.name || 'Character';
         const webhook = await this._getWebhook(channel, character);
 
-        // 빈 줄(\n\n) 기준 분할. splitMessages가 false면 통째로.
-        let parts =
-            config.splitMessages === false
-                ? [response]
-                : response.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-        if (parts.length === 0) parts = [response];
+        // 빈 줄(\n\n) 기준 분할. splitMessages가 false면 통째로. 빈 조각은 제거.
+        const parts = (config.splitMessages === false ? [response] : response.split(/\n\s*\n/))
+            .map((s) => s.trim())
+            .filter(Boolean);
 
         // 이미지 첨부 준비 (마지막 메시지에 붙임)
         let attachment = null;
@@ -359,6 +363,17 @@ const Bot = {
             } catch (e) {
                 console.error('[Bot] 이미지 생성 실패:', e.message);
             }
+        }
+
+        // 보낼 텍스트가 없으면: 이미지만 있으면 이미지만 전송, 아무것도 없으면 스킵
+        if (parts.length === 0) {
+            if (attachment) {
+                if (webhook) await webhook.send({ username: charName, files: [attachment] });
+                else await channel.send({ files: [attachment] });
+            } else {
+                console.warn('[Bot] 보낼 내용 없음(빈 응답) — 전송 스킵');
+            }
+            return;
         }
 
         for (let i = 0; i < parts.length; i++) {
@@ -424,6 +439,10 @@ const Bot = {
                 photoPrompt = photoMatch[1].trim();
                 response = response.replace(photoMatch[0], '').trim();
             }
+
+            // 선톡은 리마인더를 새로 만들지 않는다 (태그만 제거)
+            response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, '').trim();
+            if (!response && !photoPrompt) return; // 보낼 게 없으면 중단
 
             ChatHistory.addMessage(channelId, 'assistant', response, charName);
             await this._sendResponse(channel, character, response, photoPrompt);

@@ -76,6 +76,13 @@ const Reminders = {
     },
 
     add(channelId, fireAt, text) {
+        // 중복 방지: 같은 채널에서 ±3분 이내 이미 등록된 리마인더가 있으면 스킵
+        // (모델이 매 답장마다 같은 [REMIND] 태그를 다시 붙여 수십 개 쌓이는 것 방지)
+        const dup = list.find((r) => r.channelId === channelId && Math.abs(r.fireAt - fireAt) < 3 * 60 * 1000);
+        if (dup) {
+            console.log('[Reminders] 중복 리마인더 스킵 (이미 비슷한 시각에 등록됨)');
+            return dup;
+        }
         const r = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, channelId, fireAt, text };
         list.push(r);
         this._save();
