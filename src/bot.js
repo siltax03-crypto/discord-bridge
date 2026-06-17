@@ -549,12 +549,19 @@ const Bot = {
                 ? `${note} 이번엔 지금 너의 모습(셀카)이나 보고 있는 풍경 등을 담은 사진을 메시지 끝에 [SEND_PHOTO: 영어 묘사]로 같이 보내.`
                 : note;
 
+            // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
+            const personaName = config.channels[channelId]?.persona;
+            const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
+            const effUserName = personaName || 'User';
+
             const systemPrompt = ContextBuilder.build(character, {
-                userName: 'User',
+                userName: effUserName,
                 language: config.language || 'ko',
                 mode,
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
+                notes: Notes.list(channelId),
+                personaText,
                 proactive: true,
                 proactiveNote: fullNote,
                 presetText: mode === 'rp' ? STReader.getPresetPromptsByName(AIClient.getProfile()?.preset || '') : '',
