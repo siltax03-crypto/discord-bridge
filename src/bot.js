@@ -229,10 +229,11 @@ const Bot = {
                 if (webhook) sent = await webhook.send({ username: personaName, files: [attachment], wait: true });
                 else await interaction.channel.send({ files: [attachment] });
 
-                // 히스토리에 기록 + 캐릭터가 반응하도록
+                // 히스토리에 기록(연속성용) + 생성한 셀카를 비전으로 넘겨 캐릭터가 진짜 보게
                 ChatHistory.addMessage(channelId, 'user', `(셀카를 보냈다: ${promptText})`, personaName);
+                const dataUrl = `data:image/png;base64,${buffer.toString('base64')}`;
                 await interaction.editReply('📸 보냈어요.');
-                this._queueReply(interaction.channel, channelId, { userName: personaName, reactTarget: sent });
+                this._queueReply(interaction.channel, channelId, { userName: personaName, reactTarget: sent, imageBase64: dataUrl });
             } catch (e) {
                 await interaction.editReply(`⚠️ 오류: ${e.message?.substring(0, 150)}`);
             }
