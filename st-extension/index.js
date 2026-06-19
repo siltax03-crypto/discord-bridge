@@ -156,13 +156,13 @@ function render() {
     $('#dbridge_single_box').toggle(!multi);
     $('#dbridge_multi_box').toggle(multi);
 
-    // 메인 토큰 (단일봇): 잠금 + 저장됨 표시
-    $('#dbridge_token').val('').attr('readonly', true).attr('data-edited', '0')
-        .attr('placeholder', state.tokenSaved ? '•••••••• (저장됨 — 수정하려면 ✏️)' : '디스코드 봇 토큰 입력');
+    // 메인 토큰 (단일봇): 비우면 기존 유지, 입력하면 교체
+    $('#dbridge_token').val('')
+        .attr('placeholder', state.tokenSaved ? '•••••••• (저장됨, 비우면 유지)' : '디스코드 봇 토큰 입력');
 
-    // 페르소나 전담봇 토큰 (멀티): 잠금 + 저장됨 표시
-    $('#dbridge_personabot').val('').attr('readonly', true).attr('data-edited', '0')
-        .attr('placeholder', state.personaBotSaved ? '•••••••• (저장됨 — 수정하려면 ✏️)' : '페르소나 전담봇 토큰 입력');
+    // 페르소나 전담봇 토큰 (멀티)
+    $('#dbridge_personabot').val('')
+        .attr('placeholder', state.personaBotSaved ? '•••••••• (저장됨, 비우면 유지)' : '페르소나 전담봇 토큰 입력');
 
     // 프로필 드롭다운
     const profOpts =
@@ -233,13 +233,12 @@ function renderChannelRows() {
                 ? `<option value="${escapeHtml(conf.persona)}" selected>${escapeHtml(conf.persona)} (없음)</option>`
                 : '';
 
-        // 멀티봇: 채널마다 캐릭터 봇 토큰칸 (잠금 + ✏️수정). 평문은 절대 안 받아옴 → 저장여부만 표시.
+        // 멀티봇: 채널마다 캐릭터 봇 토큰칸. 평문은 안 받아옴 → 비우면 기존 유지, 입력하면 교체.
         const saved = !!conf.tokenSaved;
         const tokenField = state.botMode === 'multi'
             ? `<span>봇 토큰</span>
-               <input type="password" class="text_pole dbridge_row_token" data-edited="0" readonly
-                      placeholder="${saved ? '•••••••• (저장됨)' : '이 캐릭터 봇 토큰'}" />
-               <div class="menu_button dbridge_row_token_edit" title="토큰 수정"><i class="fa-solid fa-pen"></i></div>`
+               <input type="password" class="text_pole dbridge_row_token"
+                      placeholder="${saved ? '•••••••• (저장됨, 비우면 유지)' : '이 캐릭터 봇 토큰'}" />`
             : '';
 
         const $row = $(`
@@ -293,10 +292,10 @@ function syncFromDom() {
         const prevConf = prev[rowKey] || prev[chId];
         if (prevConf?.tokenSaved) entry.tokenSaved = true;
         if (multi) {
-            const $t = $(this).find('.dbridge_row_token');
-            // 수정 버튼 눌러서 실제로 입력한 경우에만 token 전송 → 안 건드리면 서버가 기존 유지
-            if ($t.attr('data-edited') === '1' && ($t.val() || '').trim()) {
-                entry.token = $t.val().trim();
+            const typed = ($(this).find('.dbridge_row_token').val() || '').trim();
+            // 입력했을 때만 token 전송. 비우면 안 보냄 → 서버가 기존 유지.
+            if (typed) {
+                entry.token = typed;
                 entry.tokenSaved = true;
             }
         }
@@ -322,15 +321,11 @@ async function save() {
             proactive: state.proactive,
             channels: state.channels,
         };
-        // 토큰류는 "수정해서 실제 입력한 경우에만" 전송 → 서버가 빈값/마스킹으로 안 덮음
-        const mainTok = $('#dbridge_token');
-        if (mainTok.attr('data-edited') === '1' && (mainTok.val() || '').trim()) {
-            payload.discordToken = mainTok.val().trim();
-        }
-        const pbTok = $('#dbridge_personabot');
-        if (pbTok.attr('data-edited') === '1' && (pbTok.val() || '').trim()) {
-            payload.personaBotToken = pbTok.val().trim();
-        }
+        // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
+        const mainTok = ($('#dbridge_token').val() || '').trim();
+        if (mainTok) payload.discordToken = mainTok;
+        const pbTok = ($('#dbridge_personabot').val() || '').trim();
+        if (pbTok) payload.personaBotToken = pbTok;
 
         await apiPost('/config', payload);
         // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
@@ -382,8 +377,7 @@ const SETTINGS_HTML = `
             <div id="dbridge_single_box">
                 <label>Discord 봇 토큰</label>
                 <div class="dbridge_inline">
-                    <input type="password" id="dbridge_token" class="text_pole" autocomplete="off" readonly />
-                    <div class="menu_button" id="dbridge_token_edit" title="수정"><i class="fa-solid fa-pen"></i></div>
+                    <input type="password" id="dbridge_token" class="text_pole" autocomplete="off" />
                     <div class="menu_button" id="dbridge_token_eye"><i class="fa-solid fa-eye"></i></div>
                 </div>
             </div>
@@ -391,10 +385,9 @@ const SETTINGS_HTML = `
             <div id="dbridge_multi_box" style="display:none">
                 <label>페르소나 전담봇 토큰 <span class="dbridge_hint">(내 메시지를 페르소나로 바꿔치기 전용)</span></label>
                 <div class="dbridge_inline">
-                    <input type="password" id="dbridge_personabot" class="text_pole" autocomplete="off" readonly />
-                    <div class="menu_button" id="dbridge_personabot_edit" title="수정"><i class="fa-solid fa-pen"></i></div>
+                    <input type="password" id="dbridge_personabot" class="text_pole" autocomplete="off" />
                 </div>
-                <div class="dbridge_hint">⚠ 이 봇에 "웹훅 관리 + 메시지 관리" 권한 필요. 채널마다 캐릭터 봇 토큰은 아래에 입력.</div>
+                <div class="dbridge_hint">⚠ 이 봇에 "웹훅 관리 + 메시지 관리" 권한 필요. 비우면 기존 토큰 유지. 채널 봇 토큰은 아래에.</div>
             </div>
 
             <label>커넥션 프로필 (AI 백엔드)</label>
@@ -542,17 +535,6 @@ jQuery(async () => {
     });
     // 봇 모드 전환: 입력 보존하고 모드에 맞게 다시 그림
     $('#dbridge_botmode').on('change', () => { syncFromDom(); render(); });
-    // 토큰 잠금 해제(✏️ 수정): 누르면 그 칸만 입력 가능 + edited 표시
-    const unlock = (sel) => {
-        const $t = $(sel);
-        $t.attr('readonly', false).attr('data-edited', '1').val('').attr('placeholder', '새 토큰 입력').focus();
-    };
-    $('#dbridge_token_edit').on('click', () => unlock('#dbridge_token'));
-    $('#dbridge_personabot_edit').on('click', () => unlock('#dbridge_personabot'));
-    $('#dbridge_channel_list').on('click', '.dbridge_row_token_edit', function () {
-        const $t = $(this).closest('.dbridge_row').find('.dbridge_row_token');
-        $t.attr('readonly', false).attr('data-edited', '1').val('').attr('placeholder', '새 토큰 입력').focus();
-    });
     $('#dbridge_add_channel').on('click', () => {
         // 빈 행 추가: 임시 키
         const tempId = '__new__' + Date.now();

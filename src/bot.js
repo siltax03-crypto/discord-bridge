@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType } from 'discord.js';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
@@ -371,6 +371,20 @@ const Bot = {
         }
     },
 
+    // --- 멀티봇: 그 채널 담당 봇 프로필에 상태(활동 메시지) 표시. 단일봇은 프로필 공유라 생략 ---
+    _setStatus(channelId, text) {
+        if (config.botMode !== 'multi') return;
+        const client = channelClients[channelId];
+        if (!client?.user) return;
+        try {
+            client.user.setPresence({
+                status: 'online',
+                activities: text ? [{ name: text, type: ActivityType.Custom, state: text }] : [],
+            });
+            console.log(`[Bot] 상태 갱신: ${text || '(없음)'}`);
+        } catch { /* 무시 */ }
+    },
+
     // --- 채널의 페르소나 이름: config에 수동 지정 있으면 우선, 없으면 ST 자동연결 ---
     _getPersonaName(channelId) {
         const manual = config.channels[channelId]?.persona;
@@ -572,6 +586,7 @@ const Bot = {
             personaText,
             presetText,
             timeGapText,
+            showStatus: config.botMode === 'multi',
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -601,6 +616,12 @@ const Bot = {
             response = response.replace(reactMatch[0], '').trim();
             if (reactTarget && emoji) reactTarget.react(emoji).catch((e) => console.warn('[Bot] 리액션 실패:', e.message));
         }
+
+        // [STATUS: 활동] 태그 → 멀티봇 프로필 상태 갱신
+        response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, (_, text) => {
+            this._setStatus(channelId, text.trim());
+            return '';
+        }).trim();
 
         // [REMIND: 시각 | 메시지] 태그 → 리마인더 등록
         response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
@@ -766,6 +787,7 @@ const Bot = {
                 proactive: true,
                 proactiveNote: fullNote,
                 presetText: mode === 'rp' ? STReader.getPresetPromptsByName(AIClient.getProfile()?.preset || '') : '',
+                showStatus: config.botMode === 'multi',
             });
 
             const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -785,7 +807,8 @@ const Bot = {
                 response = response.replace(photoMatch[0], '').trim();
             }
 
-            // 선톡은 리마인더를 새로 만들지 않는다 (태그만 제거)
+            // [STATUS: 활동] → 프로필 상태 갱신, 그리고 선톡은 리마인더 새로 만들지 않음(태그 제거)
+            response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, (_, t) => { this._setStatus(channelId, t.trim()); return ''; }).trim();
             response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, '').trim();
             if (!response && !photoPrompt) return; // 보낼 게 없으면 중단
 

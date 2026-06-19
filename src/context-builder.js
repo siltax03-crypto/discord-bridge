@@ -18,6 +18,7 @@ const ContextBuilder = {
             personaText = '',
             presetText = '',
             timeGapText = '',
+            showStatus = false,
         } = options;
         const charName = character.name || character.data?.name || 'Character';
         const parts = [];
@@ -133,6 +134,11 @@ const ContextBuilder = {
         const reactInstruction =
             `- You may react to ${userName}'s last message with ONE emoji by adding [REACT: 👍] at the very end. Use it like real texting: a quick ❤️/😂/👀 when it fits, or react-ONLY (almost no text) when you're busy and can only glance at your phone. Don't overuse it.`;
 
+        // 프로필 상태 (멀티봇): 지금 뭐 하는지 한 줄로 디스코드 프로필에 표시
+        const statusInstruction = showStatus
+            ? `- At the very end you MAY set your current status with [STATUS: short phrase with emoji] reflecting what you're doing right now (e.g. [STATUS: 🍳 cooking], [STATUS: 😴 sleeping], [STATUS: 💼 at work]). Update it only when your activity actually changes; keep it under ~20 chars. This shows on your Discord profile, not in the message.`
+            : '';
+
         // 불완전함 — 너무 매끈하면 가짜
         const imperfectionInstruction =
             `- Text like a real person, not polished prose: OCCASIONALLY (not every message) a small typo you quickly fix ("뭐 먄 아 뭐해ㅋㅋ"), trailing off, an abrupt subject change, or a quick afterthought sent right after. Don't be grammatically perfect every time. Keep it readable though — imperfection is a light seasoning, not constant.`;
@@ -178,6 +184,7 @@ ${timeGapInstruction}
 ${scheduleInstruction}
 ${agencyInstruction}
 ${reactInstruction}
+${statusInstruction}
 ${imperfectionInstruction}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
@@ -197,6 +204,7 @@ ${timeGapInstruction}
 ${scheduleInstruction}
 ${agencyInstruction}
 ${reactInstruction}
+${statusInstruction}
 ${imperfectionInstruction}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
