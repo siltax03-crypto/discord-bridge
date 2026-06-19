@@ -24,6 +24,8 @@ const followupTimers = {};
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
+// 채널별 생성 잠금: 한 채널에서 답 생성은 한 번에 하나만 (생성 중 온 메시지가 별도 답으로 새지 않게)
+const generating = {};
 
 const Bot = {
     async start(cfg) {
@@ -437,8 +439,15 @@ const Bot = {
 
     async _flushReply(channelId) {
         const p = pendingReplies[channelId];
-        delete pendingReplies[channelId];
         if (!p) return;
+        // 이미 생성 중이면: 끝날 때까지 기다렸다 다시 (생성 중 온 메시지는 직전 답을 보고 이어받게)
+        if (generating[channelId]) {
+            clearTimeout(p.timer);
+            p.timer = setTimeout(() => this._flushReply(channelId), 1500);
+            return;
+        }
+        delete pendingReplies[channelId];
+        generating[channelId] = true;
         try {
             await p.channel.sendTyping().catch(() => {});
             const ok = await this._respond(p.channel, channelId, {
@@ -457,6 +466,8 @@ const Bot = {
                 : `⚠️ 오류 발생: ${e.message?.substring(0, 100)}`;
             const reply = await p.channel.send(errMsg).catch(() => null);
             if (reply) setTimeout(() => reply.delete().catch(() => {}), 10_000);
+        } finally {
+            generating[channelId] = false;
         }
     },
 
