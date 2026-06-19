@@ -151,6 +151,40 @@ const STReader = {
         return settings.persona_description || settings.power_user?.persona_description || '';
     },
 
+    // 캐릭터에 ST에서 연결된 페르소나 이름을 자동으로 찾는다.
+    // 실제 ST 구조(확인됨): power_user.persona_descriptions[페르소나아바타].connections =
+    //   [{ type:'character', id:'캐릭터아바타.png' }, ...]  → 역방향으로 캐릭터→페르소나를 찾음.
+    getConnectedPersonaName(character) {
+        const pu = this.getSettings().power_user || {};
+        const personas = pu.personas || {};            // { 페르소나아바타: 페르소나이름 }
+        const descs = pu.persona_descriptions || {};   // { 페르소나아바타: { connections:[...] } }
+
+        const charAvatar = character?.avatar || '';     // 예: "Adonis ‘Baron’ Broussard.png"
+        const charName = character?.name || character?.data?.name || '';
+        const charAvatarNoExt = charAvatar.replace(/\.[^/.]+$/, '');
+
+        const matchesChar = (id) => {
+            if (!id) return false;
+            const idNoExt = String(id).replace(/\.[^/.]+$/, '');
+            return id === charAvatar || idNoExt === charAvatarNoExt || idNoExt === charName || id === charName;
+        };
+
+        // 어떤 페르소나가 이 캐릭터를 connections에 갖고 있나 (먼저 매칭되는 것)
+        for (const [personaAvatar, d] of Object.entries(descs)) {
+            const conns = d?.connections;
+            if (!Array.isArray(conns)) continue;
+            const hit = conns.some((c) => c && c.type === 'character' && matchesChar(c.id));
+            if (hit) {
+                const name = personas[personaAvatar];
+                if (name) {
+                    console.log(`[ST-Reader] 페르소나 자동연결: ${charName} → ${name}`);
+                    return name;
+                }
+            }
+        }
+        return '';
+    },
+
     // 이름으로 특정 페르소나 설명 조회 (채널별 페르소나용)
     // ST 구조: power_user.personas = { [avatar]: name }, power_user.persona_descriptions = { [avatar]: { description } }
     getPersonaByName(name) {

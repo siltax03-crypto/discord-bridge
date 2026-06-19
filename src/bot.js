@@ -181,7 +181,7 @@ const Bot = {
             const charName = character.name || '?';
             const descLen = (character.description || '').length;
 
-            const personaName = config.channels[channelId]?.persona;
+            const personaName = this._getPersonaName(channelId);
             const personaText = personaName ? STReader.getPersonaByName(personaName) : STReader.getPersonaDescription();
 
             const mode = Modes.get(channelId);
@@ -211,7 +211,7 @@ const Bot = {
 
         if (cmd === 'pic') {
             const promptText = interaction.options.getString('description');
-            const personaName = config.channels[channelId]?.persona;
+            const personaName = this._getPersonaName(channelId);
             if (!personaName) {
                 return interaction.reply({ content: '이 채널에 페르소나(나)가 설정 안 됐어요. ST 확장에서 채널에 페르소나를 지정하면 그 얼굴로 셀카가 생성돼요.', ...eph });
             }
@@ -320,6 +320,15 @@ const Bot = {
         }
     },
 
+    // --- 채널의 페르소나 이름: config에 수동 지정 있으면 우선, 없으면 ST 자동연결 ---
+    _getPersonaName(channelId) {
+        const manual = config.channels[channelId]?.persona;
+        if (manual) return manual;
+        const character = this._getCharacter(channelId);
+        if (!character) return '';
+        return STReader.getConnectedPersonaName(character) || '';
+    },
+
     // --- 캐릭터 데이터 캐시 (5분마다 갱신) ---
     _getCharacter(channelId) {
         const channelConfig = config.channels[channelId];
@@ -389,7 +398,7 @@ const Bot = {
 
             // 페르소나가 지정된 채널이면 내 메시지를 페르소나 이름+사진으로 갈아끼움
             // (리액션은 화면에 보이는 메시지에 달아야 하므로 그 결과 메시지를 추적)
-            const personaName = config.channels[message.channelId]?.persona;
+            const personaName = this._getPersonaName(message.channelId);
             let reactTarget = message;
             if (personaName) {
                 const proxied = await this._proxyUserMessage(message, personaName);
@@ -478,7 +487,7 @@ const Bot = {
         const charName = character.name || 'Character';
 
         // 채널별 페르소나 (지정 시 그 페르소나로 인식)
-        const personaName = config.channels[channelId]?.persona;
+        const personaName = this._getPersonaName(channelId);
         const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
         const effUserName = personaName || userName;
 
@@ -684,7 +693,7 @@ const Bot = {
                 : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
-            const personaName = config.channels[channelId]?.persona;
+            const personaName = this._getPersonaName(channelId);
             const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
             const effUserName = personaName || 'User';
 
