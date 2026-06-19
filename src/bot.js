@@ -21,6 +21,9 @@ const characterCache = {};
 const proxiedMessageIds = new Set();
 // 채널별 "답 없으면 재촉" 타이머 (유저가 답하면 취소)
 const followupTimers = {};
+// 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
+const pendingReplies = {};
+const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
 
 const Bot = {
     async start(cfg) {
@@ -256,22 +259,24 @@ const Bot = {
         try {
             const avatarPath = STReader.getPersonaAvatarPath(personaName);
             const webhook = await this._getNamedWebhook(message.channel, `bridge-persona-${personaName}`, avatarPath);
-            if (!webhook) return;
+            if (!webhook) return null;
 
-            const opts = { username: personaName };
+            const opts = { username: personaName, wait: true };
             const content = message.content || '';
             const files = [...message.attachments.values()].map(a => a.url);
             if (content) opts.content = content;
             if (files.length) opts.files = files;
             if (!opts.content && !opts.files) opts.content = '​'; // 빈 메시지 방지
 
-            await webhook.send(opts);
+            const sent = await webhook.send(opts);
             // 이 삭제가 _onMessageDelete의 히스토리 삭제를 트리거하지 않도록 표시
             proxiedMessageIds.add(message.id);
             setTimeout(() => proxiedMessageIds.delete(message.id), 30_000); // 안전 정리
             await message.delete().catch(() => proxiedMessageIds.delete(message.id));
+            return sent; // 리액션 대상으로 쓰기 위해 반환
         } catch (e) {
             console.error('[Bot] 페르소나 프록시 실패:', e.message);
+            return null;
         }
     },
 
@@ -343,8 +348,13 @@ const Bot = {
             ChatHistory.addMessage(message.channelId, 'user', userContent, userName);
 
             // 페르소나가 지정된 채널이면 내 메시지를 페르소나 이름+사진으로 갈아끼움
+            // (리액션은 화면에 보이는 메시지에 달아야 하므로 그 결과 메시지를 추적)
             const personaName = config.channels[message.channelId]?.persona;
-            if (personaName) await this._proxyUserMessage(message, personaName);
+            let reactTarget = message;
+            if (personaName) {
+                const proxied = await this._proxyUserMessage(message, personaName);
+                if (proxied) reactTarget = proxied;
+            }
 
             // 캐릭터가 "잠수" 선언한 시간이면: 메시지는 저장(위에서 됨)하되 답하지 않음
             if (Away.isAway(message.channelId)) {
@@ -352,20 +362,56 @@ const Bot = {
                 return;
             }
 
-            const ok = await this._respond(message.channel, message.channelId, { imageBase64, userName });
-            if (!ok) this._tempReply(message, '⚠️ 응답을 생성하지 못했어요.');
+            // 배칭: 바로 답하지 않고 모았다가 한 번만 답 (연속 메시지 중복답 방지 + 사람 같은 텀)
+            this._queueReply(message.channel, message.channelId, { imageBase64, userName, reactTarget });
 
         } catch (e) {
             console.error(`[Bot] 메시지 처리 오류:`, e);
+        }
+    },
+
+    // --- 답장 배칭: 마지막 메시지 후 BATCH_WINDOW_MS 동안 잠잠하면 한 번만 답 ---
+    _queueReply(channel, channelId, { imageBase64 = null, userName = 'User', reactTarget = null } = {}) {
+        const prev = pendingReplies[channelId];
+        if (prev) clearTimeout(prev.timer);
+        const merged = {
+            channel,
+            userName,
+            imageBase64: imageBase64 || prev?.imageBase64 || null, // 가장 최근 이미지 유지
+            reactTarget: reactTarget || prev?.reactTarget || null,
+            timer: null,
+        };
+        merged.timer = setTimeout(() => this._flushReply(channelId), BATCH_WINDOW_MS);
+        pendingReplies[channelId] = merged;
+    },
+
+    async _flushReply(channelId) {
+        const p = pendingReplies[channelId];
+        delete pendingReplies[channelId];
+        if (!p) return;
+        try {
+            await p.channel.sendTyping().catch(() => {});
+            const ok = await this._respond(p.channel, channelId, {
+                imageBase64: p.imageBase64,
+                userName: p.userName,
+                reactTarget: p.reactTarget,
+            });
+            if (!ok) {
+                const reply = await p.channel.send('⚠️ 응답을 생성하지 못했어요.').catch(() => null);
+                if (reply) setTimeout(() => reply.delete().catch(() => {}), 10_000);
+            }
+        } catch (e) {
+            console.error('[Bot] 답장 처리 오류:', e);
             const errMsg = e.message?.includes('429') || e.message?.includes('RESOURCE_EXHAUSTED')
                 ? '⚠️ API 쿼터 초과! 잠시 후 다시 시도해주세요.'
                 : `⚠️ 오류 발생: ${e.message?.substring(0, 100)}`;
-            this._tempReply(message, errMsg);
+            const reply = await p.channel.send(errMsg).catch(() => null);
+            if (reply) setTimeout(() => reply.delete().catch(() => {}), 10_000);
         }
     },
 
     // --- 응답 생성 핵심 (수신/재시도 공용). 성공 시 true ---
-    async _respond(channel, channelId, { imageBase64 = null, userName = 'User' } = {}) {
+    async _respond(channel, channelId, { imageBase64 = null, userName = 'User', reactTarget = null } = {}) {
         const character = this._getCharacter(channelId);
         if (!character) return false;
         const charName = character.name || 'Character';
@@ -423,6 +469,14 @@ const Bot = {
         if (photoMatch) {
             photoPrompt = photoMatch[1].trim();
             response = response.replace(photoMatch[0], '').trim();
+        }
+
+        // [REACT: 이모지] 태그 → 유저 마지막 메시지에 이모지 리액션
+        const reactMatch = response.match(/\[REACT:\s*([^\]]+)\]/);
+        if (reactMatch) {
+            const emoji = reactMatch[1].trim();
+            response = response.replace(reactMatch[0], '').trim();
+            if (reactTarget && emoji) reactTarget.react(emoji).catch((e) => console.warn('[Bot] 리액션 실패:', e.message));
         }
 
         // [REMIND: 시각 | 메시지] 태그 → 리마인더 등록
