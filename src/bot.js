@@ -419,8 +419,20 @@ const Bot = {
             reactTarget: reactTarget || prev?.reactTarget || null,
             timer: null,
         };
-        merged.timer = setTimeout(() => this._flushReply(channelId), BATCH_WINDOW_MS);
+        // 배칭 창 + 사람 같은 답 텀(변주). 마지막 메시지 기준으로 재계산(새 메시지 오면 리셋).
+        const wait = BATCH_WINDOW_MS + this._humanReplyExtra();
+        merged.timer = setTimeout(() => this._flushReply(channelId), wait);
         pendingReplies[channelId] = merged;
+    },
+
+    // 사람 같은 답 텀: 대부분 빠르게, 가끔 보통, 드물게 좀 늦게 (config.humanTiming=false로 끔)
+    _humanReplyExtra() {
+        if (config.humanTiming === false) return 0;
+        const rand = (a, b) => a + Math.random() * (b - a);
+        const r = Math.random();
+        if (r < 0.7) return rand(0, 3000);        // 70%: 거의 바로
+        if (r < 0.93) return rand(4000, 12000);   // 23%: 조금 텀
+        return rand(15000, 30000);                // 7%: 바빴던 척
     },
 
     async _flushReply(channelId) {

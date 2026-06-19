@@ -133,6 +133,10 @@ const ContextBuilder = {
         const reactInstruction =
             `- You may react to ${userName}'s last message with ONE emoji by adding [REACT: 👍] at the very end. Use it like real texting: a quick ❤️/😂/👀 when it fits, or react-ONLY (almost no text) when you're busy and can only glance at your phone. Don't overuse it.`;
 
+        // 불완전함 — 너무 매끈하면 가짜
+        const imperfectionInstruction =
+            `- Text like a real person, not polished prose: OCCASIONALLY (not every message) a small typo you quickly fix ("뭐 먄 아 뭐해ㅋㅋ"), trailing off, an abrupt subject change, or a quick afterthought sent right after. Don't be grammatically perfect every time. Keep it readable though — imperfection is a light seasoning, not constant.`;
+
         const antiRepeat =
             '- Do NOT reuse sentences, phrases, or sentence patterns from your recent messages. Each reply must be freshly worded and move the conversation forward.';
 
@@ -174,6 +178,7 @@ ${timeGapInstruction}
 ${scheduleInstruction}
 ${agencyInstruction}
 ${reactInstruction}
+${imperfectionInstruction}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
         } else {
@@ -192,6 +197,7 @@ ${timeGapInstruction}
 ${scheduleInstruction}
 ${agencyInstruction}
 ${reactInstruction}
+${imperfectionInstruction}
 ${photoInstruction}
 ${remindInstruction}${proactiveLines}`);
         }
