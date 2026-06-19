@@ -279,19 +279,25 @@ function syncFromDom() {
     };
 
     const multi = state.botMode === 'multi';
+    const prev = state.channels || {};
     const channels = {};
     $('#dbridge_channel_list .dbridge_row').each(function () {
+        const rowKey = $(this).attr('data-channel'); // 이전 키(저장여부 추적용)
         const chId = $(this).find('.dbridge_row_channel').val();
         const char = $(this).find('.dbridge_row_char').val();
         const persona = $(this).find('.dbridge_row_persona').val();
         if (!chId || !char) return;
         const entry = { character: char };
         if (persona) entry.persona = persona;
+        // 기존 저장여부 플래그 보존 (화면 "저장됨" 표시 유지용 — 서버 전송 시엔 무시됨)
+        const prevConf = prev[rowKey] || prev[chId];
+        if (prevConf?.tokenSaved) entry.tokenSaved = true;
         if (multi) {
             const $t = $(this).find('.dbridge_row_token');
             // 수정 버튼 눌러서 실제로 입력한 경우에만 token 전송 → 안 건드리면 서버가 기존 유지
             if ($t.attr('data-edited') === '1' && ($t.val() || '').trim()) {
                 entry.token = $t.val().trim();
+                entry.tokenSaved = true;
             }
         }
         channels[chId] = entry;
@@ -327,7 +333,14 @@ async function save() {
         }
 
         await apiPost('/config', payload);
-        await loadAll(); // 저장 후 서버 상태(저장됨 표시)로 다시 그림
+        // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
+        if (payload.discordToken) state.tokenSaved = true;
+        if (payload.personaBotToken) state.personaBotSaved = true;
+        for (const [id, c] of Object.entries(state.channels)) {
+            if (c.token) { c.tokenSaved = true; delete c.token; } // 평문 화면에 안 남김
+            else if (state.channels[id]) c.tokenSaved = c.tokenSaved || false;
+        }
+        render();
         toastr.success('config.json 저장됨. 적용하려면 봇을 재시작하세요 (pm2 restart discord-bridge).', 'Discord Bridge');
     } catch (e) {
         toastr.error(e.message, 'Discord Bridge 저장 실패');
