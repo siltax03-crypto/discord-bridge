@@ -12,9 +12,10 @@ import Away from './away.js';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let config = {};
-const clients = [];              // 기동된 모든 Client (단일봇=1, 멀티봇=캐릭터봇들+페르소나봇)
-const channelClients = {};       // { channelId: 그 채널 답변 담당 client }
-let personaClient = null;        // 멀티봇 전용: 페르소나 웹훅/삭제 전담 봇 (없으면 답변봇이 대신)
+const clients = [];              // 기동된 모든 Client
+const channelClients = {};       // 단일봇: { channelId: client }
+const clientMember = new Map();  // 멀티봇: client → member({character|sheet,name,token,persona})
+let personaClient = null;        // 멀티봇: 페르소나 웹훅/삭제 전담 봇
 let primaryClient = null;        // 슬래시 명령 등록/대표 client
 // 채널별 웹훅 캐시: { channelId: webhookObject }
 const webhookCache = {};
@@ -29,33 +30,28 @@ const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
 // 채널별 생성 잠금: 한 채널에서 답 생성은 한 번에 하나만 (생성 중 온 메시지가 별도 답으로 새지 않게)
 const generating = {};
+// 멀티봇 그룹챗: 한 유저 메시지를 여러 멤버봇이 보므로, 저장/프록시는 한 번만 (메시지ID 기준)
+const intakeDone = new Set();
 
 const Bot = {
     async start(cfg) {
         config = cfg;
 
         if (cfg.botMode === 'multi') {
-            // 멀티봇: 토큰별로 Client 1개씩, 각자 자기 채널만 담당
-            const byToken = {}; // token → [channelId]
-            for (const [chId, c] of Object.entries(cfg.channels || {})) {
-                if (!c.token || c.token.includes('여기에')) {
-                    console.warn(`[Bot] 채널 ${chId}: 멀티봇인데 토큰 없음 — 스킵`);
-                    continue;
-                }
-                (byToken[c.token] ||= []).push(chId);
-            }
-            const tokens = Object.keys(byToken);
-            if (tokens.length === 0) throw new Error('멀티봇 모드인데 채널에 토큰이 하나도 없습니다.');
-            for (const token of tokens) {
-                const cl = await this._startClient(token, byToken[token], { commands: !primaryClient });
+            // 멀티봇: 멤버(캐릭터)마다 봇 1개. 채널 지정 없음 — 봇이 초대된 채널 어디서든 그 캐릭터로 동작.
+            const members = (cfg.members || []).filter((m) => m && m.token && !m.token.includes('여기에'));
+            if (members.length === 0) throw new Error('멀티봇 모드인데 멤버에 봇 토큰이 하나도 없습니다.');
+            for (const m of members) {
+                const cl = await this._startClient(m.token, [], { commands: !primaryClient, member: m });
+                clientMember.set(cl, m);
                 if (!primaryClient) primaryClient = cl;
             }
 
-            // 페르소나 전담 봇 (웹훅/메시지삭제 전담). 토큰 없으면 답변봇이 대신 처리.
+            // 페르소나 전담 봇 (웹훅/메시지삭제 전담).
             if (cfg.personaBotToken && !cfg.personaBotToken.includes('여기에')) {
                 personaClient = await this._startClient(cfg.personaBotToken, [], { persona: true });
             }
-            console.log(`[Bot] 멀티봇: 답변봇 ${tokens.length}개${personaClient ? ' + 페르소나봇 1개' : ''}`);
+            console.log(`[Bot] 멀티봇: 멤버봇 ${members.length}개${personaClient ? ' + 페르소나봇 1개' : ''}`);
         } else {
             // 단일봇: 토큰 1개가 모든 채널 담당 (기존 동작)
             const cl = await this._startClient(cfg.discordToken, Object.keys(cfg.channels || {}), { commands: true });
@@ -65,7 +61,7 @@ const Bot = {
     },
 
     // --- Client 1개 기동 ---
-    async _startClient(token, channelIds, { commands = false, persona = false } = {}) {
+    async _startClient(token, channelIds, { commands = false, persona = false, member = null } = {}) {
         const client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
@@ -77,7 +73,8 @@ const Bot = {
         for (const chId of channelIds) channelClients[chId] = client;
 
         client.once(Events.ClientReady, async (c) => {
-            console.log(`[Bot] 로그인: ${c.user.tag}${persona ? ' (페르소나 전담)' : ` / 채널 ${channelIds.length}개`}`);
+            const who = persona ? ' (페르소나 전담)' : member ? ` = ${member.name || member.character}` : ` / 채널 ${channelIds.length}개`;
+            console.log(`[Bot] 로그인: ${c.user.tag}${who}`);
             try { c.user.setPresence({ status: 'online' }); } catch { /* 무시 */ }
             if (commands) await this._registerCommands(client);
         });
@@ -161,11 +158,10 @@ const Bot = {
         const channelId = interaction.channelId;
         const eph = { flags: MessageFlags.Ephemeral };
 
-        if (!config.channels[channelId]) {
+        // 단일봇만 채널 매핑 검사 (멀티봇은 봇 초대된 채널 어디서나 동작)
+        if (config.botMode !== 'multi' && !config.channels[channelId]) {
             return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ...eph });
         }
-        // 멀티봇: 이 채널 담당 봇만 응답 (다른 봇이 같은 명령에 중복응답/오류응답 방지)
-        if (config.botMode === 'multi' && client && channelClients[channelId] !== client) return;
 
         const cmd = interaction.commandName;
 
@@ -371,17 +367,18 @@ const Bot = {
         }
     },
 
-    // --- 멀티봇: 그 채널 담당 봇 프로필에 상태(활동 메시지) 표시. 단일봇은 프로필 공유라 생략 ---
-    _setStatus(channelId, text) {
-        if (config.botMode !== 'multi') return;
-        const client = channelClients[channelId];
+    // --- 멀티봇: 그 멤버 봇 프로필에 상태(활동 메시지) 표시. 단일봇은 프로필 공유라 생략 ---
+    _setStatus(member, text) {
+        if (config.botMode !== 'multi' || !member) return;
+        let client = null;
+        for (const [cl, m] of clientMember) { if (m === member) { client = cl; break; } }
         if (!client?.user) return;
         try {
             client.user.setPresence({
                 status: 'online',
                 activities: text ? [{ name: text, type: ActivityType.Custom, state: text }] : [],
             });
-            console.log(`[Bot] 상태 갱신: ${text || '(없음)'}`);
+            console.log(`[Bot] 상태 갱신: ${member.name || member.character} → ${text || '(없음)'}`);
         } catch { /* 무시 */ }
     },
 
@@ -394,45 +391,59 @@ const Bot = {
         return STReader.getConnectedPersonaName(character) || '';
     },
 
-    // --- 캐릭터 데이터 캐시 (5분마다 갱신) ---
-    _getCharacter(channelId) {
-        const channelConfig = config.channels[channelId];
-        if (!channelConfig) return null;
-
-        const cached = characterCache[channelId];
-        if (cached && Date.now() - cached.loadedAt < 5 * 60 * 1000) {
-            return cached.data;
-        }
-
+    // --- 캐릭터 데이터 캐시 (5분마다 갱신). 카드명으로 로드 ---
+    _loadCharacterByName(cardName) {
+        if (!cardName) return null;
+        const cached = characterCache[cardName];
+        if (cached && Date.now() - cached.loadedAt < 5 * 60 * 1000) return cached.data;
         try {
-            const data = STReader.getCharacter(channelConfig.character);
-            characterCache[channelId] = { data, loadedAt: Date.now() };
+            const data = STReader.getCharacter(cardName);
+            characterCache[cardName] = { data, loadedAt: Date.now() };
             return data;
         } catch (e) {
-            console.error(`[Bot] 캐릭터 로드 실패 (${channelConfig.character}):`, e.message);
+            console.error(`[Bot] 캐릭터 로드 실패 (${cardName}):`, e.message);
             return null;
         }
+    },
+
+    // 단일봇: 채널 매핑의 캐릭터
+    _getCharacter(channelId) {
+        const cardName = config.channels?.[channelId]?.character;
+        return this._loadCharacterByName(cardName);
+    },
+
+    // 멤버(멀티봇)의 캐릭터 카드 로드. 단체시트면 시트 카드, 아니면 개별 카드.
+    _getMemberCharacter(member) {
+        if (!member) return null;
+        return this._loadCharacterByName(member.sheet || member.character);
     },
 
     // --- 메시지 수신 핸들러 ---
     async _onMessage(message, client) {
         // 봇 메시지 무시
         if (message.author.bot) return;
-        // 매핑된 채널이 아니면 무시
-        if (!config.channels[message.channelId]) return;
-        // 멀티봇: 이 채널 담당 봇만 처리 (다른 봇은 무시 → 중복답 방지)
-        if (config.botMode === 'multi' && client && channelClients[message.channelId] !== client) return;
+
+        const multi = config.botMode === 'multi';
+        let member = null;
+        let character = null;
+
+        if (multi) {
+            member = clientMember.get(client);
+            if (!member) return; // 멤버봇 아니면(페르소나봇 등) 무시
+            character = this._getMemberCharacter(member);
+            if (!character) { console.error(`[Bot] 멤버 캐릭터 로드 실패: ${member.name || member.character}`); return; }
+            // 그룹챗에서 누가 답할지: 호명되면 그 봇만, 아니면 이 채널의 다른 멤버봇이 있는지로 판단
+            if (!(await this._shouldMemberReply(message, member, client))) return;
+        } else {
+            if (!config.channels[message.channelId]) return;
+            character = this._getCharacter(message.channelId);
+            if (!character) { console.error(`[Bot] 캐릭터 없음: 채널 ${message.channelId}`); return; }
+        }
 
         // 유저가 답했으니 대기 중인 "재촉" 타이머 취소
         if (followupTimers[message.channelId]) {
             clearTimeout(followupTimers[message.channelId]);
             delete followupTimers[message.channelId];
-        }
-
-        const character = this._getCharacter(message.channelId);
-        if (!character) {
-            console.error(`[Bot] 캐릭터 없음: 채널 ${message.channelId}`);
-            return;
         }
 
         const userName = message.author.displayName || message.author.username;
@@ -461,46 +472,79 @@ const Bot = {
                 }
             }
 
-            ChatHistory.addMessage(message.channelId, 'user', userContent, userName);
-
-            // 페르소나가 지정된 채널이면 내 메시지를 페르소나 이름+사진으로 갈아끼움
-            // (리액션은 화면에 보이는 메시지에 달아야 하므로 그 결과 메시지를 추적)
-            const personaName = this._getPersonaName(message.channelId);
+            // 유저 메시지 저장 + 페르소나 프록시는 메시지당 1회만 (그룹챗에서 여러 멤버봇이 봐도)
             let reactTarget = message;
-            if (personaName) {
-                const proxied = await this._proxyUserMessage(message, personaName);
-                if (proxied) reactTarget = proxied;
+            if (!intakeDone.has(message.id)) {
+                intakeDone.add(message.id);
+                setTimeout(() => intakeDone.delete(message.id), 60_000);
+
+                // 페르소나 표시 이름: 멀티는 멤버의 persona, 단일은 채널 persona
+                const personaName = multi
+                    ? (member.persona || (character ? STReader.getConnectedPersonaName(this._getMemberCharacter(member)) : ''))
+                    : this._getPersonaName(message.channelId);
+
+                ChatHistory.addMessage(message.channelId, 'user', userContent, personaName || userName);
+
+                if (personaName) {
+                    const proxied = await this._proxyUserMessage(message, personaName);
+                    if (proxied) reactTarget = proxied;
+                }
             }
 
-            // 캐릭터가 "잠수" 선언한 시간이면: 메시지는 저장(위에서 됨)하되 답하지 않음
             if (Away.isAway(message.channelId)) {
                 console.log(`[Bot] 잠수 중 - 응답 안 함 (채널 ${message.channelId})`);
                 return;
             }
 
-            // 배칭: 바로 답하지 않고 모았다가 한 번만 답 (연속 메시지 중복답 방지 + 사람 같은 텀)
-            this._queueReply(message.channel, message.channelId, { imageBase64, userName, reactTarget });
+            // 배칭: 모았다가 한 번만 답. 멀티봇은 멤버별로 따로 큐(같은 채널에 여러 캐릭터가 각자 답)
+            const queueKey = multi ? `${message.channelId}:${member.token}` : message.channelId;
+            this._queueReply(message.channel, queueKey, message.channelId, { imageBase64, userName, reactTarget, member, character });
 
         } catch (e) {
             console.error(`[Bot] 메시지 처리 오류:`, e);
         }
     },
 
+    // --- 멀티봇 그룹챗: 이 멤버봇이 이번 메시지에 답할지 결정 ---
+    async _shouldMemberReply(message, member, client) {
+        // 이 채널에 들어와 있는 "다른 멤버봇" 수 파악 (그룹챗인지 1:1인지)
+        let otherMembers = 0;
+        for (const cl of clientMember.keys()) {
+            if (cl === client) continue;
+            if (cl.channels.cache.get(message.channelId)) otherMembers++;
+        }
+        // 1:1 (이 채널에 나만) → 항상 답
+        if (otherMembers === 0) return true;
+
+        // 그룹챗: 내 캐릭터/멤버 이름이 호명되면 답
+        const text = (message.content || '').toLowerCase();
+        const myName = (member.name || member.character || '').toLowerCase();
+        const firstName = myName.split(/[\s'‘’"]/)[0];
+        if (myName && text.includes(myName)) return true;
+        if (firstName && firstName.length >= 2 && text.includes(firstName)) return true;
+
+        // 호명 안 됐으면: 답변 폭주 방지로 일정 확률만 (그룹 분위기용)
+        return Math.random() < (config.groupChimeInChance ?? 0.25);
+    },
+
     // --- 답장 배칭: 마지막 메시지 후 BATCH_WINDOW_MS 동안 잠잠하면 한 번만 답 ---
-    _queueReply(channel, channelId, { imageBase64 = null, userName = 'User', reactTarget = null } = {}) {
-        const prev = pendingReplies[channelId];
+    // key=배칭/잠금 단위(멀티는 채널:멤버토큰), channelId=실제 채널(히스토리/페르소나)
+    _queueReply(channel, key, channelId, { imageBase64 = null, userName = 'User', reactTarget = null, member = null, character = null } = {}) {
+        const prev = pendingReplies[key];
         if (prev) clearTimeout(prev.timer);
         const merged = {
             channel,
+            channelId,
             userName,
-            imageBase64: imageBase64 || prev?.imageBase64 || null, // 가장 최근 이미지 유지
+            member: member || prev?.member || null,
+            character: character || prev?.character || null,
+            imageBase64: imageBase64 || prev?.imageBase64 || null,
             reactTarget: reactTarget || prev?.reactTarget || null,
             timer: null,
         };
-        // 배칭 창 + 사람 같은 답 텀(변주). 마지막 메시지 기준으로 재계산(새 메시지 오면 리셋).
         const wait = BATCH_WINDOW_MS + this._humanReplyExtra();
-        merged.timer = setTimeout(() => this._flushReply(channelId), wait);
-        pendingReplies[channelId] = merged;
+        merged.timer = setTimeout(() => this._flushReply(key), wait);
+        pendingReplies[key] = merged;
     },
 
     // 사람 같은 답 텀: 대부분 빠르게, 가끔 보통, 드물게 좀 늦게 (config.humanTiming=false로 끔)
@@ -513,23 +557,24 @@ const Bot = {
         return rand(15000, 30000);                // 7%: 바빴던 척
     },
 
-    async _flushReply(channelId) {
-        const p = pendingReplies[channelId];
+    async _flushReply(key) {
+        const p = pendingReplies[key];
         if (!p) return;
-        // 이미 생성 중이면: 끝날 때까지 기다렸다 다시 (생성 중 온 메시지는 직전 답을 보고 이어받게)
-        if (generating[channelId]) {
+        if (generating[key]) {
             clearTimeout(p.timer);
-            p.timer = setTimeout(() => this._flushReply(channelId), 1500);
+            p.timer = setTimeout(() => this._flushReply(key), 1500);
             return;
         }
-        delete pendingReplies[channelId];
-        generating[channelId] = true;
+        delete pendingReplies[key];
+        generating[key] = true;
         try {
             await p.channel.sendTyping().catch(() => {});
-            const ok = await this._respond(p.channel, channelId, {
+            const ok = await this._respond(p.channel, p.channelId, {
                 imageBase64: p.imageBase64,
                 userName: p.userName,
                 reactTarget: p.reactTarget,
+                member: p.member,
+                character: p.character,
             });
             if (!ok) {
                 const reply = await p.channel.send('⚠️ 응답을 생성하지 못했어요.').catch(() => null);
@@ -543,18 +588,24 @@ const Bot = {
             const reply = await p.channel.send(errMsg).catch(() => null);
             if (reply) setTimeout(() => reply.delete().catch(() => {}), 10_000);
         } finally {
-            generating[channelId] = false;
+            generating[key] = false;
         }
     },
 
     // --- 응답 생성 핵심 (수신/재시도 공용). 성공 시 true ---
-    async _respond(channel, channelId, { imageBase64 = null, userName = 'User', reactTarget = null } = {}) {
-        const character = this._getCharacter(channelId);
+    async _respond(channel, channelId, { imageBase64 = null, userName = 'User', reactTarget = null, member = null, character: charArg = null } = {}) {
+        const multi = config.botMode === 'multi';
+        const character = charArg || (multi && member ? this._getMemberCharacter(member) : this._getCharacter(channelId));
         if (!character) return false;
-        const charName = character.name || 'Character';
+        // 멤버 표시 이름: 단체시트면 member.name(시트 속 인물), 아니면 카드 name
+        const charName = (member && member.name) || character.name || 'Character';
+        // 단체 시트면 "이 시트에서 너는 누구"
+        const sheetMember = member?.sheet ? (member.name || '') : '';
 
-        // 채널별 페르소나 (지정 시 그 페르소나로 인식)
-        const personaName = this._getPersonaName(channelId);
+        // 페르소나
+        const personaName = multi
+            ? (member?.persona || STReader.getConnectedPersonaName(character) || '')
+            : this._getPersonaName(channelId);
         const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
         const effUserName = personaName || userName;
 
@@ -586,7 +637,9 @@ const Bot = {
             personaText,
             presetText,
             timeGapText,
-            showStatus: config.botMode === 'multi',
+            showStatus: multi,
+            sheetMember,          // 단체시트 속 "내가 연기할 인물" 이름 (없으면 '')
+            charName,             // 멤버 표시 이름
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -619,7 +672,7 @@ const Bot = {
 
         // [STATUS: 활동] 태그 → 멀티봇 프로필 상태 갱신
         response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, (_, text) => {
-            this._setStatus(channelId, text.trim());
+            this._setStatus(member, text.trim());
             return '';
         }).trim();
 
@@ -807,8 +860,8 @@ const Bot = {
                 response = response.replace(photoMatch[0], '').trim();
             }
 
-            // [STATUS: 활동] → 프로필 상태 갱신, 그리고 선톡은 리마인더 새로 만들지 않음(태그 제거)
-            response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, (_, t) => { this._setStatus(channelId, t.trim()); return ''; }).trim();
+            // 선톡(단일봇 경로): STATUS/REMIND 태그는 제거만 (선톡은 리마인더 새로 안 만듦)
+            response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, '').trim();
             response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, '').trim();
             if (!response && !photoPrompt) return; // 보낼 게 없으면 중단
 
@@ -834,12 +887,19 @@ const Bot = {
     // --- 메시지 삭제 동기화 ---
     async _onMessageDelete(message, client) {
         if (message.author?.bot) return;
-        if (!config.channels[message.channelId]) return;
-        if (config.botMode === 'multi' && client && channelClients[message.channelId] !== client) return;
+        const multi = config.botMode === 'multi';
+        if (!multi && !config.channels[message.channelId]) return;
         // 페르소나 프록시가 지운 메시지는 동기화 대상이 아님 (히스토리 유지)
         if (proxiedMessageIds.has(message.id)) {
             proxiedMessageIds.delete(message.id);
             return;
+        }
+        // 멀티봇: 여러 멤버봇이 같은 삭제를 보므로 1회만 처리
+        if (multi) {
+            const k = 'del:' + message.id;
+            if (intakeDone.has(k)) return;
+            intakeDone.add(k);
+            setTimeout(() => intakeDone.delete(k), 60_000);
         }
 
         const removed = ChatHistory.removeLastUserMessage(message.channelId);

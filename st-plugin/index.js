@@ -106,6 +106,14 @@ function getConfig(req, res) {
     }
     safe.channels = safeChannels;
 
+    // 멤버(멀티봇) 토큰도 평문 제거 + 저장여부 플래그
+    safe.members = (config.members || []).map((m) => {
+        const copy = { ...m };
+        copy.tokenSaved = !!(m.token && !m.token.includes('여기에'));
+        delete copy.token;
+        return copy;
+    });
+
     res.json({ config: safe, hasToken, hasDevKey, hasPersonaBot, configPath: CONFIG_PATH });
 }
 
@@ -133,6 +141,18 @@ function postConfig(req, res) {
             c.token = keepIfNotReal(c.token, current.channels?.[id]?.token);
             if (!c.token) delete c.token;
         }
+    }
+
+    // 멤버(멀티봇) 토큰: 인덱스 기준으로 기존 값 보존
+    if (Array.isArray(incoming.members)) {
+        incoming.members = incoming.members.map((m, i) => {
+            if (!m || typeof m !== 'object') return m;
+            const copy = { ...m };
+            delete copy.tokenSaved;
+            copy.token = keepIfNotReal(copy.token, current.members?.[i]?.token);
+            if (!copy.token) delete copy.token;
+            return copy;
+        });
     }
 
     const merged = { ...current, ...incoming };

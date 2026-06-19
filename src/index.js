@@ -52,19 +52,21 @@ if (!config.stPath) {
     process.exit(1);
 }
 if (config.botMode === 'multi') {
-    // 멀티봇: 채널별 봇 토큰을 씀. 전역 discordToken은 선택(있으면 폴백).
-    const hasAnyToken = Object.values(config.channels || {}).some((c) => c.token && !c.token.includes('여기에'));
+    // 멀티봇: members[].token 사용 (채널 매핑 없음 — 봇 초대된 채널 어디서나 동작)
+    const hasAnyToken = (config.members || []).some((m) => m && m.token && !m.token.includes('여기에'));
     if (!hasAnyToken) {
-        console.error('멀티봇 모드: 채널에 봇 토큰이 하나도 없습니다.');
+        console.error('멀티봇 모드: members에 봇 토큰이 하나도 없습니다.');
         process.exit(1);
     }
-} else if (!config.discordToken || config.discordToken.includes('여기에')) {
-    console.error('config.json에 discordToken을 설정해주세요. (멀티봇이면 botMode를 multi로)');
-    process.exit(1);
-}
-if (!config.channels || Object.keys(config.channels).length === 0) {
-    console.error('config.json에 channels를 설정해주세요.');
-    process.exit(1);
+} else {
+    if (!config.discordToken || config.discordToken.includes('여기에')) {
+        console.error('config.json에 discordToken을 설정해주세요. (멀티봇이면 botMode를 multi로)');
+        process.exit(1);
+    }
+    if (!config.channels || Object.keys(config.channels).length === 0) {
+        console.error('config.json에 channels를 설정해주세요.');
+        process.exit(1);
+    }
 }
 
 // --- 모듈 초기화 ---
@@ -79,12 +81,24 @@ try {
     console.log('[Init] API 설정 완료');
 
     // 캐릭터 매핑 확인
-    for (const [channelId, channelConfig] of Object.entries(config.channels)) {
-        try {
-            const char = STReader.getCharacter(channelConfig.character);
-            console.log(`[Init] 채널 ${channelId} → ${char.name || channelConfig.character} ✓`);
-        } catch (e) {
-            console.warn(`[Init] 채널 ${channelId} → ${channelConfig.character}: ${e.message}`);
+    if (config.botMode === 'multi') {
+        for (const m of config.members || []) {
+            const cardName = m.sheet || m.character;
+            try {
+                const char = STReader.getCharacter(cardName);
+                console.log(`[Init] 멤버 ${m.name || m.character} ← 카드 "${char.name || cardName}" ✓`);
+            } catch (e) {
+                console.warn(`[Init] 멤버 ${m.name || m.character} ← "${cardName}": ${e.message}`);
+            }
+        }
+    } else {
+        for (const [channelId, channelConfig] of Object.entries(config.channels)) {
+            try {
+                const char = STReader.getCharacter(channelConfig.character);
+                console.log(`[Init] 채널 ${channelId} → ${char.name || channelConfig.character} ✓`);
+            } catch (e) {
+                console.warn(`[Init] 채널 ${channelId} → ${channelConfig.character}: ${e.message}`);
+            }
         }
     }
 

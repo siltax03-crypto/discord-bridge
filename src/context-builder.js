@@ -19,9 +19,19 @@ const ContextBuilder = {
             presetText = '',
             timeGapText = '',
             showStatus = false,
+            sheetMember = '',
+            charName: charNameOpt = '',
         } = options;
-        const charName = character.name || character.data?.name || 'Character';
+        // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
+        const charName = charNameOpt || character.name || character.data?.name || 'Character';
         const parts = [];
+
+        // --- 단체 시트: 이 봇이 시트 안에서 누구를 연기하는지 ---
+        if (sheetMember) {
+            parts.push(`[Your Role in This Group Sheet]
+The character sheet below describes MULTIPLE people. You ONLY play "${sheetMember}".
+Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the other people in the sheet — they are other participants (other bots / the user). Use the sheet to know who ${sheetMember} is and how they relate to the others.`);
+        }
 
         // --- 프리셋 (RP 모드에서 커넥션 프로필 프리셋 주입, 맨 앞) ---
         if (presetText && mode === 'rp') {
