@@ -87,12 +87,26 @@ function getConfig(req, res) {
     if (!config) {
         return res.status(404).json({ error: `config.json을 찾을 수 없습니다: ${CONFIG_PATH}` });
     }
-    // 토큰은 마스킹해서 보냄 (있는지 여부만 알 수 있게)
+    // 토큰류는 절대 평문으로 안 보냄. "저장됨 여부"만 알려준다.
     const hasToken = !!(config.discordToken && !config.discordToken.includes('여기에'));
     const hasDevKey = !!(config.devKey || process.env.DISCORD_BRIDGE_DEV_KEY);
-    const safe = { ...config, discordToken: hasToken ? '__SAVED__' : '' };
-    delete safe.devKey; // 개발 키는 브라우저로 절대 안 보냄
-    res.json({ config: safe, hasToken, hasDevKey, configPath: CONFIG_PATH });
+    const hasPersonaBot = !!(config.personaBotToken && !config.personaBotToken.includes('여기에'));
+
+    const safe = { ...config };
+    delete safe.devKey;
+    safe.discordToken = hasToken ? '__SAVED__' : '';
+    delete safe.personaBotToken; // 평문 노출 금지
+    // 채널 토큰: 평문 제거하고 저장여부 플래그(tokenSaved)만
+    const safeChannels = {};
+    for (const [id, c] of Object.entries(config.channels || {})) {
+        const copy = { ...c };
+        copy.tokenSaved = !!(c.token && !c.token.includes('여기에'));
+        delete copy.token;
+        safeChannels[id] = copy;
+    }
+    safe.channels = safeChannels;
+
+    res.json({ config: safe, hasToken, hasDevKey, hasPersonaBot, configPath: CONFIG_PATH });
 }
 
 // 봇 config.json 쓰기
@@ -100,9 +114,25 @@ function postConfig(req, res) {
     const incoming = req.body || {};
     const current = readJson(CONFIG_PATH, {});
 
-    // 토큰이 '__SAVED__'면 기존 값 유지 (마스킹된 채로 다시 저장되는 것 방지)
-    if (incoming.discordToken === '__SAVED__' || incoming.discordToken === undefined) {
-        incoming.discordToken = current.discordToken || '';
+    // 토큰류는 "실제 새 값(긴 문자열)"이 왔을 때만 갱신. 그 외(undefined/__SAVED__/빈값)는 기존 유지.
+    // → 저장 눌러도 토큰이 빈값/마스킹으로 덮어써지지 않음 (사용자 요구사항).
+    const keepIfNotReal = (sent, cur) => {
+        const real = typeof sent === 'string' && sent.length > 20 && sent !== '__SAVED__' && !sent.includes('여기에');
+        return real ? sent : (cur || '');
+    };
+    incoming.discordToken = keepIfNotReal(incoming.discordToken, current.discordToken);
+    if ('personaBotToken' in incoming || current.personaBotToken) {
+        incoming.personaBotToken = keepIfNotReal(incoming.personaBotToken, current.personaBotToken);
+    }
+
+    // 채널 토큰: 채널별로 동일 규칙 + tokenSaved 같은 임시 플래그 제거
+    if (incoming.channels) {
+        for (const [id, c] of Object.entries(incoming.channels)) {
+            if (!c || typeof c !== 'object') continue;
+            delete c.tokenSaved;
+            c.token = keepIfNotReal(c.token, current.channels?.[id]?.token);
+            if (!c.token) delete c.token;
+        }
     }
 
     const merged = { ...current, ...incoming };

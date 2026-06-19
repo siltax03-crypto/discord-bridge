@@ -11,6 +11,8 @@
   "chatSlang": true,
   "devKey": "",
   "devBranch": "dev",
+  "botMode": "single",
+  "personaBotToken": "",
   "proactive": {
     "enabled": false,
     "photos": false,

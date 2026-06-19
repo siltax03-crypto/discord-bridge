@@ -17,6 +17,8 @@ const LANGS = [
 let state = {
     discordToken: '',
     tokenSaved: false,
+    botMode: 'single',
+    personaBotSaved: false, // 페르소나 전담봇 토큰 저장 여부(멀티)
     connectionProfile: '',
     language: 'ko',
     maxHistoryMessages: 50,
@@ -25,7 +27,7 @@ let state = {
     splitMessages: true,
     chatSlang: true,
     proactive: { enabled: false, photos: false, idleMinHours: 3, idleMaxHours: 8, activeHours: [9, 23] },
-    channels: {}, // { channelId: { character } }
+    channels: {}, // { channelId: { character, persona?, token?(저장여부만) } }
 };
 let profiles = [];
 let characters = [];
@@ -75,6 +77,8 @@ async function loadAll() {
         state = {
             discordToken: '',
             tokenSaved: !!cfgRes.hasToken,
+            botMode: c.botMode === 'multi' ? 'multi' : 'single',
+            personaBotSaved: !!cfgRes.hasPersonaBot,
             connectionProfile: c.connectionProfile || c.connectionProfileId || '',
             language: c.language || 'ko',
             maxHistoryMessages: c.maxHistoryMessages ?? 50,
@@ -146,8 +150,19 @@ function optionList(items, selected, mapper) {
 }
 
 function render() {
-    // 토큰
-    $('#dbridge_token').attr('placeholder', state.tokenSaved ? '•••••••• (저장됨)' : '디스코드 봇 토큰 입력');
+    // 봇 모드
+    const multi = state.botMode === 'multi';
+    $('#dbridge_botmode').val(state.botMode);
+    $('#dbridge_single_box').toggle(!multi);
+    $('#dbridge_multi_box').toggle(multi);
+
+    // 메인 토큰 (단일봇): 잠금 + 저장됨 표시
+    $('#dbridge_token').val('').attr('readonly', true).attr('data-edited', '0')
+        .attr('placeholder', state.tokenSaved ? '•••••••• (저장됨 — 수정하려면 ✏️)' : '디스코드 봇 토큰 입력');
+
+    // 페르소나 전담봇 토큰 (멀티): 잠금 + 저장됨 표시
+    $('#dbridge_personabot').val('').attr('readonly', true).attr('data-edited', '0')
+        .attr('placeholder', state.personaBotSaved ? '•••••••• (저장됨 — 수정하려면 ✏️)' : '페르소나 전담봇 토큰 입력');
 
     // 프로필 드롭다운
     const profOpts =
@@ -218,6 +233,15 @@ function renderChannelRows() {
                 ? `<option value="${escapeHtml(conf.persona)}" selected>${escapeHtml(conf.persona)} (없음)</option>`
                 : '';
 
+        // 멀티봇: 채널마다 캐릭터 봇 토큰칸 (잠금 + ✏️수정). 평문은 절대 안 받아옴 → 저장여부만 표시.
+        const saved = !!conf.tokenSaved;
+        const tokenField = state.botMode === 'multi'
+            ? `<span>봇 토큰</span>
+               <input type="password" class="text_pole dbridge_row_token" data-edited="0" readonly
+                      placeholder="${saved ? '•••••••• (저장됨)' : '이 캐릭터 봇 토큰'}" />
+               <div class="menu_button dbridge_row_token_edit" title="토큰 수정"><i class="fa-solid fa-pen"></i></div>`
+            : '';
+
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
@@ -226,6 +250,7 @@ function renderChannelRows() {
                 <select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
+                ${tokenField}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
             </div>
         `);
@@ -235,9 +260,7 @@ function renderChannelRows() {
 
 // 화면 → state 동기화 (저장 직전 호출)
 function syncFromDom() {
-    const token = $('#dbridge_token').val();
-    if (token) state.discordToken = token; // 비어있으면 기존 저장값 유지
-
+    state.botMode = $('#dbridge_botmode').val() === 'multi' ? 'multi' : 'single';
     state.connectionProfile = $('#dbridge_profile').val();
     state.language = $('#dbridge_lang').val();
     state.maxHistoryMessages = parseInt($('#dbridge_history').val(), 10) || 50;
@@ -255,14 +278,23 @@ function syncFromDom() {
         ],
     };
 
+    const multi = state.botMode === 'multi';
     const channels = {};
     $('#dbridge_channel_list .dbridge_row').each(function () {
         const chId = $(this).find('.dbridge_row_channel').val();
         const char = $(this).find('.dbridge_row_char').val();
         const persona = $(this).find('.dbridge_row_persona').val();
-        if (chId && char) {
-            channels[chId] = persona ? { character: char, persona } : { character: char };
+        if (!chId || !char) return;
+        const entry = { character: char };
+        if (persona) entry.persona = persona;
+        if (multi) {
+            const $t = $(this).find('.dbridge_row_token');
+            // 수정 버튼 눌러서 실제로 입력한 경우에만 token 전송 → 안 건드리면 서버가 기존 유지
+            if ($t.attr('data-edited') === '1' && ($t.val() || '').trim()) {
+                entry.token = $t.val().trim();
+            }
         }
+        channels[chId] = entry;
     });
     state.channels = channels;
 }
@@ -273,7 +305,7 @@ async function save() {
     $btn.prop('disabled', true).text('저장 중...');
     try {
         const payload = {
-            discordToken: $('#dbridge_token').val() || '__SAVED__',
+            botMode: state.botMode,
             connectionProfile: state.connectionProfile,
             language: state.language,
             maxHistoryMessages: state.maxHistoryMessages,
@@ -284,10 +316,18 @@ async function save() {
             proactive: state.proactive,
             channels: state.channels,
         };
+        // 토큰류는 "수정해서 실제 입력한 경우에만" 전송 → 서버가 빈값/마스킹으로 안 덮음
+        const mainTok = $('#dbridge_token');
+        if (mainTok.attr('data-edited') === '1' && (mainTok.val() || '').trim()) {
+            payload.discordToken = mainTok.val().trim();
+        }
+        const pbTok = $('#dbridge_personabot');
+        if (pbTok.attr('data-edited') === '1' && (pbTok.val() || '').trim()) {
+            payload.personaBotToken = pbTok.val().trim();
+        }
+
         await apiPost('/config', payload);
-        $('#dbridge_token').val(''); // 입력칸 비우고
-        state.tokenSaved = state.tokenSaved || !!payload.discordToken;
-        render();
+        await loadAll(); // 저장 후 서버 상태(저장됨 표시)로 다시 그림
         toastr.success('config.json 저장됨. 적용하려면 봇을 재시작하세요 (pm2 restart discord-bridge).', 'Discord Bridge');
     } catch (e) {
         toastr.error(e.message, 'Discord Bridge 저장 실패');
@@ -320,10 +360,28 @@ const SETTINGS_HTML = `
                 </div>
             </div>
 
-            <label>Discord 봇 토큰</label>
-            <div class="dbridge_inline">
-                <input type="password" id="dbridge_token" class="text_pole" autocomplete="off" />
-                <div class="menu_button" id="dbridge_token_eye"><i class="fa-solid fa-eye"></i></div>
+            <label>봇 모드</label>
+            <select id="dbridge_botmode" class="text_pole">
+                <option value="single">단일봇 (봇 1개가 모든 캐릭터, 웹훅)</option>
+                <option value="multi">멀티봇 (캐릭터마다 봇 + 페르소나 전담봇)</option>
+            </select>
+
+            <div id="dbridge_single_box">
+                <label>Discord 봇 토큰</label>
+                <div class="dbridge_inline">
+                    <input type="password" id="dbridge_token" class="text_pole" autocomplete="off" readonly />
+                    <div class="menu_button" id="dbridge_token_edit" title="수정"><i class="fa-solid fa-pen"></i></div>
+                    <div class="menu_button" id="dbridge_token_eye"><i class="fa-solid fa-eye"></i></div>
+                </div>
+            </div>
+
+            <div id="dbridge_multi_box" style="display:none">
+                <label>페르소나 전담봇 토큰 <span class="dbridge_hint">(내 메시지를 페르소나로 바꿔치기 전용)</span></label>
+                <div class="dbridge_inline">
+                    <input type="password" id="dbridge_personabot" class="text_pole" autocomplete="off" readonly />
+                    <div class="menu_button" id="dbridge_personabot_edit" title="수정"><i class="fa-solid fa-pen"></i></div>
+                </div>
+                <div class="dbridge_hint">⚠ 이 봇에 "웹훅 관리 + 메시지 관리" 권한 필요. 채널마다 캐릭터 봇 토큰은 아래에 입력.</div>
             </div>
 
             <label>커넥션 프로필 (AI 백엔드)</label>
@@ -468,6 +526,19 @@ jQuery(async () => {
     $('#dbridge_token_eye').on('click', () => {
         const $t = $('#dbridge_token');
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
+    });
+    // 봇 모드 전환: 입력 보존하고 모드에 맞게 다시 그림
+    $('#dbridge_botmode').on('change', () => { syncFromDom(); render(); });
+    // 토큰 잠금 해제(✏️ 수정): 누르면 그 칸만 입력 가능 + edited 표시
+    const unlock = (sel) => {
+        const $t = $(sel);
+        $t.attr('readonly', false).attr('data-edited', '1').val('').attr('placeholder', '새 토큰 입력').focus();
+    };
+    $('#dbridge_token_edit').on('click', () => unlock('#dbridge_token'));
+    $('#dbridge_personabot_edit').on('click', () => unlock('#dbridge_personabot'));
+    $('#dbridge_channel_list').on('click', '.dbridge_row_token_edit', function () {
+        const $t = $(this).closest('.dbridge_row').find('.dbridge_row_token');
+        $t.attr('readonly', false).attr('data-edited', '1').val('').attr('placeholder', '새 토큰 입력').focus();
     });
     $('#dbridge_add_channel').on('click', () => {
         // 빈 행 추가: 임시 키

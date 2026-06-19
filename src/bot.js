@@ -11,8 +11,11 @@ import Away from './away.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let client = null;
 let config = {};
+const clients = [];              // 기동된 모든 Client (단일봇=1, 멀티봇=캐릭터봇들+페르소나봇)
+const channelClients = {};       // { channelId: 그 채널 답변 담당 client }
+let personaClient = null;        // 멀티봇 전용: 페르소나 웹훅/삭제 전담 봇 (없으면 답변봇이 대신)
+let primaryClient = null;        // 슬래시 명령 등록/대표 client
 // 채널별 웹훅 캐시: { channelId: webhookObject }
 const webhookCache = {};
 // 채널별 캐릭터 데이터 캐시
@@ -31,7 +34,39 @@ const Bot = {
     async start(cfg) {
         config = cfg;
 
-        client = new Client({
+        if (cfg.botMode === 'multi') {
+            // 멀티봇: 토큰별로 Client 1개씩, 각자 자기 채널만 담당
+            const byToken = {}; // token → [channelId]
+            for (const [chId, c] of Object.entries(cfg.channels || {})) {
+                if (!c.token || c.token.includes('여기에')) {
+                    console.warn(`[Bot] 채널 ${chId}: 멀티봇인데 토큰 없음 — 스킵`);
+                    continue;
+                }
+                (byToken[c.token] ||= []).push(chId);
+            }
+            const tokens = Object.keys(byToken);
+            if (tokens.length === 0) throw new Error('멀티봇 모드인데 채널에 토큰이 하나도 없습니다.');
+            for (const token of tokens) {
+                const cl = await this._startClient(token, byToken[token], { commands: !primaryClient });
+                if (!primaryClient) primaryClient = cl;
+            }
+
+            // 페르소나 전담 봇 (웹훅/메시지삭제 전담). 토큰 없으면 답변봇이 대신 처리.
+            if (cfg.personaBotToken && !cfg.personaBotToken.includes('여기에')) {
+                personaClient = await this._startClient(cfg.personaBotToken, [], { persona: true });
+            }
+            console.log(`[Bot] 멀티봇: 답변봇 ${tokens.length}개${personaClient ? ' + 페르소나봇 1개' : ''}`);
+        } else {
+            // 단일봇: 토큰 1개가 모든 채널 담당 (기존 동작)
+            const cl = await this._startClient(cfg.discordToken, Object.keys(cfg.channels || {}), { commands: true });
+            primaryClient = cl;
+            console.log('[Bot] 단일봇 모드');
+        }
+    },
+
+    // --- Client 1개 기동 ---
+    async _startClient(token, channelIds, { commands = false, persona = false } = {}) {
+        const client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildMessages,
@@ -39,21 +74,28 @@ const Bot = {
             ],
         });
 
+        for (const chId of channelIds) channelClients[chId] = client;
+
         client.once(Events.ClientReady, async (c) => {
-            console.log(`[Bot] 로그인 완료: ${c.user.tag}`);
-            console.log(`[Bot] 매핑된 채널: ${Object.keys(config.channels).length}개`);
-            await this._registerCommands();
+            console.log(`[Bot] 로그인: ${c.user.tag}${persona ? ' (페르소나 전담)' : ` / 채널 ${channelIds.length}개`}`);
+            try { c.user.setPresence({ status: 'online' }); } catch { /* 무시 */ }
+            if (commands) await this._registerCommands(client);
         });
 
-        client.on(Events.MessageCreate, (message) => this._onMessage(message));
-        client.on(Events.MessageDelete, (message) => this._onMessageDelete(message));
-        client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction));
+        // 페르소나 전담 봇은 메시지/명령에 응답하지 않음 (웹훅 송출 전용)
+        if (!persona) {
+            client.on(Events.MessageCreate, (message) => this._onMessage(message, client));
+            client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
+            client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
+        }
 
-        await client.login(config.discordToken);
+        await client.login(token);
+        clients.push(client);
+        return client;
     },
 
     // --- 슬래시 명령어 등록 (서버별로 즉시 반영) ---
-    async _registerCommands() {
+    async _registerCommands(client) {
         const commands = [
             new SlashCommandBuilder()
                 .setName('mode')
@@ -114,7 +156,7 @@ const Bot = {
     },
 
     // --- 슬래시 명령어 처리 ---
-    async _onInteraction(interaction) {
+    async _onInteraction(interaction, client) {
         if (!interaction.isChatInputCommand()) return;
         const channelId = interaction.channelId;
         const eph = { flags: MessageFlags.Ephemeral };
@@ -122,6 +164,8 @@ const Bot = {
         if (!config.channels[channelId]) {
             return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ...eph });
         }
+        // 멀티봇: 이 채널 담당 봇만 응답 (다른 봇이 같은 명령에 중복응답/오류응답 방지)
+        if (config.botMode === 'multi' && client && channelClients[channelId] !== client) return;
 
         const cmd = interaction.commandName;
 
@@ -295,10 +339,17 @@ const Bot = {
     },
 
     // --- 페르소나 프록시: 사용자 메시지를 지우고 페르소나 이름+사진으로 재전송 ---
+    // 멀티봇: 페르소나 전담봇(personaClient)이 웹훅/삭제를 맡아 답변봇과 권한 충돌을 피한다.
     async _proxyUserMessage(message, personaName) {
         try {
             const avatarPath = STReader.getPersonaAvatarPath(personaName);
-            const webhook = await this._getNamedWebhook(message.channel, `bridge-persona-${personaName}`, avatarPath);
+            // 페르소나 전담봇이 있으면 그 봇 시점의 채널 객체로 웹훅 처리
+            let channel = message.channel;
+            if (personaClient) {
+                const c = await personaClient.channels.fetch(message.channelId).catch(() => null);
+                if (c) channel = c;
+            }
+            const webhook = await this._getNamedWebhook(channel, `bridge-persona-${personaName}`, avatarPath);
             if (!webhook) return null;
 
             const opts = { username: personaName, wait: true };
@@ -350,11 +401,13 @@ const Bot = {
     },
 
     // --- 메시지 수신 핸들러 ---
-    async _onMessage(message) {
+    async _onMessage(message, client) {
         // 봇 메시지 무시
         if (message.author.bot) return;
         // 매핑된 채널이 아니면 무시
         if (!config.channels[message.channelId]) return;
+        // 멀티봇: 이 채널 담당 봇만 처리 (다른 봇은 무시 → 중복답 방지)
+        if (config.botMode === 'multi' && client && channelClients[message.channelId] !== client) return;
 
         // 유저가 답했으니 대기 중인 "재촉" 타이머 취소
         if (followupTimers[message.channelId]) {
@@ -581,9 +634,11 @@ const Bot = {
     },
 
     // --- 응답 전송: 빈 줄 기준으로 여러 메시지로 분할 + 이미지 첨부 ---
+    // 멀티봇: 봇 자신으로 전송(프로필=캐릭터, 온라인 상태). 단일봇: 웹훅으로 캐릭터 흉내.
     async _sendResponse(channel, character, response, photoPrompt) {
         const charName = character.name || 'Character';
-        const webhook = await this._getWebhook(channel, character);
+        const asSelf = config.botMode === 'multi';
+        const webhook = asSelf ? null : await this._getWebhook(channel, character);
 
         // 빈 줄(\n\n) 기준 분할. splitMessages가 false면 통째로. 빈 조각은 제거.
         const parts = (config.splitMessages === false ? [response] : response.split(/\n\s*\n/))
@@ -603,35 +658,36 @@ const Bot = {
             }
         }
 
+        const sendOne = (content, files) => {
+            if (asSelf) {
+                const opts = {};
+                if (content) opts.content = content;
+                if (files) opts.files = files;
+                return channel.send(opts);
+            }
+            if (webhook) {
+                const opts = { username: charName };
+                if (content) opts.content = content;
+                if (files) opts.files = files;
+                return webhook.send(opts);
+            }
+            return channel.send(content ? `**${charName}**: ${content}` : { files });
+        };
+
         // 보낼 텍스트가 없으면: 이미지만 있으면 이미지만 전송, 아무것도 없으면 스킵
         if (parts.length === 0) {
-            if (attachment) {
-                if (webhook) await webhook.send({ username: charName, files: [attachment] });
-                else await channel.send({ files: [attachment] });
-            } else {
-                console.warn('[Bot] 보낼 내용 없음(빈 응답) — 전송 스킵');
-            }
+            if (attachment) await sendOne('', [attachment]);
+            else console.warn('[Bot] 보낼 내용 없음(빈 응답) — 전송 스킵');
             return;
         }
 
         for (let i = 0; i < parts.length; i++) {
             const isLast = i === parts.length - 1;
-            const opts = { content: parts[i], username: charName };
-            if (isLast && attachment) opts.files = [attachment];
-
-            if (webhook) {
-                await webhook.send(opts);
-            } else {
-                await channel.send(`**${charName}**: ${parts[i]}`);
-            }
+            await sendOne(parts[i], isLast && attachment ? [attachment] : undefined);
 
             // 다음 메시지 전 타이핑 + 약간의 텀 (실채팅 느낌)
             if (!isLast) {
-                try {
-                    await channel.sendTyping();
-                } catch {
-                    /* 무시 */
-                }
+                try { await channel.sendTyping(); } catch { /* 무시 */ }
                 await delay(800 + Math.min(parts[i].length * 20, 2500));
             }
         }
@@ -673,7 +729,9 @@ const Bot = {
             console.log(`[Bot] 잠수 중 - 선톡 생략 (채널 ${channelId})`);
             return;
         }
-        const channel = await client.channels.fetch(channelId).catch(() => null);
+        const owner = channelClients[channelId] || primaryClient;
+        if (!owner) return;
+        const channel = await owner.channels.fetch(channelId).catch(() => null);
         if (!channel) return;
         const character = this._getCharacter(channelId);
         if (!character) return;
@@ -751,9 +809,10 @@ const Bot = {
     },
 
     // --- 메시지 삭제 동기화 ---
-    async _onMessageDelete(message) {
+    async _onMessageDelete(message, client) {
         if (message.author?.bot) return;
         if (!config.channels[message.channelId]) return;
+        if (config.botMode === 'multi' && client && channelClients[message.channelId] !== client) return;
         // 페르소나 프록시가 지운 메시지는 동기화 대상이 아님 (히스토리 유지)
         if (proxiedMessageIds.has(message.id)) {
             proxiedMessageIds.delete(message.id);
@@ -767,10 +826,11 @@ const Bot = {
     },
 
     async stop() {
-        if (client) {
-            client.destroy();
-            console.log('[Bot] 종료됨');
+        for (const c of clients) {
+            try { c.destroy(); } catch { /* 무시 */ }
         }
+        clients.length = 0;
+        console.log('[Bot] 종료됨');
     },
 };
 
