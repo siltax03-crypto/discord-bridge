@@ -23,5 +23,9 @@
   "channels": {
     "채널ID_1": { "character": "Snow" },
     "채널ID_2": { "character": "Blaise" }
-  }
+  },
+  "groupSheet": "",
+  "members": [
+    { "character": "Snow", "persona": "", "token": "여기에_Snow_봇_토큰" }
+  ]
 }

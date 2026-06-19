@@ -27,7 +27,8 @@ let state = {
     splitMessages: true,
     chatSlang: true,
     proactive: { enabled: false, photos: false, idleMinHours: 3, idleMaxHours: 8, activeHours: [9, 23] },
-    channels: {}, // { channelId: { character, persona?, token?(저장여부만) } }
+    channels: {}, // 단일봇: { channelId: { character, persona?, tokenSaved? } }
+    members: [],  // 멀티봇: [{ character|sheet, name?, persona?, tokenSaved? }]
 };
 let profiles = [];
 let characters = [];
@@ -94,7 +95,11 @@ async function loadAll() {
                 activeHours: Array.isArray(p.activeHours) ? p.activeHours : [9, 23],
             },
             channels: c.channels || {},
+            members: Array.isArray(c.members) ? c.members : [],
+            groupSheet: c.groupSheet || '',
         };
+        // 멤버 중 sheet가 있으면 단체 모드로 간주
+        state.groupMode = state.members.some((m) => m && m.sheet) || !!state.groupSheet;
         profiles = profRes.profiles || [];
         characters = charRes.characters || [];
         personas = persRes.personas || [];
@@ -155,6 +160,16 @@ function render() {
     $('#dbridge_botmode').val(state.botMode);
     $('#dbridge_single_box').toggle(!multi);
     $('#dbridge_multi_box').toggle(multi);
+    $('#dbridge_single_map').toggle(!multi);
+    $('#dbridge_multi_map').toggle(multi);
+
+    // 단체 시트
+    $('#dbridge_group_mode').prop('checked', !!state.groupMode);
+    $('#dbridge_group_box').toggle(!!state.groupMode);
+    $('#dbridge_group_sheet').html(
+        '<option value="">(단체 시트 카드 선택)</option>' +
+        optionList(characters, state.groupSheet || '', (n) => ({ value: n, label: n })));
+    $('#dbridge_member_label').text(state.groupMode ? '인물 목록 (시트 속 각 인물)' : '캐릭터(봇) 목록');
 
     // 메인 토큰 (단일봇): 비우면 기존 유지, 입력하면 교체
     $('#dbridge_token').val('')
@@ -194,7 +209,44 @@ function render() {
     $('#dbridge_active_end').val(p.activeHours[1]);
     $('#dbridge_proactive_opts').toggle(p.enabled);
 
-    renderChannelRows();
+    if (multi) renderMemberRows();
+    else renderChannelRows();
+}
+
+// --- 멀티봇: 멤버(캐릭터) 행 렌더 ---
+function renderMemberRows() {
+    const $list = $('#dbridge_member_list').empty();
+    const group = !!state.groupMode;
+    if (!state.members.length) {
+        $list.append('<div class="dbridge_hint">캐릭터가 없습니다. [+]로 추가하세요.</div>');
+    }
+    state.members.forEach((m, i) => {
+        const saved = !!m.tokenSaved;
+        // 인물 식별: 단체면 이름 텍스트 입력, 개별이면 캐릭터 드롭다운
+        const idField = group
+            ? `<span>인물</span><input type="text" class="text_pole dbridge_m_name" value="${escapeHtml(m.name || '')}" placeholder="시트 속 이름 (예: Adonis)" />`
+            : `<span>캐릭터</span><select class="text_pole dbridge_m_char">${
+                  '<option value="">(선택)</option>' +
+                  optionList(characters, m.character || '', (n) => ({ value: n, label: n })) +
+                  (m.character && !characters.includes(m.character) ? `<option value="${escapeHtml(m.character)}" selected>${escapeHtml(m.character)} (카드없음)</option>` : '')
+              }</select>`;
+        const personaField =
+            `<span>나(페르소나)</span><select class="text_pole dbridge_m_persona">${
+                '<option value="">(자동)</option>' +
+                optionList(personas, m.persona || '', (n) => ({ value: n, label: n })) +
+                (m.persona && !personas.includes(m.persona) ? `<option value="${escapeHtml(m.persona)}" selected>${escapeHtml(m.persona)} (없음)</option>` : '')
+            }</select>`;
+        const $row = $(`
+            <div class="dbridge_row" data-idx="${i}">
+                ${idField}
+                ${personaField}
+                <span>봇 토큰</span>
+                <input type="password" class="text_pole dbridge_m_token" placeholder="${saved ? '•••••••• (저장됨, 비우면 유지)' : '이 캐릭터 봇 토큰'}" />
+                <div class="menu_button dbridge_m_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
+            </div>
+        `);
+        $list.append($row);
+    });
 }
 
 function renderChannelRows() {
@@ -233,14 +285,6 @@ function renderChannelRows() {
                 ? `<option value="${escapeHtml(conf.persona)}" selected>${escapeHtml(conf.persona)} (없음)</option>`
                 : '';
 
-        // 멀티봇: 채널마다 캐릭터 봇 토큰칸. 평문은 안 받아옴 → 비우면 기존 유지, 입력하면 교체.
-        const saved = !!conf.tokenSaved;
-        const tokenField = state.botMode === 'multi'
-            ? `<span>봇 토큰</span>
-               <input type="password" class="text_pole dbridge_row_token"
-                      placeholder="${saved ? '•••••••• (저장됨, 비우면 유지)' : '이 캐릭터 봇 토큰'}" />`
-            : '';
-
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
@@ -249,7 +293,6 @@ function renderChannelRows() {
                 <select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
-                ${tokenField}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
             </div>
         `);
@@ -278,30 +321,52 @@ function syncFromDom() {
     };
 
     const multi = state.botMode === 'multi';
-    const prev = state.channels || {};
-    const channels = {};
-    $('#dbridge_channel_list .dbridge_row').each(function () {
-        const rowKey = $(this).attr('data-channel'); // 이전 키(저장여부 추적용)
-        const chId = $(this).find('.dbridge_row_channel').val();
-        const char = $(this).find('.dbridge_row_char').val();
-        const persona = $(this).find('.dbridge_row_persona').val();
-        if (!chId || !char) return;
-        const entry = { character: char };
-        if (persona) entry.persona = persona;
-        // 기존 저장여부 플래그 보존 (화면 "저장됨" 표시 유지용 — 서버 전송 시엔 무시됨)
-        const prevConf = prev[rowKey] || prev[chId];
-        if (prevConf?.tokenSaved) entry.tokenSaved = true;
-        if (multi) {
-            const typed = ($(this).find('.dbridge_row_token').val() || '').trim();
-            // 입력했을 때만 token 전송. 비우면 안 보냄 → 서버가 기존 유지.
-            if (typed) {
-                entry.token = typed;
-                entry.tokenSaved = true;
+
+    if (multi) {
+        // 멀티봇: 단체 시트 + 멤버 목록
+        state.groupMode = $('#dbridge_group_mode').prop('checked');
+        state.groupSheet = state.groupMode ? ($('#dbridge_group_sheet').val() || '') : '';
+        const members = [];
+        $('#dbridge_member_list .dbridge_row').each(function () {
+            const persona = $(this).find('.dbridge_m_persona').val();
+            const typed = ($(this).find('.dbridge_m_token').val() || '').trim();
+            const m = {};
+            if (state.groupMode) {
+                const name = ($(this).find('.dbridge_m_name').val() || '').trim();
+                if (!name) return;
+                m.sheet = state.groupSheet;
+                m.name = name;
+            } else {
+                const char = $(this).find('.dbridge_m_char').val();
+                if (!char) return;
+                m.character = char;
             }
-        }
-        channels[chId] = entry;
-    });
-    state.channels = channels;
+            if (persona) m.persona = persona;
+            if (typed) { m.token = typed; m.tokenSaved = true; }
+            else {
+                // 이전 저장여부 보존(표시용)
+                const idx = parseInt($(this).attr('data-idx'), 10);
+                if (state.members[idx]?.tokenSaved) m.tokenSaved = true;
+            }
+            members.push(m);
+        });
+        state.members = members;
+    } else {
+        const channels = {};
+        $('#dbridge_channel_list .dbridge_row').each(function () {
+            const rowKey = $(this).attr('data-channel');
+            const chId = $(this).find('.dbridge_row_channel').val();
+            const char = $(this).find('.dbridge_row_char').val();
+            const persona = $(this).find('.dbridge_row_persona').val();
+            if (!chId || !char) return;
+            const entry = { character: char };
+            if (persona) entry.persona = persona;
+            const prevConf = (state.channels || {})[rowKey] || (state.channels || {})[chId];
+            if (prevConf?.tokenSaved) entry.tokenSaved = true;
+            channels[chId] = entry;
+        });
+        state.channels = channels;
+    }
 }
 
 async function save() {
@@ -320,6 +385,8 @@ async function save() {
             chatSlang: state.chatSlang,
             proactive: state.proactive,
             channels: state.channels,
+            members: state.members,
+            groupSheet: state.groupSheet || '',
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const mainTok = ($('#dbridge_token').val() || '').trim();
@@ -331,9 +398,11 @@ async function save() {
         // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
         if (payload.discordToken) state.tokenSaved = true;
         if (payload.personaBotToken) state.personaBotSaved = true;
-        for (const [id, c] of Object.entries(state.channels)) {
-            if (c.token) { c.tokenSaved = true; delete c.token; } // 평문 화면에 안 남김
-            else if (state.channels[id]) c.tokenSaved = c.tokenSaved || false;
+        for (const c of Object.values(state.channels)) {
+            if (c.token) { c.tokenSaved = true; delete c.token; }
+        }
+        for (const m of state.members) {
+            if (m.token) { m.tokenSaved = true; delete m.token; }
         }
         render();
         toastr.success('config.json 저장됨. 적용하려면 봇을 재시작하세요 (pm2 restart discord-bridge).', 'Discord Bridge');
@@ -409,12 +478,33 @@ const SETTINGS_HTML = `
             </div>
 
             <hr/>
-            <div class="dbridge_section_head">
-                <label>채널 ↔ 캐릭터 매핑</label>
-                <div class="menu_button" id="dbridge_add_channel"><i class="fa-solid fa-plus"></i> </div>
+            <!-- 단일봇: 채널↔캐릭터 매핑 -->
+            <div id="dbridge_single_map">
+                <div class="dbridge_section_head">
+                    <label>채널 ↔ 캐릭터 매핑</label>
+                    <div class="menu_button" id="dbridge_add_channel"><i class="fa-solid fa-plus"></i> </div>
+                </div>
+                <div class="dbridge_hint" id="dbridge_channels_note"></div>
+                <div id="dbridge_channel_list"></div>
             </div>
-            <div class="dbridge_hint" id="dbridge_channels_note"></div>
-            <div id="dbridge_channel_list"></div>
+
+            <!-- 멀티봇: 캐릭터(멤버) 목록. 봇 초대된 채널 어디서나 동작 -->
+            <div id="dbridge_multi_map" style="display:none">
+                <label class="checkbox_label dbridge_check">
+                    <input type="checkbox" id="dbridge_group_mode" />
+                    <span><b>단체 시트</b> — 한 캐릭터 카드 안에 여러 인물</span>
+                </label>
+                <div id="dbridge_group_box" style="display:none">
+                    <label>단체 시트 카드</label>
+                    <select id="dbridge_group_sheet" class="text_pole"></select>
+                </div>
+                <div class="dbridge_section_head">
+                    <label id="dbridge_member_label">캐릭터(봇) 목록</label>
+                    <div class="menu_button" id="dbridge_add_member"><i class="fa-solid fa-plus"></i> </div>
+                </div>
+                <div class="dbridge_hint">봇 초대된 채널 어디서나 그 캐릭터로 답합니다. 그룹채널에 여러 봇 = 단톡.</div>
+                <div id="dbridge_member_list"></div>
+            </div>
 
             <hr/>
             <label>메시지 / 말투</label>
@@ -536,7 +626,6 @@ jQuery(async () => {
     // 봇 모드 전환: 입력 보존하고 모드에 맞게 다시 그림
     $('#dbridge_botmode').on('change', () => { syncFromDom(); render(); });
     $('#dbridge_add_channel').on('click', () => {
-        // 빈 행 추가: 임시 키
         const tempId = '__new__' + Date.now();
         state.channels[tempId] = { character: characters[0] || '' };
         renderChannelRows();
@@ -544,6 +633,27 @@ jQuery(async () => {
     $('#dbridge_channel_list').on('click', '.dbridge_row_del', function () {
         $(this).closest('.dbridge_row').remove();
     });
+
+    // --- 멀티봇: 단체 시트 토글 / 시트 선택 / 멤버 추가·삭제 ---
+    $('#dbridge_group_mode').on('change', function () {
+        syncFromDom();
+        state.groupMode = $(this).prop('checked');
+        render();
+    });
+    $('#dbridge_group_sheet').on('change', () => { syncFromDom(); render(); });
+    $('#dbridge_add_member').on('click', () => {
+        syncFromDom();
+        // 단체면 빈 인물 칸, 개별이면 캐릭터 드롭다운 행 추가
+        state.members.push(state.groupMode ? { sheet: state.groupSheet || '', name: '' } : { character: characters[0] || '' });
+        render();
+    });
+    $('#dbridge_member_list').on('click', '.dbridge_m_del', function () {
+        syncFromDom();
+        const idx = parseInt($(this).closest('.dbridge_row').attr('data-idx'), 10);
+        if (!Number.isNaN(idx)) state.members.splice(idx, 1);
+        render();
+    });
+
     $('#dbridge_save').on('click', save);
 
     await loadAll();
