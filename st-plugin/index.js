@@ -89,7 +89,10 @@ function getConfig(req, res) {
     }
     // 토큰은 마스킹해서 보냄 (있는지 여부만 알 수 있게)
     const hasToken = !!(config.discordToken && !config.discordToken.includes('여기에'));
-    res.json({ config: { ...config, discordToken: hasToken ? '__SAVED__' : '' }, hasToken, configPath: CONFIG_PATH });
+    const hasDevKey = !!(config.devKey || process.env.DISCORD_BRIDGE_DEV_KEY);
+    const safe = { ...config, discordToken: hasToken ? '__SAVED__' : '' };
+    delete safe.devKey; // 개발 키는 브라우저로 절대 안 보냄
+    res.json({ config: safe, hasToken, hasDevKey, configPath: CONFIG_PATH });
 }
 
 // 봇 config.json 쓰기
@@ -208,8 +211,8 @@ function postRestart(req, res) {
     });
 }
 
-// 업데이트: git pull → npm install → 플러그인/확장 재배포 → 봇 재시작
-function postUpdate(req, res) {
+// 지정한 git ref(브랜치)로 받아 재배포 + 봇 재시작
+function deployFrom(ref, res) {
     const name = process.env.PM2_NAME || 'discord-bridge';
     const pluginDest = path.join(ST_ROOT, 'plugins', 'discord-bridge-config.js');
     const extDir =
@@ -220,7 +223,9 @@ function postUpdate(req, res) {
 
     const cmd = [
         `cd "${BRIDGE_PATH}"`,
-        'git pull',
+        'git fetch origin',
+        `git checkout ${ref}`,
+        `git reset --hard origin/${ref}`,
         'npm install --no-audit --no-fund',
         `cp st-plugin/index.js "${pluginDest}"`,
         `mkdir -p "${extDir}"`,
@@ -236,6 +241,26 @@ function postUpdate(req, res) {
     });
 }
 
+// 일반 업데이트: 안정판(master)
+function postUpdate(req, res) {
+    deployFrom('master', res);
+}
+
+// 개발용 업데이트: dev 브랜치 + 비밀키 검사 (나만 작동)
+function postDevUpdate(req, res) {
+    const config = readJson(CONFIG_PATH, {});
+    const expected = config.devKey || process.env.DISCORD_BRIDGE_DEV_KEY || '';
+    const provided = (req.body && req.body.key) || '';
+    if (!expected) {
+        return res.status(403).json({ error: '개발 키가 서버에 설정되지 않았습니다 (config.devKey).' });
+    }
+    if (provided !== expected) {
+        return res.status(403).json({ error: '개발 키가 일치하지 않습니다.' });
+    }
+    const branch = config.devBranch || 'dev';
+    deployFrom(branch, res);
+}
+
 // --- 플러그인 진입점 ---
 async function init(router) {
     router.get('/config', getConfig);
@@ -247,6 +272,7 @@ async function init(router) {
     router.get('/status', getStatus);
     router.post('/restart', jsonParser, postRestart);
     router.post('/update', jsonParser, postUpdate);
+    router.post('/dev-update', jsonParser, postDevUpdate);
     console.log('[discord-bridge-config] 플러그인 로드됨. bridge 경로:', BRIDGE_PATH);
 }
 

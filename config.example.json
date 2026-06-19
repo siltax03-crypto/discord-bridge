@@ -9,6 +9,8 @@
   "timezone": "Asia/Seoul",
   "splitMessages": true,
   "chatSlang": true,
+  "devKey": "",
+  "devBranch": "dev",
   "proactive": {
     "enabled": false,
     "photos": false,

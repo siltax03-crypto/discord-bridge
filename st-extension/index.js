@@ -95,6 +95,9 @@ async function loadAll() {
         characters = charRes.characters || [];
         personas = persRes.personas || [];
 
+        // 개발 키가 서버에 설정된 경우에만 dev 업데이트 버튼 노출
+        $('#dbridge_devupdate').toggle(!!cfgRes.hasDevKey);
+
         render();
         refreshStatus();
         refreshChannels(); // 디스코드 채널은 느릴 수 있어 별도 로드
@@ -313,6 +316,7 @@ const SETTINGS_HTML = `
                     <div class="menu_button" id="dbridge_refresh"><i class="fa-solid fa-rotate"></i> </div>
                     <div class="menu_button" id="dbridge_restart"><i class="fa-solid fa-power-off"></i> </div>
                     <div class="menu_button" id="dbridge_update"><i class="fa-solid fa-download"></i> </div>
+                    <div class="menu_button" id="dbridge_devupdate" style="display:none" title="개발(dev) 업데이트"><i class="fa-solid fa-flask"></i> dev</div>
                 </div>
             </div>
 
@@ -437,6 +441,25 @@ jQuery(async () => {
             toastr.error(e.message, '업데이트 실패 (git remote/충돌 확인)');
         } finally {
             $btn.prop('disabled', false).html('<i class="fa-solid fa-download"></i> ');
+        }
+    });
+    $('#dbridge_devupdate').on('click', async () => {
+        // 비밀키 입력(브라우저에 기억). 서버가 키 일치할 때만 dev 받기 → 나만 작동
+        let key = localStorage.getItem('dbridge_devkey') || '';
+        key = prompt('개발(dev) 업데이트 키를 입력하세요:', key) || '';
+        if (!key) return;
+        localStorage.setItem('dbridge_devkey', key);
+        const $btn = $('#dbridge_devupdate');
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> dev');
+        try {
+            const r = await apiPost('/dev-update', { key });
+            toastr.success('dev 적용 완료. 확장 변경은 F5, 플러그인 변경은 ST 재시작 후 반영.', 'Discord Bridge (dev)', { timeOut: 8000 });
+            console.log('[DiscordBridge] dev-update:', r.output);
+            setTimeout(refreshStatus, 4000);
+        } catch (e) {
+            toastr.error(e.message, 'dev 업데이트 실패 (키/충돌 확인)');
+        } finally {
+            $btn.prop('disabled', false).html('<i class="fa-solid fa-flask"></i> dev');
         }
     });
     $('#dbridge_proactive').on('change', function () {
