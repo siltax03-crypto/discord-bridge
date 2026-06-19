@@ -10,11 +10,24 @@ const ImageGen = {
         apiKey = profile.apiKey;
     },
 
+    // 캐릭터 셀카/사진 ([SEND_PHOTO]용)
+    async generate(scenePrompt, character) {
+        const avatarPath = STReader.getCharacterAvatarPath(character);
+        return this._generate(scenePrompt, avatarPath);
+    },
+
+    // 페르소나(유저) 셀카 (/pic용) — 페르소나 아바타 + 설명 기반
+    async generateForPersona(scenePrompt, avatarPath, personaDesc = '') {
+        const desc = (personaDesc || '').slice(0, 800).trim();
+        const scene = desc ? `Appearance reference: ${desc}. ${scenePrompt}` : scenePrompt;
+        return this._generate(scene, avatarPath);
+    },
+
     /**
      * Gemini 네이티브 이미지 생성 (레퍼런스 이미지 포함)
      * 나노바나나와 동일한 방식 — Gemini generateContent + responseModalities: IMAGE
      */
-    async generate(scenePrompt, character) {
+    async _generate(scenePrompt, avatarPath) {
         if (!apiKey) throw new Error('API 키가 없습니다');
 
         const model = 'gemini-3.1-flash-image-preview';
@@ -23,8 +36,7 @@ const ImageGen = {
         // 메시지 parts 조립
         const parts = [];
 
-        // 캐릭터 PNG를 레퍼런스로 포함
-        const avatarPath = STReader.getCharacterAvatarPath(character);
+        // 레퍼런스 이미지(캐릭터/페르소나 PNG) 포함
         if (avatarPath) {
             try {
                 const avatarBase64 = fs.readFileSync(avatarPath).toString('base64');
@@ -34,7 +46,7 @@ const ImageGen = {
                         data: avatarBase64,
                     },
                 });
-                console.log(`[ImageGen] 레퍼런스 이미지 포함: ${character.avatar}`);
+                console.log(`[ImageGen] 레퍼런스 이미지 포함: ${avatarPath}`);
             } catch (e) {
                 console.warn(`[ImageGen] 레퍼런스 이미지 로드 실패:`, e.message);
             }

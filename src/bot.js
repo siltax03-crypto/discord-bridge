@@ -87,6 +87,11 @@ const Bot = {
                 .setName('info')
                 .setDescription('이 채널에 주입되는 정보 보기 (캐릭터/페르소나/메모리 등)'),
             new SlashCommandBuilder()
+                .setName('pic')
+                .setDescription('내 페르소나 셀카를 생성해서 보내기 (⚠ 이미지 생성 비용)')
+                .addStringOption((o) =>
+                    o.setName('description').setDescription('어떤 사진? 예: 어색하게 웃는 셀카').setRequired(true)),
+            new SlashCommandBuilder()
                 .setName('reminders')
                 .setDescription('예약된 리마인더 관리')
                 .addSubcommand((s) => s.setName('list').setDescription('리마인더 목록 보기'))
@@ -200,6 +205,38 @@ const Bot = {
                 `• 프리셋: ${AIClient.getProfile()?.preset || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
             ];
             return interaction.reply({ content: lines.join('\n'), ...eph });
+        }
+
+        if (cmd === 'pic') {
+            const promptText = interaction.options.getString('description');
+            const personaName = config.channels[channelId]?.persona;
+            if (!personaName) {
+                return interaction.reply({ content: '이 채널에 페르소나(나)가 설정 안 됐어요. ST 확장에서 채널에 페르소나를 지정하면 그 얼굴로 셀카가 생성돼요.', ...eph });
+            }
+            const avatarPath = STReader.getPersonaAvatarPath(personaName);
+            if (!avatarPath) {
+                return interaction.reply({ content: `페르소나 "${personaName}"의 아바타 이미지를 못 찾았어요. ST 페르소나에 사진이 있어야 해요.`, ...eph });
+            }
+            await interaction.reply({ content: '📸 셀카 생성 중...', ...eph });
+            try {
+                const desc = STReader.getPersonaByName(personaName);
+                const buffer = await ImageGen.generateForPersona(promptText, avatarPath, desc);
+                if (!buffer) return interaction.editReply('⚠️ 사진 생성 실패.');
+
+                const webhook = await this._getNamedWebhook(interaction.channel, `bridge-persona-${personaName}`, avatarPath);
+                const attachment = new AttachmentBuilder(buffer, { name: 'selfie.png' });
+                let sent = null;
+                if (webhook) sent = await webhook.send({ username: personaName, files: [attachment], wait: true });
+                else await interaction.channel.send({ files: [attachment] });
+
+                // 히스토리에 기록 + 캐릭터가 반응하도록
+                ChatHistory.addMessage(channelId, 'user', `(셀카를 보냈다: ${promptText})`, personaName);
+                await interaction.editReply('📸 보냈어요.');
+                this._queueReply(interaction.channel, channelId, { userName: personaName, reactTarget: sent });
+            } catch (e) {
+                await interaction.editReply(`⚠️ 오류: ${e.message?.substring(0, 150)}`);
+            }
+            return;
         }
 
         if (cmd === 'reminders') {
