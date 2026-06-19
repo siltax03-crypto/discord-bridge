@@ -19,7 +19,8 @@ const ImageGen = {
     // 페르소나(유저) 셀카 (/pic용) — 페르소나 아바타 + 설명 기반
     async generateForPersona(scenePrompt, avatarPath, personaDesc = '') {
         const desc = (personaDesc || '').slice(0, 800).trim();
-        const scene = desc ? `Appearance reference: ${desc}. ${scenePrompt}` : scenePrompt;
+        const framing = "Frame it as a casual phone photo the person took of THEMSELVES — a selfie from a first-person point of view, front-facing camera held at arm's length, the person looking toward the camera (you may show their hand/arm holding the phone). Do NOT make it look like a third-person photo taken by someone else, UNLESS the description below clearly asks for a different kind of shot.";
+        const scene = `${framing}${desc ? ` Appearance reference: ${desc}.` : ''} What the photo shows: ${scenePrompt}`;
         return this._generate(scene, avatarPath);
     },
 
