@@ -41,13 +41,14 @@ const Bot = {
             // 멀티봇: 멤버(캐릭터)마다 봇 1개. 채널 지정 없음 — 봇이 초대된 채널 어디서든 그 캐릭터로 동작.
             const members = (cfg.members || []).filter((m) => m && m.token && !m.token.includes('여기에'));
             if (members.length === 0) throw new Error('멀티봇 모드인데 멤버에 봇 토큰이 하나도 없습니다.');
-            for (const m of members) {
-                const cl = await this._startClient(m.token, [], { commands: !primaryClient, member: m });
+            // 첫 봇만 명령 등록 담당. 전부 병렬 로그인(순차보다 N배 빠름).
+            await Promise.all(members.map(async (m, i) => {
+                const cl = await this._startClient(m.token, [], { commands: i === 0, member: m });
                 clientMember.set(cl, m);
-                if (!primaryClient) primaryClient = cl;
-            }
+                if (i === 0) primaryClient = cl;
+            }));
 
-            // 페르소나 전담 봇 (웹훅/메시지삭제 전담).
+            // 페르소나 전담 봇 (웹훅/메시지삭제 전담). 같이 병렬로.
             if (cfg.personaBotToken && !cfg.personaBotToken.includes('여기에')) {
                 personaClient = await this._startClient(cfg.personaBotToken, [], { persona: true });
             }
