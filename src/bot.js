@@ -505,25 +505,30 @@ const Bot = {
         }
     },
 
-    // --- 멀티봇 그룹챗: 이 멤버봇이 이번 메시지에 답할지 결정 ---
+    // --- 멀티봇: 이 멤버봇이 이번 메시지에 답할지 결정 ---
     async _shouldMemberReply(message, member, client) {
-        // 이 채널에 들어와 있는 "다른 멤버봇" 수 파악 (그룹챗인지 1:1인지)
-        let otherMembers = 0;
-        for (const cl of clientMember.keys()) {
-            if (cl === client) continue;
-            if (cl.channels.cache.get(message.channelId)) otherMembers++;
-        }
-        // 1:1 (이 채널에 나만) → 항상 답
-        if (otherMembers === 0) return true;
+        const chId = message.channelId;
+        // 멤버에 담당 채널이 지정돼 있으면, 그 채널이 아니면 무시 (채널별 관리의 핵심)
+        const assigned = Array.isArray(member.channels) ? member.channels : [];
+        if (assigned.length > 0 && !assigned.includes(chId)) return false;
 
-        // 그룹챗: 내 캐릭터/멤버 이름이 호명되면 답
+        // 이 채널을 담당하는 멤버가 몇 명인지 (그룹챗 판정). 담당 지정 안 한 멤버는 전 채널 대상으로 침.
+        const here = [];
+        for (const m of clientMember.values()) {
+            const a = Array.isArray(m.channels) ? m.channels : [];
+            if (a.length === 0 || a.includes(chId)) here.push(m);
+        }
+        // 이 채널 담당이 나 혼자 → 항상 답 (1:1)
+        if (here.length <= 1) return true;
+
+        // 그룹챗: 호명되면 답
         const text = (message.content || '').toLowerCase();
         const myName = (member.name || member.character || '').toLowerCase();
         const firstName = myName.split(/[\s'‘’"]/)[0];
         if (myName && text.includes(myName)) return true;
         if (firstName && firstName.length >= 2 && text.includes(firstName)) return true;
 
-        // 호명 안 됐으면: 답변 폭주 방지로 일정 확률만 (그룹 분위기용)
+        // 호명 안 됐으면 일정 확률만
         return Math.random() < (config.groupChimeInChance ?? 0.25);
     },
 

@@ -241,11 +241,20 @@ function renderMemberRows() {
                 (m.persona && !personas.includes(m.persona) ? `<option value="${escapeHtml(m.persona)}" selected>${escapeHtml(m.persona)} (없음)</option>` : '')
             }</select>`;
 
+        // 담당 채널 (다중선택). 비우면 모든 채널. 단톡은 여러 멤버가 같은 채널 선택.
+        const assigned = Array.isArray(m.channels) ? m.channels : [];
+        const chOpts = discordChannels.length > 0
+            ? discordChannels.map((c) => `<option value="${escapeHtml(c.id)}"${assigned.includes(c.id) ? ' selected' : ''}>#${escapeHtml(c.name)} (${escapeHtml(c.guild)})</option>`).join('')
+            : assigned.map((id) => `<option value="${escapeHtml(id)}" selected>${escapeHtml(id)}</option>`).join('');
+        const channelField =
+            `<span>담당 채널</span><select class="text_pole dbridge_m_channels" multiple size="2" title="비우면 모든 채널 / 단톡은 같은 채널을 여러 멤버에 선택">${chOpts}</select>`;
+
         const $row = $(`
             <div class="dbridge_row" data-idx="${i}">
                 ${groupCheck}
                 ${idField}
                 ${personaField}
+                ${channelField}
                 <span>봇 토큰</span>
                 <input type="password" class="text_pole dbridge_m_token" placeholder="${saved ? '•••••••• (저장됨, 비우면 유지)' : '이 캐릭터 봇 토큰'}" />
                 <div class="menu_button dbridge_m_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
@@ -344,6 +353,8 @@ function syncFromDom() {
                 m.character = $(this).find('.dbridge_m_char').val() || '';
             }
             if (persona) m.persona = persona;
+            const chans = ($(this).find('.dbridge_m_channels').val() || []).filter(Boolean);
+            if (chans.length) m.channels = chans;
             if (typed) { m.token = typed; m.tokenSaved = true; }
             else if (state.members[idx]?.tokenSaved) m.tokenSaved = true;
             members.push(m);
