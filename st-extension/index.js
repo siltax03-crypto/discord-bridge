@@ -250,14 +250,19 @@ function renderMemberRows() {
         const channelField =
             `<span>담당 채널</span><select class="text_pole dbridge_m_channel" title="단톡은 같은 채널을 여러 멤버에 지정">${chOpts}</select>`;
 
+        // 아바타 URL (웹훅 방식: 봇 토큰 없이 이 URL+이름으로 단톡 전송)
+        const avatarField =
+            `<span>아바타 URL</span><input type="text" class="text_pole dbridge_m_avatar" value="${escapeHtml(m.avatarUrl || '')}" placeholder="imgur 등 이미지 링크 (토큰 없으면 웹훅으로 이 얼굴 사용)" />`;
+
         const $row = $(`
             <div class="dbridge_row" data-idx="${i}">
                 ${groupCheck}
                 ${idField}
                 ${personaField}
                 ${channelField}
+                ${avatarField}
                 <span>봇 토큰</span>
-                <input type="password" class="text_pole dbridge_m_token" placeholder="${saved ? '•••••••• (저장됨, 비우면 유지)' : '이 캐릭터 봇 토큰'}" />
+                <input type="password" class="text_pole dbridge_m_token" placeholder="${saved ? '•••••••• (저장됨, 비우면 유지)' : '비우면 웹훅으로 (아바타 URL 사용)'}" />
                 <div class="menu_button dbridge_m_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
             </div>
         `);
@@ -356,6 +361,8 @@ function syncFromDom() {
             if (persona) m.persona = persona;
             const ch = $(this).find('.dbridge_m_channel').val();
             if (ch) m.channels = [ch];
+            const avatar = ($(this).find('.dbridge_m_avatar').val() || '').trim();
+            if (avatar) m.avatarUrl = avatar;
             if (typed) { m.token = typed; m.tokenSaved = true; }
             else if (state.members[idx]?.tokenSaved) m.tokenSaved = true;
             members.push(m);
