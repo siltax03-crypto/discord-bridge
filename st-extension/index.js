@@ -501,10 +501,9 @@ const SETTINGS_HTML = `
                 </div>
             </div>
 
-            <label>봇 모드</label>
-            <select id="dbridge_botmode" class="text_pole">
-                <option value="single">단일봇 (봇 1개가 모든 캐릭터, 웹훅)</option>
-                <option value="multi">멀티봇 (캐릭터마다 봇 + 페르소나 전담봇)</option>
+            <select id="dbridge_botmode" class="text_pole" style="display:none">
+                <option value="single">단일봇</option>
+                <option value="multi">멀티봇</option>
             </select>
 
             <div id="dbridge_single_box">
