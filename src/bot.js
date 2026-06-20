@@ -86,11 +86,13 @@ const Bot = {
             }
         });
 
-        // 페르소나 전담 봇은 메시지/명령에 응답하지 않음 (웹훅 송출 전용)
         if (!persona) {
             client.on(Events.MessageCreate, (message) => this._onMessage(message, client));
             client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
             client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
+        } else {
+            // 페르소나 전담봇: 웹훅 단톡(토큰 없는 멤버만 있는 채널)에선 이 봇이 메시지를 받아 그룹 처리
+            client.on(Events.MessageCreate, (message) => this._onPersonaMessage(message));
         }
 
         await client.login(token);
@@ -425,6 +427,20 @@ const Bot = {
         return this._loadCharacterByName(member.sheet || member.character);
     },
 
+    // --- 페르소나 전담봇이 받는 메시지: 웹훅 단톡 채널 처리 ---
+    async _onPersonaMessage(message) {
+        if (message.author.bot) return;
+        if (message.webhookId) return; // 자기가 보낸 웹훅 메시지 무시
+        if (config.botMode !== 'multi') return;
+        const groupMembers = this._channelGroupMembers(message.channelId);
+        if (groupMembers.length < 2) return;        // 단톡 채널 아님
+        const gkey = 'grp:' + message.id;
+        if (intakeDone.has(gkey)) return;            // 멤버봇이 이미 집었으면 중복 방지
+        intakeDone.add(gkey);
+        setTimeout(() => intakeDone.delete(gkey), 60_000);
+        return this._handleGroupMessage(message, groupMembers).catch((e) => console.error('[Group] 처리 오류:', e));
+    },
+
     // --- 메시지 수신 핸들러 ---
     async _onMessage(message, client) {
         // 봇 메시지 무시
@@ -454,7 +470,16 @@ const Bot = {
             // 1:1: 담당 채널 아니면 무시
             if (!(await this._shouldMemberReply(message, member, client))) return;
         } else {
-            if (!config.channels[message.channelId]) return;
+            const chCfg = config.channels[message.channelId];
+            if (!chCfg) return;
+            // 단체 채널(group)이면 → 웹훅 단톡 (API 1번 → 인물별 웹훅 분배)
+            if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
+                const gkey = 'grp:' + message.id;
+                if (intakeDone.has(gkey)) return;
+                intakeDone.add(gkey);
+                setTimeout(() => intakeDone.delete(gkey), 60_000);
+                return this._handleSingleGroup(message, chCfg).catch((e) => console.error('[Group] 처리 오류:', e));
+            }
             character = this._getCharacter(message.channelId);
             if (!character) { console.error(`[Bot] 캐릭터 없음: 채널 ${message.channelId}`); return; }
         }
@@ -524,20 +549,73 @@ const Bot = {
         }
     },
 
-    // 이 채널을 담당하는 멤버 목록 (담당 채널에 이 채널이 포함된 멤버들)
+    // 이 채널을 담당하는 멤버 목록 (config.members 전체 — 토큰 없는 웹훅 멤버 포함)
     _channelGroupMembers(channelId) {
-        const out = [];
-        for (const m of clientMember.values()) {
+        return (config.members || []).filter((m) => {
             const a = Array.isArray(m.channels) ? m.channels : [];
-            if (a.includes(channelId)) out.push(m);
-        }
-        return out;
+            return a.includes(channelId);
+        });
     },
 
     // 멤버 → 그 봇 client 찾기
     _clientForMember(member) {
         for (const [cl, m] of clientMember) if (m === member) return cl;
         return null;
+    },
+
+    // --- 단일봇 단체 채널: API 1번 호출 → 인물별 웹훅(이름+아바타URL)으로 분배 ---
+    // chCfg = { group:true, sheet, persona, members:[{name, avatarUrl}] }
+    async _handleSingleGroup(message, chCfg) {
+        const channelId = message.channelId;
+        const channel = message.channel;
+        const userName = message.author?.displayName || message.author?.username || 'User';
+
+        // 시트 카드 로드 (단체 시트 본문)
+        const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
+        if (!sheetCard) { console.error('[Group] 시트 카드 로드 실패:', chCfg.sheet); return; }
+
+        // 유저 메시지 저장 + 페르소나 프록시
+        const personaName = chCfg.persona || '';
+        ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
+        if (personaName) { await this._proxyUserMessage(message, personaName).catch(() => {}); }
+        if (Away.isAway(channelId)) return;
+
+        const roster = chCfg.members.map((m) => m.name).filter(Boolean);
+        const mode = Modes.get(channelId);
+        const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
+
+        const sys = ContextBuilder.buildGroup(sheetCard, {
+            roster,
+            language: config.language || 'ko',
+            timezone: config.timezone || 'Asia/Seoul',
+            chatSlang: config.chatSlang !== false,
+        });
+        const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
+        const messages = [{ role: 'system', content: sys }, ...history];
+
+        let response = await AIClient.sendMessage(messages, { maxTokens });
+        if (!response) { console.warn('[Group] 빈 응답'); return; }
+
+        const lines = this._parseGroupLines(response, roster);
+        if (lines.length === 0) { console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return; }
+
+        ChatHistory.addMessage(channelId, 'assistant', lines.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
+
+        // 인물별 웹훅으로 순차 전송 (이름 + 아바타URL)
+        for (const { name, text } of lines) {
+            const mem = chCfg.members.find((m) => m.name === name)
+                || chCfg.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
+            if (!mem) continue;
+            const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), null);
+            if (!hook) { console.warn(`[Group] 웹훅 없음(${name})`); continue; }
+            try {
+                await channel.sendTyping().catch(() => {});
+                await delay(700 + Math.min(text.length * 18, 2200));
+                for (const part of text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)) {
+                    await hook.send({ content: part, username: name, avatarURL: mem.avatarUrl || undefined });
+                }
+            } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
+        }
     },
 
     // --- 멀티봇 단톡: 페르소나봇이 API 1번 호출 → 여러 화자 대사 파싱 → 각 캐릭터 봇으로 분배 ---
@@ -594,21 +672,36 @@ const Bot = {
         // 히스토리에 합쳐 저장 (다음 턴 맥락용)
         ChatHistory.addMessage(channelId, 'assistant', lines.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
 
-        // 각 줄을 해당 캐릭터 봇으로 순차 전송 (텀)
+        // 각 줄을 해당 인물로 순차 전송 (텀)
+        // - 멤버에 봇 토큰 있으면 그 봇 자신으로 전송(프로필/온라인)
+        // - 토큰 없으면 chatsi 웹훅으로 username+avatarUrl 씌워 전송 (봇 12개 안 만들어도 됨)
         for (let i = 0; i < lines.length; i++) {
             const { name, text } = lines[i];
             const mem = members.find((m) => (m.name || m.character) === name)
                 || members.find((m) => (m.name || m.character || '').toLowerCase() === name.toLowerCase());
             if (!mem) continue;
-            const cl = this._clientForMember(mem);
-            const ch = cl && await cl.channels.fetch(channelId).catch(() => null);
-            if (!ch) continue;
+            const parts = text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
             try {
-                await ch.sendTyping().catch(() => {});
-                await delay(700 + Math.min(text.length * 18, 2200));
-                // 멀티봇은 봇 자신으로 전송
-                for (const part of text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)) {
-                    await ch.send(part);
+                if (mem.token) {
+                    // 진짜 봇으로
+                    const cl = this._clientForMember(mem);
+                    const ch = cl && await cl.channels.fetch(channelId).catch(() => null);
+                    if (!ch) continue;
+                    await ch.sendTyping().catch(() => {});
+                    await delay(700 + Math.min(text.length * 18, 2200));
+                    for (const part of parts) await ch.send(part);
+                } else {
+                    // 웹훅으로 (이름+아바타URL). 송출 봇 = 페르소나봇 우선, 없으면 대표봇
+                    const sender = personaClient || primaryClient;
+                    const ch = sender && await sender.channels.fetch(channelId).catch(() => null);
+                    if (!ch) continue;
+                    const hook = await this._getNamedWebhook(ch, `grp-${name}`.slice(0, 80), null);
+                    if (!hook) { console.warn(`[Group] 웹훅 없음(${name})`); continue; }
+                    await ch.sendTyping().catch(() => {});
+                    await delay(700 + Math.min(text.length * 18, 2200));
+                    for (const part of parts) {
+                        await hook.send({ content: part, username: name, avatarURL: mem.avatarUrl || undefined });
+                    }
                 }
             } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
         }

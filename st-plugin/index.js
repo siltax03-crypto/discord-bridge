@@ -246,32 +246,49 @@ function getSheetMembers(req, res) {
     //   greedy로 단어 전체를 잡아 "Gho" 같은 잘림 방지. 예: König, John Price, Kim Hong-jin
     const NAME = `${U}[\\p{L}'’.\\-]+(?:\\s${U}?[\\p{L}'’.\\-]+){0,2}`;
 
-    // (0) 최우선 — "A, B, C ... and D" 명단 나열에 샘플이 포함되면 그 목록 통째로
-    const listRe = new RegExp(`${NAME}(?:\\s*,\\s*(?:and\\s+)?${NAME})+(?:\\s+and\\s+${NAME})?`, 'gu');
-    let lm;
-    while ((lm = listRe.exec(body)) !== null) {
-        const parts = lm[0].split(/\s*,\s*|\s+and\s+/).map(clean).filter(Boolean);
-        if (parts.length >= 3 && parts.some((p) => p.toLowerCase() === sample.toLowerCase())) {
-            return res.json({ names: order(parts, sample) });
+    // 샘플이 시트에서 "실제로 등장하는 자리"를 보고, 그 앞의 라벨/구분자 패턴을 그대로 따라간다.
+    // 이게 명단 줄보다 우선 — 본명(Full Name= John Price)으로 넣으면 본명들이 나와야 하므로.
+    const idx = body.toLowerCase().indexOf(sample.toLowerCase());
+
+    // 명단 줄 폴백 함수 (위 패턴이 실패할 때만 사용)
+    const tryRoster = () => {
+        const listRe = new RegExp(`${NAME}(?:\\s*,\\s*(?:and\\s+)?${NAME})+(?:\\s+and\\s+${NAME})?`, 'gu');
+        let lm;
+        while ((lm = listRe.exec(body)) !== null) {
+            const parts = lm[0].split(/\s*,\s*|\s+and\s+/).map(clean).filter(Boolean);
+            if (parts.length >= 3 && parts.some((p) => p.toLowerCase() === sample.toLowerCase())) return parts;
         }
+        return null;
+    };
+
+    if (idx === -1) {
+        const r = tryRoster();
+        return res.json({ names: r ? order(r, sample) : [sample] });
     }
 
-    // 그 외 패턴들 (information 라벨 / 헤더)
-    const candidates = [
-        new RegExp(`\\(\\s*${esc(sample)}\\b[^)]*information`, 'i').test(body)
-            ? new RegExp(`\\(\\s*(${U}${NAME})['’]?s?\\s+information`, 'giu') : null,
-        new RegExp(`information\\s+from\\s+${esc(sample)}`, 'i').test(body)
-            ? new RegExp(`information\\s+from\\s+(${U}${NAME})(?=[\\n.,;)]|$)`, 'giu') : null,
-        new RegExp(`(^|\\n)\\s*#{1,4}\\s*(?:\\S\\s*)?${esc(sample)}\\b`, 'u').test(body)
-            ? new RegExp(`(?:^|\\n)\\s*#{1,4}\\s*(?:[^\\s\\w]\\s*)?(${U}${NAME})(?=[\\n(]|$)`, 'gmu') : null,
-        (() => {
-            const m = body.match(new RegExp(`([A-Za-z][\\w ]{0,20})[=:]\\s*${esc(sample)}\\b`));
-            if (!m) return null;
-            return new RegExp(`${esc(m[1].trim())}\\s*[=:]\\s*(${U}${NAME})(?=[\\n.,;()]|$)`, 'gu');
-        })(),
-    ].filter(Boolean);
+    const before = body.slice(Math.max(0, idx - 40), idx); // 샘플 바로 앞 40자
+    let extractRe = null;
 
-    for (const re of candidates) {
+    // 1) "라벨= 샘플" / "라벨: 샘플"  (예: Full Name= , Name= , Alias= )
+    const lab = before.match(/([A-Za-z][A-Za-z ]{0,20})\s*[=:]\s*$/);
+    if (lab) {
+        extractRe = new RegExp(`${esc(lab[1].trim())}\\s*[=:]\\s*(${U}${NAME})(?=[\\n.,;()]|$)`, 'gu');
+    }
+    // 2) "(샘플 ... information" → "(이름 ... information"
+    else if (new RegExp(`\\(\\s*${esc(sample)}\\b[^)]*information`, 'i').test(body)) {
+        extractRe = new RegExp(`\\(\\s*(${U}${NAME})['’]?s?\\s+information`, 'giu');
+    }
+
+    // 샘플 자리 패턴(extractRe)을 최우선. 그담 흔한 패턴 폴백.
+    const fallbacks = [
+        new RegExp(`\\(\\s*(${U}${NAME})['’]?s?\\s+information`, 'giu'),
+        new RegExp(`information\\s+from\\s+(${U}${NAME})(?=[\\n.,;)]|$)`, 'giu'),
+        new RegExp(`(?:^|\\n)\\s*#{1,4}\\s*(?:[^\\s\\w]\\s*)?(${U}${NAME})(?=[\\n(]|$)`, 'gmu'),
+        new RegExp(`Full Name\\s*[=:]\\s*(${U}${NAME})(?=[\\n.,;()]|$)`, 'gu'),
+    ];
+    const tries = extractRe ? [extractRe, ...fallbacks] : fallbacks;
+
+    for (const re of tries) {
         const found = new Set();
         let mm;
         while ((mm = re.exec(body)) !== null) {
@@ -280,7 +297,9 @@ function getSheetMembers(req, res) {
         }
         if (found.size >= 2) return res.json({ names: order([...found], sample) });
     }
-    return res.json({ names: [sample] });
+    // 최후: 명단 줄(A, B and C)
+    const r = tryRoster();
+    return res.json({ names: r ? order(r, sample) : [sample] });
 }
 
 // ST 페르소나 이름 목록
