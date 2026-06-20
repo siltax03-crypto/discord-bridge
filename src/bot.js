@@ -430,9 +430,21 @@ const Bot = {
         if (multi) {
             member = clientMember.get(client);
             if (!member) return; // 멤버봇 아니면(페르소나봇 등) 무시
+
+            // 단톡 채널(이 채널 담당 멤버가 2명 이상)이면 → 그룹 경로(페르소나봇 1회 호출+분배)로.
+            // 메시지당 1번만 처리하기 위해 "먼저 받은 봇"만 진입(intake 잠금).
+            const groupMembers = this._channelGroupMembers(message.channelId);
+            if (groupMembers.length >= 2) {
+                const gkey = 'grp:' + message.id;
+                if (intakeDone.has(gkey)) return;     // 다른 멤버봇이 이미 집음
+                intakeDone.add(gkey);
+                setTimeout(() => intakeDone.delete(gkey), 60_000);
+                return this._handleGroupMessage(message, groupMembers).catch((e) => console.error('[Group] 처리 오류:', e));
+            }
+
             character = this._getMemberCharacter(member);
             if (!character) { console.error(`[Bot] 멤버 캐릭터 로드 실패: ${member.name || member.character}`); return; }
-            // 그룹챗에서 누가 답할지: 호명되면 그 봇만, 아니면 이 채널의 다른 멤버봇이 있는지로 판단
+            // 1:1: 담당 채널 아니면 무시
             if (!(await this._shouldMemberReply(message, member, client))) return;
         } else {
             if (!config.channels[message.channelId]) return;
@@ -503,6 +515,131 @@ const Bot = {
         } catch (e) {
             console.error(`[Bot] 메시지 처리 오류:`, e);
         }
+    },
+
+    // 이 채널을 담당하는 멤버 목록 (담당 채널에 이 채널이 포함된 멤버들)
+    _channelGroupMembers(channelId) {
+        const out = [];
+        for (const m of clientMember.values()) {
+            const a = Array.isArray(m.channels) ? m.channels : [];
+            if (a.includes(channelId)) out.push(m);
+        }
+        return out;
+    },
+
+    // 멤버 → 그 봇 client 찾기
+    _clientForMember(member) {
+        for (const [cl, m] of clientMember) if (m === member) return cl;
+        return null;
+    },
+
+    // --- 멀티봇 단톡: 페르소나봇이 API 1번 호출 → 여러 화자 대사 파싱 → 각 캐릭터 봇으로 분배 ---
+    async _handleGroupMessage(message, members, seedNote = null) {
+        const channelId = message ? message.channelId : (members[0]?.channels || [])[0];
+        if (!channelId) return;
+        const userName = message?.author?.displayName || message?.author?.username || 'User';
+
+        // 유저 메시지 저장 + 페르소나 프록시 (seed 선톡이면 message 없음)
+        let reactTarget = message || null;
+        if (message) {
+            const personaName = members[0] && this._getMemberPersona(members[0]);
+            const userContent = message.content || '(사진/첨부)';
+            ChatHistory.addMessage(channelId, 'user', userContent, personaName || userName);
+            if (personaName) {
+                const proxied = await this._proxyUserMessage(message, personaName).catch(() => null);
+                if (proxied) reactTarget = proxied;
+            }
+        }
+        if (Away.isAway(channelId)) return;
+
+        // 화자 후보: 멤버들의 표시 이름
+        const roster = members.map((m) => m.name || m.character).filter(Boolean);
+        // 대표 캐릭터(시트/프롬프트 빌드용): 첫 멤버 기준 (대개 같은 단체시트)
+        const baseChar = this._getMemberCharacter(members[0]);
+        if (!baseChar) { console.error('[Group] 캐릭터 로드 실패'); return; }
+
+        const mode = Modes.get(channelId);
+        const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
+
+        // 단톡 전용 시스템 프롬프트
+        const sys = ContextBuilder.buildGroup(baseChar, {
+            roster,
+            language: config.language || 'ko',
+            timezone: config.timezone || 'Asia/Seoul',
+            chatSlang: config.chatSlang !== false,
+            seedNote,
+        });
+
+        const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
+        const messages = [{ role: 'system', content: sys }, ...history];
+        if (seedNote) messages.push({ role: 'user', content: `(상황: ${seedNote} — 등장인물들끼리 자연스럽게 단톡을 시작해.)` });
+
+        let response = await AIClient.sendMessage(messages, { maxTokens });
+        if (!response) { console.warn('[Group] 빈 응답'); return; }
+
+        // 파싱: "[이름] 대사" 또는 "이름: 대사" 줄들을 화자별로
+        const lines = this._parseGroupLines(response, roster);
+        if (lines.length === 0) {
+            console.warn('[Group] 화자 파싱 실패 — 원문 일부:', response.slice(0, 120));
+            return;
+        }
+
+        // 히스토리에 합쳐 저장 (다음 턴 맥락용)
+        ChatHistory.addMessage(channelId, 'assistant', lines.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
+
+        // 각 줄을 해당 캐릭터 봇으로 순차 전송 (텀)
+        for (let i = 0; i < lines.length; i++) {
+            const { name, text } = lines[i];
+            const mem = members.find((m) => (m.name || m.character) === name)
+                || members.find((m) => (m.name || m.character || '').toLowerCase() === name.toLowerCase());
+            if (!mem) continue;
+            const cl = this._clientForMember(mem);
+            const ch = cl && await cl.channels.fetch(channelId).catch(() => null);
+            if (!ch) continue;
+            try {
+                await ch.sendTyping().catch(() => {});
+                await delay(700 + Math.min(text.length * 18, 2200));
+                // 멀티봇은 봇 자신으로 전송
+                for (const part of text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)) {
+                    await ch.send(part);
+                }
+            } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
+        }
+    },
+
+    // "[이름] 대사" / "이름: 대사" 파싱 → [{name, text}]
+    _parseGroupLines(response, roster) {
+        const out = [];
+        const norm = (s) => s.trim().toLowerCase();
+        const known = roster.map(norm);
+        const lines = response.split('\n');
+        let cur = null;
+        for (const raw of lines) {
+            const line = raw.trim();
+            if (!line) continue;
+            // [이름] 또는 이름: 패턴
+            let m = line.match(/^\[([^\]]{1,40})\]\s*(.*)$/) || line.match(/^([^:：]{1,40})[:：]\s*(.*)$/);
+            if (m) {
+                const nm = m[1].trim();
+                if (known.includes(norm(nm))) {
+                    // roster의 원래 표기로 복원
+                    const realName = roster.find((r) => norm(r) === norm(nm));
+                    cur = { name: realName, text: m[2].trim() };
+                    out.push(cur);
+                    continue;
+                }
+            }
+            // 화자 표시 없는 줄 = 직전 화자에 이어붙임
+            if (cur) cur.text += (cur.text ? '\n' : '') + line;
+        }
+        return out.filter((l) => l.text);
+    },
+
+    // 멤버의 페르소나 이름 (수동 우선, 없으면 자동연결)
+    _getMemberPersona(member) {
+        if (member?.persona) return member.persona;
+        const c = this._getMemberCharacter(member);
+        return c ? (STReader.getConnectedPersonaName(c) || '') : '';
     },
 
     // --- 멀티봇: 이 멤버봇이 이번 메시지에 답할지 결정 ---
@@ -808,6 +945,16 @@ const Bot = {
             console.log(`[Bot] 잠수 중 - 선톡 생략 (채널 ${channelId})`);
             return;
         }
+
+        // 멀티봇 단톡 채널이면: 한 명이 씨앗 던지고 등장인물끼리 단톡 시작 (API 1회)
+        if (config.botMode === 'multi') {
+            const groupMembers = this._channelGroupMembers(channelId);
+            if (groupMembers.length >= 2) {
+                const seed = note || '지금 단톡방에 아무나 먼저 말을 꺼내서 등장인물들끼리 자연스럽게 수다를 시작해.';
+                return this._handleGroupMessage(null, groupMembers, seed).catch((e) => console.error('[Group] 선톡 오류:', e));
+            }
+        }
+
         const owner = channelClients[channelId] || primaryClient;
         if (!owner) return;
         const channel = await owner.channels.fetch(channelId).catch(() => null);

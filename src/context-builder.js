@@ -2,6 +2,50 @@ import STReader from './st-reader.js';
 
 const ContextBuilder = {
     /**
+     * 단톡(멀티 화자) 시스템 프롬프트. 한 번의 호출로 여러 등장인물이 자기들끼리 + 유저와 대화.
+     * 출력 형식을 "[이름] 대사" 줄로 강제 → 봇이 파싱해 각 캐릭터로 분배.
+     */
+    buildGroup(character, options = {}) {
+        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '' } = options;
+        const parts = [];
+
+        // 시트 본문(등장인물 전원 정보)
+        if (character.description) parts.push(`[Group Sheet]\n${character.description}`);
+        if (character.personality) parts.push(`[Personality]\n${character.personality}`);
+        if (character.scenario) parts.push(`[Scenario]\n${character.scenario}`);
+
+        // 로어북/월드 (있으면)
+        try {
+            const book = STReader.getCharacterBook(character);
+            const worldName = STReader.getCharacterWorldName(character);
+            const world = STReader.getWorldInfo(worldName);
+            const lore = [...book, ...world].map((e) => e.content).filter(Boolean);
+            if (lore.length) parts.push(`[World Info]\n${lore.join('\n---\n')}`);
+        } catch { /* skip */ }
+
+        const now = new Intl.DateTimeFormat('sv-SE', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date());
+        const langLine = language === 'ko' ? '- Write IN KOREAN (한국어).' : '- Write in English.';
+        const slangLine = chatSlang ? '- Casual texting tone; emoji/ㅋㅋ ok.' : "- No ㅋㅋ/emoji spam; each character's own voice.";
+
+        parts.push(`[GROUP CHAT — HIGHEST PRIORITY]
+- This is a Discord group chat. The participants are: ${roster.join(', ')}.
+- You voice ALL of these characters at once. The user is a separate person in the chat.
+- Current time: ${now} (${timezone}).
+- OUTPUT FORMAT: each message on its own line, prefixed with the speaker in square brackets, e.g.
+  [${roster[0] || 'Name'}] their message
+  [${roster[1] || 'Other'}] their reply
+- Only the characters who would naturally react should speak. NOT everyone has to reply. A quiet/uninterested character can stay silent (just omit them).
+- Let them talk to EACH OTHER, not only to the user — banter, tease, react among themselves (티키타카).
+- Keep each line short like real texting. 2~5 lines total per turn is usually enough; don't flood.
+- If the user names someone, that character answers; others may chime in.
+- Stay in each character's personality/speech from the sheet. NO narration/asterisk actions — pure chat text.
+${langLine}
+${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
+
+        return parts.join('\n\n');
+    },
+
+    /**
      * AIService.buildCharacterContext 서버사이드 재현
      * ST 캐릭터 데이터 + 로어북 + 페르소나 → 시스템 프롬프트 조립
      */
