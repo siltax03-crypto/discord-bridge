@@ -202,6 +202,71 @@ function getCharacters(req, res) {
     res.json({ characters: [...names].sort() });
 }
 
+// 카드 이름으로 카드 본문(description 등 전체) 읽기
+function readCardBodyByName(cardName) {
+    const dir = firstExisting(CHAR_DIR_CANDIDATES);
+    if (!dir) return null;
+    for (const file of fs.readdirSync(dir)) {
+        let card = null;
+        if (file.endsWith('.png')) card = readPngCard(path.join(dir, file));
+        else if (file.endsWith('.json')) card = readJson(path.join(dir, file), null);
+        if (!card) continue;
+        const nm = card.name || card.data?.name;
+        if (nm !== cardName) continue;
+        const d = card.data || card;
+        return [d.description, d.personality, d.scenario, d.first_mes, d.mes_example]
+            .filter(Boolean).join('\n');
+    }
+    return null;
+}
+
+// 단체 시트에서 "샘플 이름"이 등장하는 패턴을 보고 같은 패턴의 다른 인물 이름들을 추출
+// 형식 무관: 샘플 이름 주변의 라벨(앞 토큰)을 패턴으로 잡아 동일 라벨의 값들을 모음.
+function getSheetMembers(req, res) {
+    const cardName = req.query.card;
+    const sample = (req.query.sample || '').trim();
+    if (!cardName || !sample) return res.json({ names: [] });
+
+    const body = readCardBodyByName(cardName);
+    if (!body) return res.json({ names: [], error: '카드 본문을 못 읽었어요.' });
+
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // 샘플이 등장하는 "패턴"을 우선순위대로 시도. 첫 번째로 매칭되는 패턴 하나만 사용
+    // (여러 패턴 섞으면 표시명+본명이 뒤섞여 지저분해지므로).
+    // 표시 이름(Soap/Ghost)을 잡는 패턴을 본명(Full Name=)보다 우선.
+    const candidates = [
+        // (1) "(이름 Information ..."  → (Soap Information)
+        new RegExp(`\\(\\s*${esc(sample)}\\b[^)]*information`, 'i').test(body)
+            ? /\(\s*([A-Z][\p{L}'’.\- ]{1,30}?)\s+information/giu : null,
+        // (2) "## 이름" / "# 이름" 헤더 (앞 이모지 허용)
+        new RegExp(`(^|\\n)\\s*#{1,4}\\s*(?:\\S\\s*)?${esc(sample)}\\b`, 'u').test(body)
+            ? /(?:^|\n)\s*#{1,4}\s*(?:[^\s\w]\s*)?([A-Z][\p{L}'’.\- ]{1,30}?)(?=[\n(]|$)/gmu : null,
+        // (3) "라벨= 이름" (예: Full Name= John Price) — 본명류, 최후순위
+        (() => {
+            const m = body.match(new RegExp(`([A-Za-z][\\w ]{0,20})[=:]\\s*${esc(sample)}\\b`));
+            if (!m) return null;
+            const label = m[1].trim();
+            return new RegExp(`${esc(label)}\\s*[=:]\\s*([A-Z][\\p{L}'’.\\- ]{1,40}?)(?=[\\n.,;()]|$)`, 'gu');
+        })(),
+    ].filter(Boolean);
+
+    let names = [];
+    for (const re of candidates) {
+        const found = new Set();
+        let mm;
+        while ((mm = re.exec(body)) !== null) {
+            const nm = mm[1].trim().replace(/\s+/g, ' ');
+            if (nm.length >= 2 && nm.length <= 40) found.add(nm);
+        }
+        if (found.size >= 2) { names = [...found]; break; } // 2명 이상 잡힌 첫 패턴 채택
+    }
+    if (names.length === 0) names = [sample];
+    if (!names.includes(sample)) names.unshift(sample);
+    names.sort((a, b) => (a === sample ? -1 : b === sample ? 1 : 0));
+    res.json({ names });
+}
+
 // ST 페르소나 이름 목록
 function getPersonas(req, res) {
     const settings = readJson(firstExisting(SETTINGS_CANDIDATES), {});
@@ -317,6 +382,7 @@ async function init(router) {
     router.post('/config', jsonParser, postConfig);
     router.get('/profiles', getProfiles);
     router.get('/characters', getCharacters);
+    router.get('/sheet-members', getSheetMembers);
     router.get('/personas', getPersonas);
     router.get('/channels', getChannels);
     router.get('/status', getStatus);

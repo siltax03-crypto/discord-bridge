@@ -96,10 +96,7 @@ async function loadAll() {
             },
             channels: c.channels || {},
             members: Array.isArray(c.members) ? c.members : [],
-            groupSheet: c.groupSheet || '',
         };
-        // 멤버 중 sheet가 있으면 단체 모드로 간주
-        state.groupMode = state.members.some((m) => m && m.sheet) || !!state.groupSheet;
         profiles = profRes.profiles || [];
         characters = charRes.characters || [];
         personas = persRes.personas || [];
@@ -163,14 +160,6 @@ function render() {
     $('#dbridge_single_map').toggle(!multi);
     $('#dbridge_multi_map').toggle(multi);
 
-    // 단체 시트
-    $('#dbridge_group_mode').prop('checked', !!state.groupMode);
-    $('#dbridge_group_box').toggle(!!state.groupMode);
-    $('#dbridge_group_sheet').html(
-        '<option value="">(단체 시트 카드 선택)</option>' +
-        optionList(characters, state.groupSheet || '', (n) => ({ value: n, label: n })));
-    $('#dbridge_member_label').text(state.groupMode ? '인물 목록 (시트 속 각 인물)' : '캐릭터(봇) 목록');
-
     // 메인 토큰 (단일봇): 비우면 기존 유지, 입력하면 교체
     $('#dbridge_token').val('')
         .attr('placeholder', state.tokenSaved ? '•••••••• (저장됨, 비우면 유지)' : '디스코드 봇 토큰 입력');
@@ -213,31 +202,48 @@ function render() {
     else renderChannelRows();
 }
 
-// --- 멀티봇: 멤버(캐릭터) 행 렌더 ---
+// --- 멀티봇: 멤버(캐릭터) 행 렌더. 행마다 개별/단체 ---
 function renderMemberRows() {
     const $list = $('#dbridge_member_list').empty();
-    const group = !!state.groupMode;
     if (!state.members.length) {
         $list.append('<div class="dbridge_hint">캐릭터가 없습니다. [+]로 추가하세요.</div>');
     }
     state.members.forEach((m, i) => {
         const saved = !!m.tokenSaved;
-        // 인물 식별: 단체면 이름 텍스트 입력, 개별이면 캐릭터 드롭다운
-        const idField = group
-            ? `<span>인물</span><input type="text" class="text_pole dbridge_m_name" value="${escapeHtml(m.name || '')}" placeholder="시트 속 이름 (예: Adonis)" />`
-            : `<span>캐릭터</span><select class="text_pole dbridge_m_char">${
-                  '<option value="">(선택)</option>' +
-                  optionList(characters, m.character || '', (n) => ({ value: n, label: n })) +
-                  (m.character && !characters.includes(m.character) ? `<option value="${escapeHtml(m.character)}" selected>${escapeHtml(m.character)} (카드없음)</option>` : '')
-              }</select>`;
+        // 단체 행 여부: sheet 키가 있으면(빈값이어도) 단체
+        const group = ('sheet' in m) || !!m._group;
+
+        // 단체 체크박스
+        const groupCheck = `<label class="dbridge_inline" style="gap:4px"><input type="checkbox" class="dbridge_m_group"${group ? ' checked' : ''} /><span class="dbridge_hint">단체</span></label>`;
+
+        // 식별 필드: 단체면 [시트 드롭다운 + 인물이름 + ➕], 개별이면 [캐릭터 드롭다운]
+        let idField;
+        if (group) {
+            const sheetOpts = '<option value="">(시트 선택)</option>' +
+                optionList(characters, m.sheet || '', (n) => ({ value: n, label: n })) +
+                (m.sheet && !characters.includes(m.sheet) ? `<option value="${escapeHtml(m.sheet)}" selected>${escapeHtml(m.sheet)} (카드없음)</option>` : '');
+            idField =
+                `<span>시트</span><select class="text_pole dbridge_m_sheet">${sheetOpts}</select>` +
+                `<span>인물</span><input type="text" class="text_pole dbridge_m_name" value="${escapeHtml(m.name || '')}" placeholder="첫 인물 적고 🔄 (예: John Price)" />` +
+                `<div class="menu_button dbridge_m_extract" title="이 이름 패턴으로 시트 인물 자동 추출"><i class="fa-solid fa-wand-magic-sparkles"></i></div>` +
+                `<div class="menu_button dbridge_m_addsame" title="같은 시트 인물 수동 추가"><i class="fa-solid fa-user-plus"></i></div>`;
+        } else {
+            const charOpts = '<option value="">(선택)</option>' +
+                optionList(characters, m.character || '', (n) => ({ value: n, label: n })) +
+                (m.character && !characters.includes(m.character) ? `<option value="${escapeHtml(m.character)}" selected>${escapeHtml(m.character)} (카드없음)</option>` : '');
+            idField = `<span>캐릭터</span><select class="text_pole dbridge_m_char">${charOpts}</select>`;
+        }
+
         const personaField =
             `<span>나(페르소나)</span><select class="text_pole dbridge_m_persona">${
                 '<option value="">(자동)</option>' +
                 optionList(personas, m.persona || '', (n) => ({ value: n, label: n })) +
                 (m.persona && !personas.includes(m.persona) ? `<option value="${escapeHtml(m.persona)}" selected>${escapeHtml(m.persona)} (없음)</option>` : '')
             }</select>`;
+
         const $row = $(`
             <div class="dbridge_row" data-idx="${i}">
+                ${groupCheck}
                 ${idField}
                 ${personaField}
                 <span>봇 토큰</span>
@@ -323,31 +329,23 @@ function syncFromDom() {
     const multi = state.botMode === 'multi';
 
     if (multi) {
-        // 멀티봇: 단체 시트 + 멤버 목록
-        state.groupMode = $('#dbridge_group_mode').prop('checked');
-        state.groupSheet = state.groupMode ? ($('#dbridge_group_sheet').val() || '') : '';
+        // 멀티봇: 행마다 개별/단체. 빈 행도 유지(작성 중이므로)
         const members = [];
         $('#dbridge_member_list .dbridge_row').each(function () {
+            const idx = parseInt($(this).attr('data-idx'), 10);
+            const group = $(this).find('.dbridge_m_group').prop('checked');
             const persona = $(this).find('.dbridge_m_persona').val();
             const typed = ($(this).find('.dbridge_m_token').val() || '').trim();
             const m = {};
-            if (state.groupMode) {
-                const name = ($(this).find('.dbridge_m_name').val() || '').trim();
-                if (!name) return;
-                m.sheet = state.groupSheet;
-                m.name = name;
+            if (group) {
+                m.sheet = $(this).find('.dbridge_m_sheet').val() || '';
+                m.name = ($(this).find('.dbridge_m_name').val() || '').trim();
             } else {
-                const char = $(this).find('.dbridge_m_char').val();
-                if (!char) return;
-                m.character = char;
+                m.character = $(this).find('.dbridge_m_char').val() || '';
             }
             if (persona) m.persona = persona;
             if (typed) { m.token = typed; m.tokenSaved = true; }
-            else {
-                // 이전 저장여부 보존(표시용)
-                const idx = parseInt($(this).attr('data-idx'), 10);
-                if (state.members[idx]?.tokenSaved) m.tokenSaved = true;
-            }
+            else if (state.members[idx]?.tokenSaved) m.tokenSaved = true;
             members.push(m);
         });
         state.members = members;
@@ -386,7 +384,6 @@ async function save() {
             proactive: state.proactive,
             channels: state.channels,
             members: state.members,
-            groupSheet: state.groupSheet || '',
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const mainTok = ($('#dbridge_token').val() || '').trim();
@@ -490,19 +487,11 @@ const SETTINGS_HTML = `
 
             <!-- 멀티봇: 캐릭터(멤버) 목록. 봇 초대된 채널 어디서나 동작 -->
             <div id="dbridge_multi_map" style="display:none">
-                <label class="checkbox_label dbridge_check">
-                    <input type="checkbox" id="dbridge_group_mode" />
-                    <span><b>단체 시트</b> — 한 캐릭터 카드 안에 여러 인물</span>
-                </label>
-                <div id="dbridge_group_box" style="display:none">
-                    <label>단체 시트 카드</label>
-                    <select id="dbridge_group_sheet" class="text_pole"></select>
-                </div>
                 <div class="dbridge_section_head">
-                    <label id="dbridge_member_label">캐릭터(봇) 목록</label>
+                    <label>캐릭터(봇) 목록</label>
                     <div class="menu_button" id="dbridge_add_member"><i class="fa-solid fa-plus"></i> </div>
                 </div>
-                <div class="dbridge_hint">봇 초대된 채널 어디서나 그 캐릭터로 답합니다. 그룹채널에 여러 봇 = 단톡.</div>
+                <div class="dbridge_hint">봇 초대된 채널 어디서나 그 캐릭터로 답합니다. 그룹채널에 여러 봇 = 단톡. 행마다 "단체" 체크하면 한 시트 속 한 인물로 설정.</div>
                 <div id="dbridge_member_list"></div>
             </div>
 
@@ -634,17 +623,18 @@ jQuery(async () => {
         $(this).closest('.dbridge_row').remove();
     });
 
-    // --- 멀티봇: 단체 시트 토글 / 시트 선택 / 멤버 추가·삭제 ---
-    $('#dbridge_group_mode').on('change', function () {
-        syncFromDom();
-        state.groupMode = $(this).prop('checked');
-        render();
-    });
-    $('#dbridge_group_sheet').on('change', () => { syncFromDom(); render(); });
+    // --- 멀티봇: 멤버 추가/삭제 + 행 단위 단체 토글 ---
     $('#dbridge_add_member').on('click', () => {
         syncFromDom();
-        // 단체면 빈 인물 칸, 개별이면 캐릭터 드롭다운 행 추가
-        state.members.push(state.groupMode ? { sheet: state.groupSheet || '', name: '' } : { character: characters[0] || '' });
+        state.members.push({ character: '' }); // 기본 개별
+        render();
+    });
+    $('#dbridge_member_list').on('change', '.dbridge_m_group', function () {
+        syncFromDom();
+        const idx = parseInt($(this).closest('.dbridge_row').attr('data-idx'), 10);
+        const m = state.members[idx]; if (!m) return;
+        if ($(this).prop('checked')) { delete m.character; m.sheet = m.sheet || ''; m.name = m.name || ''; }
+        else { delete m.sheet; delete m.name; m.character = m.character || ''; }
         render();
     });
     $('#dbridge_member_list').on('click', '.dbridge_m_del', function () {
@@ -652,6 +642,36 @@ jQuery(async () => {
         const idx = parseInt($(this).closest('.dbridge_row').attr('data-idx'), 10);
         if (!Number.isNaN(idx)) state.members.splice(idx, 1);
         render();
+    });
+    // 같은 시트 인물 1개 추가 (수동)
+    $('#dbridge_member_list').on('click', '.dbridge_m_addsame', function () {
+        syncFromDom();
+        const idx = parseInt($(this).closest('.dbridge_row').attr('data-idx'), 10);
+        const m = state.members[idx]; if (!m) return;
+        state.members.splice(idx + 1, 0, { sheet: m.sheet || '', name: '', persona: m.persona || '' });
+        render();
+    });
+    // 🔄 시트 자동추출: 내가 적은 첫 인물 이름을 "샘플"로, 같은 패턴의 다른 이름들을 시트에서 찾음
+    $('#dbridge_member_list').on('click', '.dbridge_m_extract', async function () {
+        syncFromDom();
+        const idx = parseInt($(this).closest('.dbridge_row').attr('data-idx'), 10);
+        const m = state.members[idx]; if (!m) return;
+        if (!m.sheet) { toastr.warning('먼저 시트 카드를 고르세요.'); return; }
+        if (!m.name) { toastr.warning('첫 인물 이름을 한 명 적은 뒤 눌러주세요 (예: John Price).'); return; }
+        try {
+            const res = await apiGet(`/sheet-members?card=${encodeURIComponent(m.sheet)}&sample=${encodeURIComponent(m.name)}`);
+            const names = res.names || [];
+            if (names.length <= 1) { toastr.warning('같은 패턴의 다른 인물을 못 찾았어요. 수동으로 적어주세요.'); return; }
+            const persona = m.persona || '';
+            const rows = names.map((nm) => ({ sheet: m.sheet, name: nm, persona }));
+            // 같은 시트 기존 행 제거 후 이 자리에 새로 삽입
+            state.members = state.members.filter((x) => x.sheet !== m.sheet);
+            state.members.splice(idx, 0, ...rows);
+            render();
+            toastr.success(`${names.length}명 추출: ${names.join(', ')}`, '단체 시트');
+        } catch (e) {
+            toastr.error(e.message, '시트 추출 실패');
+        }
     });
 
     $('#dbridge_save').on('click', save);
