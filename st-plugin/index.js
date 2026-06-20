@@ -220,8 +220,17 @@ function readCardBodyByName(cardName) {
     return null;
 }
 
+// 중복 제거 + 샘플을 맨 앞으로
+function order(arr, sample) {
+    const seen = new Set();
+    const out = [];
+    for (const n of arr) { const k = n.toLowerCase(); if (k && !seen.has(k)) { seen.add(k); out.push(n); } }
+    if (!out.some((x) => x.toLowerCase() === sample.toLowerCase())) out.unshift(sample);
+    out.sort((a, b) => (a.toLowerCase() === sample.toLowerCase() ? -1 : b.toLowerCase() === sample.toLowerCase() ? 1 : 0));
+    return out;
+}
+
 // 단체 시트에서 "샘플 이름"이 등장하는 패턴을 보고 같은 패턴의 다른 인물 이름들을 추출
-// 형식 무관: 샘플 이름 주변의 라벨(앞 토큰)을 패턴으로 잡아 동일 라벨의 값들을 모음.
 function getSheetMembers(req, res) {
     const cardName = req.query.card;
     const sample = (req.query.sample || '').trim();
@@ -231,40 +240,47 @@ function getSheetMembers(req, res) {
     if (!body) return res.json({ names: [], error: '카드 본문을 못 읽었어요.' });
 
     const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const clean = (s) => s.trim().replace(/\s+/g, ' ').replace(/['’]s$/, '').replace(/[.,;]+$/, ''); // "Gaz's"→"Gaz", "Krueger."→"Krueger"
+    const U = "\\p{Lu}";
+    // 이름 토큰: 대문자 시작 + 글자/어포스트로피/하이픈 이어짐 + (공백 뒤 또 한 단어) 최대 2단어
+    //   greedy로 단어 전체를 잡아 "Gho" 같은 잘림 방지. 예: König, John Price, Kim Hong-jin
+    const NAME = `${U}[\\p{L}'’.\\-]+(?:\\s${U}?[\\p{L}'’.\\-]+){0,2}`;
 
-    // 샘플이 등장하는 "패턴"을 우선순위대로 시도. 첫 번째로 매칭되는 패턴 하나만 사용
-    // (여러 패턴 섞으면 표시명+본명이 뒤섞여 지저분해지므로).
-    // 표시 이름(Soap/Ghost)을 잡는 패턴을 본명(Full Name=)보다 우선.
+    // (0) 최우선 — "A, B, C ... and D" 명단 나열에 샘플이 포함되면 그 목록 통째로
+    const listRe = new RegExp(`${NAME}(?:\\s*,\\s*(?:and\\s+)?${NAME})+(?:\\s+and\\s+${NAME})?`, 'gu');
+    let lm;
+    while ((lm = listRe.exec(body)) !== null) {
+        const parts = lm[0].split(/\s*,\s*|\s+and\s+/).map(clean).filter(Boolean);
+        if (parts.length >= 3 && parts.some((p) => p.toLowerCase() === sample.toLowerCase())) {
+            return res.json({ names: order(parts, sample) });
+        }
+    }
+
+    // 그 외 패턴들 (information 라벨 / 헤더)
     const candidates = [
-        // (1) "(이름 Information ..."  → (Soap Information)
         new RegExp(`\\(\\s*${esc(sample)}\\b[^)]*information`, 'i').test(body)
-            ? /\(\s*([A-Z][\p{L}'’.\- ]{1,30}?)\s+information/giu : null,
-        // (2) "## 이름" / "# 이름" 헤더 (앞 이모지 허용)
+            ? new RegExp(`\\(\\s*(${U}${NAME})['’]?s?\\s+information`, 'giu') : null,
+        new RegExp(`information\\s+from\\s+${esc(sample)}`, 'i').test(body)
+            ? new RegExp(`information\\s+from\\s+(${U}${NAME})(?=[\\n.,;)]|$)`, 'giu') : null,
         new RegExp(`(^|\\n)\\s*#{1,4}\\s*(?:\\S\\s*)?${esc(sample)}\\b`, 'u').test(body)
-            ? /(?:^|\n)\s*#{1,4}\s*(?:[^\s\w]\s*)?([A-Z][\p{L}'’.\- ]{1,30}?)(?=[\n(]|$)/gmu : null,
-        // (3) "라벨= 이름" (예: Full Name= John Price) — 본명류, 최후순위
+            ? new RegExp(`(?:^|\\n)\\s*#{1,4}\\s*(?:[^\\s\\w]\\s*)?(${U}${NAME})(?=[\\n(]|$)`, 'gmu') : null,
         (() => {
             const m = body.match(new RegExp(`([A-Za-z][\\w ]{0,20})[=:]\\s*${esc(sample)}\\b`));
             if (!m) return null;
-            const label = m[1].trim();
-            return new RegExp(`${esc(label)}\\s*[=:]\\s*([A-Z][\\p{L}'’.\\- ]{1,40}?)(?=[\\n.,;()]|$)`, 'gu');
+            return new RegExp(`${esc(m[1].trim())}\\s*[=:]\\s*(${U}${NAME})(?=[\\n.,;()]|$)`, 'gu');
         })(),
     ].filter(Boolean);
 
-    let names = [];
     for (const re of candidates) {
         const found = new Set();
         let mm;
         while ((mm = re.exec(body)) !== null) {
-            const nm = mm[1].trim().replace(/\s+/g, ' ');
+            const nm = clean(mm[1]);
             if (nm.length >= 2 && nm.length <= 40) found.add(nm);
         }
-        if (found.size >= 2) { names = [...found]; break; } // 2명 이상 잡힌 첫 패턴 채택
+        if (found.size >= 2) return res.json({ names: order([...found], sample) });
     }
-    if (names.length === 0) names = [sample];
-    if (!names.includes(sample)) names.unshift(sample);
-    names.sort((a, b) => (a === sample ? -1 : b === sample ? 1 : 0));
-    res.json({ names });
+    return res.json({ names: [sample] });
 }
 
 // ST 페르소나 이름 목록
