@@ -76,7 +76,13 @@ const Bot = {
             const who = persona ? ' (페르소나 전담)' : member ? ` = ${member.name || member.character}` : ` / 채널 ${channelIds.length}개`;
             console.log(`[Bot] 로그인: ${c.user.tag}${who}`);
             try { c.user.setPresence({ status: 'online' }); } catch { /* 무시 */ }
-            if (commands) await this._registerCommands(client);
+            if (commands) {
+                await this._registerCommands(client);
+            } else {
+                // 명령 담당이 아닌 봇(페르소나봇·나머지 멤버봇)은 자기 슬래시 명령을 비워
+                // 유저가 그 봇 명령을 골라 "응답 안 함" 타임아웃 나는 걸 방지
+                try { for (const g of c.guilds.cache.values()) await g.commands.set([]); } catch { /* 무시 */ }
+            }
         });
 
         // 페르소나 전담 봇은 메시지/명령에 응답하지 않음 (웹훅 송출 전용)
