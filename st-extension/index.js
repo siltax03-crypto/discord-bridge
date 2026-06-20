@@ -306,15 +306,51 @@ function renderChannelRows() {
                 ? `<option value="${escapeHtml(conf.persona)}" selected>${escapeHtml(conf.persona)} (없음)</option>`
                 : '';
 
+        const isGroup = !!conf.group;
+        const groupCheck = `<label class="dbridge_inline" style="gap:4px"><input type="checkbox" class="dbridge_row_groupchk"${isGroup ? ' checked' : ''} /><span class="dbridge_hint">단체(단톡)</span></label>`;
+
+        // 캐릭터 선택부: 단체면 [시트 드롭다운 + 🪄추출], 개별이면 [캐릭터 드롭다운]
+        let charField;
+        if (isGroup) {
+            const sheetOpts = '<option value="">(시트 선택)</option>' +
+                optionList(characters, conf.sheet || '', (n) => ({ value: n, label: n })) +
+                (conf.sheet && !characters.includes(conf.sheet) ? `<option value="${escapeHtml(conf.sheet)}" selected>${escapeHtml(conf.sheet)} (카드없음)</option>` : '');
+            charField = `<span>시트</span><select class="text_pole dbridge_row_sheet">${sheetOpts}</select>`;
+        } else {
+            charField = `<span>캐릭터</span><select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>`;
+        }
+
+        // 단체면 인물 목록(이름+아바타URL) 서브영역
+        let groupBox = '';
+        if (isGroup) {
+            const mem = Array.isArray(conf.members) ? conf.members : [];
+            const rows = mem.map((m, mi) => `
+                <div class="dbridge_grpmem" data-mi="${mi}">
+                    <input type="text" class="text_pole dbridge_grp_name" value="${escapeHtml(m.name || '')}" placeholder="인물 이름" style="flex:0 0 28%" />
+                    <input type="text" class="text_pole dbridge_grp_avatar" value="${escapeHtml(m.avatarUrl || '')}" placeholder="아바타 URL (imgur 등)" />
+                    <div class="menu_button dbridge_grp_del" title="인물 삭제"><i class="fa-solid fa-xmark"></i></div>
+                </div>`).join('');
+            groupBox = `
+                <div class="dbridge_grpbox" style="width:100%;padding-left:1em">
+                    <div class="dbridge_hint">첫 인물 이름 적고 🪄로 시트에서 자동 추출 → 각자 아바타 URL 입력</div>
+                    ${rows}
+                    <div class="dbridge_inline">
+                        <div class="menu_button dbridge_grp_extract" title="시트에서 인물 자동 추출"><i class="fa-solid fa-wand-magic-sparkles"></i> 추출</div>
+                        <div class="menu_button dbridge_grp_add" title="인물 추가"><i class="fa-solid fa-plus"></i> 인물</div>
+                    </div>
+                </div>`;
+        }
+
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
                 <select class="text_pole dbridge_row_channel">${ensureOpt}${chanOpts}</select>
-                <span>캐릭터</span>
-                <select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>
+                ${charField}
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
+                ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
+                ${groupBox}
             </div>
         `);
         $list.append($row);
@@ -371,16 +407,28 @@ function syncFromDom() {
     } else {
         const channels = {};
         $('#dbridge_channel_list .dbridge_row').each(function () {
-            const rowKey = $(this).attr('data-channel');
             const chId = $(this).find('.dbridge_row_channel').val();
-            const char = $(this).find('.dbridge_row_char').val();
             const persona = $(this).find('.dbridge_row_persona').val();
-            if (!chId || !char) return;
-            const entry = { character: char };
-            if (persona) entry.persona = persona;
-            const prevConf = (state.channels || {})[rowKey] || (state.channels || {})[chId];
-            if (prevConf?.tokenSaved) entry.tokenSaved = true;
-            channels[chId] = entry;
+            const isGroup = $(this).find('.dbridge_row_groupchk').prop('checked');
+            if (!chId) return;
+            if (isGroup) {
+                const sheet = $(this).find('.dbridge_row_sheet').val() || '';
+                const members = [];
+                $(this).find('.dbridge_grpmem').each(function () {
+                    const name = ($(this).find('.dbridge_grp_name').val() || '').trim();
+                    const avatarUrl = ($(this).find('.dbridge_grp_avatar').val() || '').trim();
+                    if (name) members.push(avatarUrl ? { name, avatarUrl } : { name });
+                });
+                const entry = { group: true, sheet, members };
+                if (persona) entry.persona = persona;
+                channels[chId] = entry;
+            } else {
+                const char = $(this).find('.dbridge_row_char').val();
+                if (!char) return;
+                const entry = { character: char };
+                if (persona) entry.persona = persona;
+                channels[chId] = entry;
+            }
         });
         state.channels = channels;
     }
@@ -640,6 +688,51 @@ jQuery(async () => {
     });
     $('#dbridge_channel_list').on('click', '.dbridge_row_del', function () {
         $(this).closest('.dbridge_row').remove();
+    });
+    // 단일봇 채널 행: 단체(단톡) 토글
+    $('#dbridge_channel_list').on('change', '.dbridge_row_groupchk', function () {
+        syncFromDom();
+        const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
+        const c = state.channels[chId] || {};
+        if ($(this).prop('checked')) { state.channels[chId] = { group: true, sheet: c.sheet || '', members: c.members || [], persona: c.persona }; }
+        else { state.channels[chId] = { character: c.character || (characters[0] || ''), persona: c.persona }; }
+        renderChannelRows();
+    });
+    // 인물 추가/삭제
+    $('#dbridge_channel_list').on('click', '.dbridge_grp_add', function () {
+        syncFromDom();
+        const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
+        const c = state.channels[chId]; if (!c) return;
+        (c.members = c.members || []).push({ name: '', avatarUrl: '' });
+        renderChannelRows();
+    });
+    $('#dbridge_channel_list').on('click', '.dbridge_grp_del', function () {
+        syncFromDom();
+        const $row = $(this).closest('.dbridge_row');
+        const chId = $row.find('.dbridge_row_channel').val();
+        const mi = parseInt($(this).closest('.dbridge_grpmem').attr('data-mi'), 10);
+        const c = state.channels[chId]; if (!c?.members) return;
+        c.members.splice(mi, 1);
+        renderChannelRows();
+    });
+    // 🪄 시트에서 인물 자동 추출 (첫 인물 이름 샘플)
+    $('#dbridge_channel_list').on('click', '.dbridge_grp_extract', async function () {
+        syncFromDom();
+        const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
+        const c = state.channels[chId]; if (!c?.group) return;
+        if (!c.sheet) { toastr.warning('먼저 시트 카드를 고르세요.'); return; }
+        const sample = (c.members?.[0]?.name || '').trim();
+        if (!sample) { toastr.warning('첫 인물 이름을 한 명 적은 뒤 눌러주세요.'); return; }
+        try {
+            const res = await apiGet(`/sheet-members?card=${encodeURIComponent(c.sheet)}&sample=${encodeURIComponent(sample)}`);
+            const names = res.names || [];
+            if (names.length <= 1) { toastr.warning('다른 인물을 못 찾았어요. 수동으로 추가하세요.'); return; }
+            // 기존 아바타URL 보존하며 이름 채우기
+            const prev = {}; (c.members || []).forEach((m) => { if (m.name) prev[m.name] = m.avatarUrl || ''; });
+            c.members = names.map((n) => ({ name: n, avatarUrl: prev[n] || '' }));
+            renderChannelRows();
+            toastr.success(`${names.length}명 추출: ${names.join(', ')}`, '단체 시트');
+        } catch (e) { toastr.error(e.message, '추출 실패'); }
     });
 
     // --- 멀티봇: 멤버 추가/삭제 + 행 단위 단체 토글 ---
