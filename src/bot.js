@@ -5,6 +5,7 @@ import AIClient from './ai-client.js';
 import ChatHistory from './chat-history.js';
 import ImageGen from './image-gen.js';
 import Modes from './modes.js';
+import Langs from './langs.js';
 import Reminders from './reminders.js';
 import Notes from './notes.js';
 import Away from './away.js';
@@ -117,6 +118,12 @@ const Bot = {
                         ),
                 ),
             new SlashCommandBuilder()
+                .setName('lang')
+                .setDescription('이 채널 응답 언어 (한국어 ↔ English)')
+                .addStringOption((o) =>
+                    o.setName('lang').setDescription('ko = 한국어, en = English').setRequired(true)
+                        .addChoices({ name: '한국어 (ko)', value: 'ko' }, { name: 'English (en)', value: 'en' })),
+            new SlashCommandBuilder()
                 .setName('clear')
                 .setDescription('이 채널의 대화 기록 초기화'),
             new SlashCommandBuilder()
@@ -179,6 +186,13 @@ const Bot = {
             Modes.set(channelId, type);
             const label = type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드';
             return interaction.reply({ content: `${label}로 전환했어요.`, ...eph });
+        }
+
+        if (cmd === 'lang') {
+            const lang = interaction.options.getString('lang');
+            Langs.set(channelId, lang);
+            const label = lang === 'en' ? '🇺🇸 English' : '🇰🇷 한국어';
+            return interaction.reply({ content: `${label}(으)로 전환했어요. 다음 답변부터 바로 적용돼요.`, ...eph });
         }
 
         if (cmd === 'clear') {
@@ -586,7 +600,7 @@ const Bot = {
 
         const sys = ContextBuilder.buildGroup(sheetCard, {
             roster,
-            language: config.language || 'ko',
+            language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
         });
@@ -649,7 +663,7 @@ const Bot = {
         // 단톡 전용 시스템 프롬프트
         const sys = ContextBuilder.buildGroup(baseChar, {
             roster,
-            language: config.language || 'ko',
+            language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
             seedNote,
@@ -871,7 +885,7 @@ const Bot = {
 
         const systemPrompt = ContextBuilder.build(character, {
             userName: effUserName,
-            language: config.language || 'ko',
+            language: Langs.get(channelId, config.language || 'ko'),
             mode,
             chatSlang: config.chatSlang !== false,
             timezone: config.timezone || 'Asia/Seoul',
@@ -1083,7 +1097,7 @@ const Bot = {
 
             const systemPrompt = ContextBuilder.build(character, {
                 userName: effUserName,
-                language: config.language || 'ko',
+                language: Langs.get(channelId, config.language || 'ko'),
                 mode,
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
