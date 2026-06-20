@@ -325,18 +325,18 @@ function renderChannelRows() {
         if (isGroup) {
             const mem = Array.isArray(conf.members) ? conf.members : [];
             const rows = mem.map((m, mi) => `
-                <div class="dbridge_grpmem" data-mi="${mi}">
-                    <input type="text" class="text_pole dbridge_grp_name" value="${escapeHtml(m.name || '')}" placeholder="인물 이름" style="flex:0 0 28%" />
-                    <input type="text" class="text_pole dbridge_grp_avatar" value="${escapeHtml(m.avatarUrl || '')}" placeholder="아바타 URL (imgur 등)" />
-                    <div class="menu_button dbridge_grp_del" title="인물 삭제"><i class="fa-solid fa-xmark"></i></div>
+                <div class="dbridge_grpmem" data-mi="${mi}" style="display:flex;gap:6px;align-items:center;margin:3px 0">
+                    <input type="text" class="text_pole dbridge_grp_name" value="${escapeHtml(m.name || '')}" placeholder="인물 이름" style="flex:0 0 30%" />
+                    <input type="text" class="text_pole dbridge_grp_avatar" value="${escapeHtml(m.avatarUrl || '')}" placeholder="아바타 URL (imgur 등)" style="flex:1" />
+                    <div class="menu_button dbridge_grp_del" title="인물 삭제" style="flex:0 0 auto">✕</div>
                 </div>`).join('');
             groupBox = `
                 <div class="dbridge_grpbox" style="width:100%;padding-left:1em">
                     <div class="dbridge_hint">첫 인물 이름 적고 🪄로 시트에서 자동 추출 → 각자 아바타 URL 입력</div>
                     ${rows}
-                    <div class="dbridge_inline">
-                        <div class="menu_button dbridge_grp_extract" title="시트에서 인물 자동 추출"><i class="fa-solid fa-wand-magic-sparkles"></i> 추출</div>
-                        <div class="menu_button dbridge_grp_add" title="인물 추가"><i class="fa-solid fa-plus"></i> 인물</div>
+                    <div style="display:flex;gap:6px;margin-top:4px">
+                        <div class="menu_button dbridge_grp_extract" title="시트에서 인물 자동 추출" style="white-space:nowrap">🪄 자동추출</div>
+                        <div class="menu_button dbridge_grp_add" title="인물 추가" style="white-space:nowrap">＋ 인물</div>
                     </div>
                 </div>`;
         }
@@ -694,8 +694,10 @@ jQuery(async () => {
         syncFromDom();
         const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
         const c = state.channels[chId] || {};
-        if ($(this).prop('checked')) { state.channels[chId] = { group: true, sheet: c.sheet || '', members: c.members || [], persona: c.persona }; }
-        else { state.channels[chId] = { character: c.character || (characters[0] || ''), persona: c.persona }; }
+        if ($(this).prop('checked')) {
+            const mem = (c.members && c.members.length) ? c.members : [{ name: '', avatarUrl: '' }];
+            state.channels[chId] = { group: true, sheet: c.sheet || '', members: mem, persona: c.persona };
+        } else { state.channels[chId] = { character: c.character || (characters[0] || ''), persona: c.persona }; }
         renderChannelRows();
     });
     // 인물 추가/삭제
