@@ -1,6 +1,24 @@
 import STReader from './st-reader.js';
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 const ContextBuilder = {
+    /**
+     * 현재 tz 벽시계 → "2026-06-21 Sat (weekend) 14:30" 형태. 요일/주말 인식용.
+     */
+    _clock(timezone) {
+        const d = new Date();
+        const stamp = new Intl.DateTimeFormat('sv-SE', {
+            timeZone: timezone, dateStyle: 'short', timeStyle: 'short',
+        }).format(d);
+        // tz 기준 요일 (Intl 'en-US' weekday short → 'Sun'..'Sat')
+        const wk = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short' }).format(d);
+        const isWeekend = wk === 'Sat' || wk === 'Sun';
+        const isFriday = wk === 'Fri';
+        const dayTag = isWeekend ? 'weekend' : isFriday ? 'Friday' : 'weekday';
+        return { full: `${stamp.replace(' ', ` ${wk} (${dayTag}) `)}`, isWeekend, isFriday, weekday: wk };
+    },
+
     /**
      * 단톡(멀티 화자) 시스템 프롬프트. 한 번의 호출로 여러 등장인물이 자기들끼리 + 유저와 대화.
      * 출력 형식을 "[이름] 대사" 줄로 강제 → 봇이 파싱해 각 캐릭터로 분배.
@@ -23,7 +41,7 @@ const ContextBuilder = {
             if (lore.length) parts.push(`[World Info]\n${lore.join('\n---\n')}`);
         } catch { /* skip */ }
 
-        const now = new Intl.DateTimeFormat('sv-SE', { timeZone: timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date());
+        const now = this._clock(timezone).full;
         const langLine = language === 'ko' ? '- Write IN KOREAN (한국어).' : '- Write in English.';
         const slangLine = chatSlang ? '- Casual texting tone; emoji/ㅋㅋ ok.' : "- No ㅋㅋ/emoji spam; each character's own voice.";
 
@@ -65,6 +83,7 @@ ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
             showStatus = false,
             sheetMember = '',
             charName: charNameOpt = '',
+            annivStatus = [],
         } = options;
         // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
         const charName = charNameOpt || character.name || character.data?.name || 'Character';
@@ -161,6 +180,16 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             console.log(`[Context] ✓ 작가노트 주입 (${notes.length}개)`);
         }
 
+        // --- 기념일 / D-day (사용자가 /기념일 로 등록) ---
+        if (Array.isArray(annivStatus) && annivStatus.length > 0) {
+            const today = annivStatus.filter((a) => a.isToday);
+            const lines = annivStatus.map((a) => `- ${a.text}`).join('\n');
+            const todayHint = today.length
+                ? `\nIMPORTANT: ${today.map((a) => a.label).join(', ')} is TODAY — bring it up naturally and genuinely (congratulate / be excited / expect ${userName} to remember). If ${userName} forgets, you may be a little hurt.`
+                : '';
+            parts.push(`[Important dates — you remember these like a real partner does]\n${lines}${todayHint}`);
+        }
+
         // --- 이름 ---
         parts.push(`[Names]\nUser: ${userName}\nCharacter: ${charName}`);
 
@@ -176,9 +205,15 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const photoInstruction =
             '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
 
-        // 하루 일정 — 살아있는 사람처럼
+        // 하루 일정 — 살아있는 사람처럼 (요일/주말 인식 포함)
+        const clock = this._clock(timezone);
+        const weekLine = clock.isWeekend
+            ? "- It's the WEEKEND. No work/school today: you sleep in, lounge around, more free and relaxed, awake later at night. Daytime is leisurely, not busy."
+            : clock.isFriday
+                ? "- It's FRIDAY: the week is ending, you're a bit hyped/relieved, looking forward to the weekend, maybe plans tonight."
+                : "- It's a WEEKDAY: work/school is on. Daytime tends to be busy (commute, work, class); you free up in the evening. Monday especially drags.";
         const scheduleInstruction =
-            `- You have a realistic daily routine that fits your character (sleep, work or study, meals, commute, free time, gym...). Based on the CURRENT time, you are in the middle of something specific right now. Let it shape your availability: busy / at work / in class → short, distracted, slow to reply; free / evening → longer and relaxed; very late → sleepy. You are a real person living your own day, not a bot on standby.`;
+            `- You have a realistic daily routine that fits your character (sleep, work or study, meals, commute, free time, gym...). Based on the CURRENT time AND day of week, you are in the middle of something specific right now. Let it shape your availability: busy / at work / in class → short, distracted, slow to reply; free / evening → longer and relaxed; very late → sleepy. You are a real person living your own day, not a bot on standby.\n${weekLine}`;
 
         // 자아 — 받아주기만 하지 않음
         const agencyInstruction =
@@ -209,10 +244,8 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             ? `- About ${timeGapText} have passed since the previous message. Real time has moved on in your life — do NOT seamlessly continue the earlier topic as if no time passed. React to the time gap naturally (what you've been doing, the changed mood/time of day). To bring back an earlier topic, reference it explicitly (e.g. "아까 얘기하던 거"). This is a place where you actually live your life.`
             : '';
 
-        // 현재 시각(tz 벽시계) + 리마인더 인식 지시
-        const nowStr = new Intl.DateTimeFormat('sv-SE', {
-            timeZone: timezone, dateStyle: 'short', timeStyle: 'short',
-        }).format(new Date());
+        // 현재 시각(tz 벽시계, 요일 포함) + 리마인더 인식 지시
+        const nowStr = clock.full;
         const remindInstruction = `- Current time: ${nowStr} (timezone ${timezone}).
 - If the user NEWLY asks to be woken or reminded at a specific time, append a reminder tag at the very END of your reply: [REMIND: YYYY-MM-DD HH:MM | the message to send at that time]. Use 24-hour time and a FUTURE moment. Example: [REMIND: 2026-06-18 08:00 | 일어날 시간이야! 잘 잤어?]
 - IMPORTANT: Add the tag ONLY ONCE, in the single reply where the user first asks. Do NOT repeat a [REMIND] tag in later replies for a reminder you already set. The tag must never be your entire message — always write a natural reply too.

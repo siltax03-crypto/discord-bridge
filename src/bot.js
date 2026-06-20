@@ -8,6 +8,7 @@ import Modes from './modes.js';
 import Langs from './langs.js';
 import Reminders from './reminders.js';
 import Notes from './notes.js';
+import Anniv from './anniversaries.js';
 import Away from './away.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -141,6 +142,19 @@ const Bot = {
                         o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true)))
                 .addSubcommand((s) => s.setName('clear').setDescription('노트 전체 삭제')),
             new SlashCommandBuilder()
+                .setName('anniv')
+                .setDescription('기념일/D-day 관리 (사귄 날·생일 등 — 캐릭터가 챙김)')
+                .addSubcommand((s) =>
+                    s.setName('add').setDescription('기념일 추가')
+                        .addStringOption((o) => o.setName('label').setDescription('이름 예: 사귄 날, 생일').setRequired(true))
+                        .addStringOption((o) => o.setName('date').setDescription('날짜 YYYY-MM-DD').setRequired(true))
+                        .addStringOption((o) => o.setName('type').setDescription('since=그날부터 D+N / yearly=매년반복')
+                            .addChoices({ name: 'D-day 카운트 (사귄날·만난날)', value: 'since' }, { name: '매년 반복 (생일·기념일)', value: 'yearly' })))
+                .addSubcommand((s) => s.setName('list').setDescription('기념일 목록/현황 보기'))
+                .addSubcommand((s) =>
+                    s.setName('del').setDescription('기념일 삭제').addIntegerOption((o) =>
+                        o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true))),
+            new SlashCommandBuilder()
                 .setName('info')
                 .setDescription('이 채널에 주입되는 정보 보기 (캐릭터/페르소나/메모리 등)'),
             new SlashCommandBuilder()
@@ -238,6 +252,33 @@ const Bot = {
             }
         }
 
+        if (cmd === 'anniv') {
+            const sub = interaction.options.getSubcommand();
+            const tz = config.timezone || 'Asia/Seoul';
+            if (sub === 'add') {
+                const label = interaction.options.getString('label');
+                const date = interaction.options.getString('date');
+                const type = interaction.options.getString('type') || 'since';
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                    return interaction.reply({ content: '⚠️ 날짜는 YYYY-MM-DD 형식으로 적어주세요. 예: 2025-03-14', ...eph });
+                }
+                Anniv.add(channelId, label, date, type);
+                return interaction.reply({ content: `💝 "${label}" (${date}, ${type === 'yearly' ? '매년 반복' : 'D-day'}) 등록했어요. 캐릭터가 이제 챙길 거예요.`, ...eph });
+            }
+            if (sub === 'list') {
+                const st = Anniv.status(channelId, tz);
+                const body = st.length
+                    ? st.map((a, i) => `${i + 1}. ${a.text}`).join('\n')
+                    : '(등록된 기념일 없음 — /anniv add 로 추가)';
+                return interaction.reply({ content: `💝 기념일/D-day\n${body}`, ...eph });
+            }
+            if (sub === 'del') {
+                const idx = interaction.options.getInteger('index');
+                const ok = Anniv.remove(channelId, idx - 1);
+                return interaction.reply({ content: ok ? `🗑 ${idx}번 기념일을 삭제했어요.` : '⚠️ 그 번호의 기념일이 없어요.', ...eph });
+            }
+        }
+
         if (cmd === 'info') {
             const character = this._getCharacter(channelId);
             if (!character) return interaction.reply({ content: '⚠️ 캐릭터 로드 실패', ...eph });
@@ -265,6 +306,7 @@ const Bot = {
                 `• 로어북: 캐릭터북 ${charBook}개 + 월드"${worldName || '-'}" ${worldEntries}개`,
                 `• CHARM 메모리: ${charmCount}개`,
                 `• 작가노트: ${Notes.list(channelId).length}개`,
+                `• 기념일: ${Anniv.list(channelId).length}개`,
                 `• 리마인더: ${Reminders.listForChannel(channelId).length}개`,
                 `• 상태: ${Away.isAway(channelId) ? '🔇 잠수 중 (응답 안 함)' : '🟢 응답 중'}`,
                 `• 프로필: ${AIClient.getProfile()?.name || '?'}`,
@@ -891,6 +933,7 @@ const Bot = {
             chatSlang: config.chatSlang !== false,
             timezone: config.timezone || 'Asia/Seoul',
             notes: Notes.list(channelId),
+            annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
             personaText,
             presetText,
             timeGapText,
@@ -1103,6 +1146,7 @@ const Bot = {
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
                 notes: Notes.list(channelId),
+                annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
                 personaText,
                 proactive: true,
                 proactiveNote: fullNote,
