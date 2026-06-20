@@ -1036,24 +1036,18 @@ const Bot = {
         }
     },
 
-    // --- 메시지 삭제 동기화 ---
+    // --- 메시지 삭제 동기화 (단일봇 전용) ---
+    // 멀티봇은 페르소나 프록시가 원본을 항상 지우므로, 삭제 동기화를 켜면
+    // 프록시 삭제 ↔ 동기화가 레이스로 엇갈려 방금 저장한 유저 메시지를 도로 지운다(→ 빈 응답).
+    // 그래서 멀티봇에선 삭제 동기화를 하지 않는다.
     async _onMessageDelete(message, client) {
         if (message.author?.bot) return;
-        const multi = config.botMode === 'multi';
-        if (!multi && !config.channels[message.channelId]) return;
-        // 페르소나 프록시가 지운 메시지는 동기화 대상이 아님 (히스토리 유지)
+        if (config.botMode === 'multi') return; // 멀티봇은 동기화 안 함
+        if (!config.channels[message.channelId]) return;
         if (proxiedMessageIds.has(message.id)) {
             proxiedMessageIds.delete(message.id);
             return;
         }
-        // 멀티봇: 여러 멤버봇이 같은 삭제를 보므로 1회만 처리
-        if (multi) {
-            const k = 'del:' + message.id;
-            if (intakeDone.has(k)) return;
-            intakeDone.add(k);
-            setTimeout(() => intakeDone.delete(k), 60_000);
-        }
-
         const removed = ChatHistory.removeLastUserMessage(message.channelId);
         if (removed) {
             console.log(`[Bot] 메시지 삭제 동기화: 채널 ${message.channelId}`);
