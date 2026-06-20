@@ -294,9 +294,15 @@ function getPersonas(req, res) {
 // 디스코드 채널 목록 (봇이 들어가 있는 길드의 텍스트 채널)
 async function getChannels(req, res) {
     const config = readJson(CONFIG_PATH, {});
-    const token = config.discordToken;
+    // 멀티봇이면 페르소나 전담봇 토큰(모든 채널에 초대됨) 우선, 없으면 첫 멤버 토큰. 단일봇은 discordToken.
+    let token = config.discordToken;
+    if (config.botMode === 'multi') {
+        token = config.personaBotToken
+            || (config.members || []).map((m) => m && m.token).find((t) => t && !t.includes('여기에'))
+            || '';
+    }
     if (!token || token.includes('여기에')) {
-        return res.json({ channels: [], error: '디스코드 토큰이 설정되지 않았습니다.' });
+        return res.json({ channels: [], error: '채널을 긁을 봇 토큰이 없습니다. (멀티봇: 페르소나 전담봇 또는 멤버 토큰 필요)' });
     }
     const headers = { Authorization: `Bot ${token}` };
     try {
