@@ -246,20 +246,25 @@ function getSheetMembers(req, res) {
     //   greedy로 단어 전체를 잡아 "Gho" 같은 잘림 방지. 예: König, John Price, Kim Hong-jin
     const NAME = `${U}[\\p{L}'’.\\-]+(?:\\s${U}?[\\p{L}'’.\\-]+){0,2}`;
 
-    // (0) 최우선 — "A, B, C ... and D" 명단 나열에 샘플이 포함되면 그 목록 통째로
-    const listRe = new RegExp(`${NAME}(?:\\s*,\\s*(?:and\\s+)?${NAME})+(?:\\s+and\\s+${NAME})?`, 'gu');
-    let lm;
-    while ((lm = listRe.exec(body)) !== null) {
-        const parts = lm[0].split(/\s*,\s*|\s+and\s+/).map(clean).filter(Boolean);
-        if (parts.length >= 3 && parts.some((p) => p.toLowerCase() === sample.toLowerCase())) {
-            return res.json({ names: order(parts, sample) });
-        }
-    }
-
     // 샘플이 시트에서 "실제로 등장하는 자리"를 보고, 그 앞의 라벨/구분자 패턴을 그대로 따라간다.
-    // (우선순위를 박지 않음 — 본명으로 넣으면 본명 패턴, 별명으로 넣으면 별명 패턴)
+    // 이게 명단 줄보다 우선 — 본명(Full Name= John Price)으로 넣으면 본명들이 나와야 하므로.
     const idx = body.toLowerCase().indexOf(sample.toLowerCase());
-    if (idx === -1) return res.json({ names: [sample] });
+
+    // 명단 줄 폴백 함수 (위 패턴이 실패할 때만 사용)
+    const tryRoster = () => {
+        const listRe = new RegExp(`${NAME}(?:\\s*,\\s*(?:and\\s+)?${NAME})+(?:\\s+and\\s+${NAME})?`, 'gu');
+        let lm;
+        while ((lm = listRe.exec(body)) !== null) {
+            const parts = lm[0].split(/\s*,\s*|\s+and\s+/).map(clean).filter(Boolean);
+            if (parts.length >= 3 && parts.some((p) => p.toLowerCase() === sample.toLowerCase())) return parts;
+        }
+        return null;
+    };
+
+    if (idx === -1) {
+        const r = tryRoster();
+        return res.json({ names: r ? order(r, sample) : [sample] });
+    }
 
     const before = body.slice(Math.max(0, idx - 40), idx); // 샘플 바로 앞 40자
     let extractRe = null;
@@ -274,7 +279,7 @@ function getSheetMembers(req, res) {
         extractRe = new RegExp(`\\(\\s*(${U}${NAME})['’]?s?\\s+information`, 'giu');
     }
 
-    // 3) 그래도 못 정하면 흔한 패턴들 순서대로 시도(폴백)
+    // 샘플 자리 패턴(extractRe)을 최우선. 그담 흔한 패턴 폴백.
     const fallbacks = [
         new RegExp(`\\(\\s*(${U}${NAME})['’]?s?\\s+information`, 'giu'),
         new RegExp(`information\\s+from\\s+(${U}${NAME})(?=[\\n.,;)]|$)`, 'giu'),
@@ -292,7 +297,9 @@ function getSheetMembers(req, res) {
         }
         if (found.size >= 2) return res.json({ names: order([...found], sample) });
     }
-    return res.json({ names: [sample] });
+    // 최후: 명단 줄(A, B and C)
+    const r = tryRoster();
+    return res.json({ names: r ? order(r, sample) : [sample] });
 }
 
 // ST 페르소나 이름 목록
