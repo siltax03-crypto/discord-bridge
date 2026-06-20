@@ -261,6 +261,7 @@ const Bot = {
                 `• 캐릭터: ${charName} (설명 ${descLen}자)`,
                 `• 페르소나: ${personaName || '(기본)'} ${personaText ? `(${personaText.length}자)` : '(없음)'}`,
                 `• 모드: ${mode === 'rp' ? '🎭 롤플' : '💬 채팅'}`,
+                `• 언어: ${Langs.get(channelId, config.language || 'ko') === 'en' ? '🇺🇸 English' : '🇰🇷 한국어'}`,
                 `• 로어북: 캐릭터북 ${charBook}개 + 월드"${worldName || '-'}" ${worldEntries}개`,
                 `• CHARM 메모리: ${charmCount}개`,
                 `• 작가노트: ${Notes.list(channelId).length}개`,
