@@ -86,6 +86,7 @@ ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
             annivStatus = [],
             crossSummaries = [],
             crossRecent = null,
+            meetEnabled = false,
         } = options;
         // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
         const charName = charNameOpt || character.name || character.data?.name || 'Character';
@@ -258,9 +259,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const distanceInstruction =
             `- You and ${userName} are physically far apart, texting from a distance. You are NOT together in person. Do NOT do in-person actions (no kissing/touching/hugging right now). References to the future or to when you meet are fine (e.g. "집에 가면 뽀뽀해줘").`;
 
-        // 만남 예약: 곧 직접 만나기로 하면 그 시간 뒤 롤플 채널에서 만남 장면이 시작됨
-        const meetInstruction =
-            `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY for a real in-person meetup; never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`;
+        // 만남 예약: 세트(롤플 채널이 있는 챗)에서만. 그 시간 뒤 롤플 채널에서 만남 장면이 시작됨
+        const meetInstruction = meetEnabled
+            ? `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY for a real in-person meetup; never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`
+            : '';
 
         // 리얼타임 시간차. 채팅은 실시간(시간 흐르면 화제도 바뀜). 롤플은 리얼타임 아님 — 흐름만 은은하게.
         const timeGapInstruction = !timeGapText
