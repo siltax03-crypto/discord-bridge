@@ -668,8 +668,11 @@ const Bot = {
         const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
         if (!sheetCard) { console.error('[Group] 시트 카드 로드 실패:', chCfg.sheet); return; }
 
-        // 유저 메시지 저장 + 페르소나 프록시 (수동 지정 → 없으면 ST 기본 페르소나로 폴백)
-        const personaName = chCfg.persona || this._getPersonaName(channelId);
+        // 유저 메시지 저장 + 페르소나 프록시
+        // 우선순위: 단톡 행 수동 지정 → 시트 카드에 ST 연결된 페르소나 → ST 기본 페르소나
+        const personaName = chCfg.persona
+            || STReader.getConnectedPersonaName(sheetCard)
+            || STReader.getDefaultPersonaName();
         ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
         if (personaName) {
             const proxied = await this._proxyUserMessage(message, personaName).catch((e) => {
