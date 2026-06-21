@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType } from 'discord.js';
+import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType, ChannelType, PermissionFlagsBits } from 'discord.js';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
@@ -10,6 +10,7 @@ import Reminders from './reminders.js';
 import Notes from './notes.js';
 import Anniv from './anniversaries.js';
 import Away from './away.js';
+import Sets from './sets.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -38,6 +39,9 @@ const intakeDone = new Set();
 const Bot = {
     async start(cfg) {
         config = cfg;
+
+        // /setup 으로 만든 세트(데이터 파일)를 채널 매핑에 병합 (config.json은 플러그인 소유라 안 건드림)
+        this._mergeSets();
 
         if (cfg.botMode === 'multi') {
             // 멀티봇: 멤버(캐릭터)마다 봇 1개. 채널 지정 없음 — 봇이 초대된 채널 어디서든 그 캐릭터로 동작.
@@ -105,6 +109,11 @@ const Bot = {
     // --- 슬래시 명령어 등록 (서버별로 즉시 반영) ---
     async _registerCommands(client) {
         const commands = [
+            new SlashCommandBuilder()
+                .setName('setup')
+                .setDescription('캐릭터 세트 생성: 카테고리 + 챗/롤플/요약 채널 자동 생성')
+                .addStringOption((o) =>
+                    o.setName('character').setDescription('캐릭터 카드 이름 (카테고리 이름이 됨)').setRequired(true)),
             new SlashCommandBuilder()
                 .setName('mode')
                 .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
@@ -187,19 +196,20 @@ const Bot = {
         if (!interaction.isChatInputCommand()) return;
         const channelId = interaction.channelId;
         const eph = { flags: MessageFlags.Ephemeral };
+        const cmd = interaction.commandName;
+
+        // /setup 은 아직 매핑 안 된 채널에서도 실행 가능 (세트를 만드는 명령이므로)
+        if (cmd === 'setup') {
+            return this._handleSetup(interaction);
+        }
 
         // 단일봇만 채널 매핑 검사 (멀티봇은 봇 초대된 채널 어디서나 동작)
         if (config.botMode !== 'multi' && !config.channels[channelId]) {
             return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ...eph });
         }
 
-        const cmd = interaction.commandName;
-
         if (cmd === 'mode') {
-            const type = interaction.options.getString('type');
-            Modes.set(channelId, type);
-            const label = type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드';
-            return interaction.reply({ content: `${label}로 전환했어요.`, ...eph });
+            return this._handleModeSwitch(interaction, channelId, eph);
         }
 
         if (cmd === 'lang') {
@@ -373,6 +383,130 @@ const Bot = {
     },
 
     // --- 이름별 웹훅 가져오기/생성 (캐릭터·페르소나 공용) ---
+    // --- 세트(카테고리+3채널) 매핑을 채널 설정에 병합 ---
+    _mergeSets() {
+        config.channels = config.channels || {};
+        for (const s of Sets.list()) {
+            if (s.chat && !config.channels[s.chat]) config.channels[s.chat] = { character: s.character };
+            if (s.rp && !config.channels[s.rp]) config.channels[s.rp] = { character: s.character };
+            if (s.summary) config.channels[s.summary] = { character: s.character, summaryOnly: true };
+            if (s.chat) Modes.set(s.chat, 'chat');
+            if (s.rp) Modes.set(s.rp, 'rp');
+        }
+    },
+
+    // 이 채널이 세트의 chat/rp면, 반대편에서 넘어온 요약을 주입용으로 반환
+    _crossSummariesFor(channelId) {
+        const found = Sets.findByChannel(channelId);
+        if (!found || found.role === 'summary') return [];
+        return Sets.recentSummaries(found.set.character, 6);
+    },
+
+    // --- /setup: 카테고리 + 챗/롤플/요약 채널 자동 생성 ---
+    async _handleSetup(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const guild = interaction.guild;
+        if (!guild) return interaction.reply({ content: '서버 채널 안에서 실행해주세요.', ...eph });
+
+        const charName = (interaction.options.getString('character') || '').trim();
+        const card = this._loadCharacterByName(charName);
+        if (!card) return interaction.reply({ content: `⚠️ "${charName}" 캐릭터 카드를 못 찾았어요. ST 캐릭터 이름 그대로 적어주세요.`, ...eph });
+
+        const existing = Sets.findByCharacter(charName);
+        if (existing) {
+            return interaction.reply({ content: `이미 "${charName}" 세트가 있어요:\n💬 <#${existing.chat}>  🎭 <#${existing.rp}>  📝 <#${existing.summary}>`, ...eph });
+        }
+
+        const me = guild.members.me;
+        if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 없어요. 서버 설정 → 역할에서 켜주세요.', ...eph });
+        }
+
+        await interaction.reply({ content: '🔧 채널 만드는 중...', ...eph });
+        try {
+            const everyone = guild.roles.everyone.id;
+            // 비공개(나+봇만): 롤플/요약 채널
+            const priv = [
+                { id: everyone, deny: [PermissionFlagsBits.ViewChannel] },
+                { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                { id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageWebhooks] },
+            ];
+
+            const category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
+            const chat = await guild.channels.create({ name: '챗', type: ChannelType.GuildText, parent: category.id });
+            const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv });
+            const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv });
+
+            config.channels = config.channels || {};
+            config.channels[chat.id] = { character: charName };
+            config.channels[rp.id] = { character: charName };
+            config.channels[summary.id] = { character: charName, summaryOnly: true };
+            channelClients[chat.id] = channelClients[rp.id] = channelClients[summary.id] = interaction.client;
+            Modes.set(chat.id, 'chat');
+            Modes.set(rp.id, 'rp');
+            Sets.add({ character: charName, guildId: guild.id, categoryId: category.id, chat: chat.id, rp: rp.id, summary: summary.id });
+
+            await summary.send(`📝 **${charName} 요약**\n챗↔롤플 전환 때마다 무슨 얘기를 했는지 자동 기록돼요.`).catch(() => {});
+            await chat.send('💬 일상 채팅 채널이에요. 롤플로 넘어가려면 `/mode rp`').catch(() => {});
+            await rp.send('🎭 롤플 채널이에요. 채팅으로 돌아가려면 `/mode chat`').catch(() => {});
+
+            return interaction.editReply(`✅ "${charName}" 세트 생성 완료!\n💬 <#${chat.id}>  🎭 <#${rp.id}> (비공개)  📝 <#${summary.id}> (비공개)`);
+        } catch (e) {
+            console.error('[Setup] 실패:', e);
+            return interaction.editReply(`⚠️ 생성 실패: ${e.message}`);
+        }
+    },
+
+    // --- /mode: 세트면 채널 이동(요약 기록 후 점프 링크), 아니면 기존처럼 같은 채널 모드 토글 ---
+    async _handleModeSwitch(interaction, channelId, eph) {
+        const type = interaction.options.getString('type');
+        const found = Sets.findByChannel(channelId);
+
+        // 세트가 아니면: 기존 동작 (같은 채널 모드 플래그)
+        if (!found) {
+            Modes.set(channelId, type);
+            return interaction.reply({ content: `${type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드'}로 전환했어요.`, ...eph });
+        }
+
+        const { set } = found;
+        const target = type === 'rp' ? set.rp : set.chat;
+        const fromId = type === 'rp' ? set.chat : set.rp;   // 떠나는 채널
+        const dir = type === 'rp' ? 'chat→rp' : 'rp→chat';
+
+        if (channelId === target) {
+            return interaction.reply({ content: `이미 ${type === 'rp' ? '🎭 롤플' : '💬 챗'} 채널이에요. → <#${target}>`, ...eph });
+        }
+
+        await interaction.reply({ content: '🔄 전환 중 (요약 정리)...', ...eph });
+        // 떠나는 채널 대화를 요약해서 요약 채널 + 데이터에 기록 → 들어가는 모드에 주입됨
+        try { await this._summarizeChannel(set, fromId, dir, interaction.client); } catch (e) { console.warn('[Mode] 요약 실패:', e.message); }
+
+        return interaction.editReply(`${type === 'rp' ? '🎭 롤플' : '💬 챗'}로 이동! → <#${target}>\n📝 직전 대화는 <#${set.summary}>에 요약해뒀어요.`);
+    },
+
+    // --- 채널 최근 대화를 짧게 요약 → 요약채널 게시 + Sets에 저장 ---
+    async _summarizeChannel(set, channelId, dir, client) {
+        const history = ChatHistory.toAPIMessages(channelId, 30);
+        if (!history.length) return;
+        const convo = history.map((m) => `${m.role === 'user' ? '유저' : '캐릭터'}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n').slice(-4000);
+        const sys = 'Summarize the following chat log in Korean, in 1-2 short sentences. Capture only what they were talking about / what happened, so the other channel knows the context. No preface, just the summary.';
+        let summary = '';
+        try {
+            summary = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: convo }], { maxTokens: 300 });
+        } catch { /* 무시 */ }
+        summary = (summary || '').trim();
+        if (!summary) return;
+
+        const dateStr = new Intl.DateTimeFormat('ko-KR', { timeZone: config.timezone || 'Asia/Seoul', month: 'long', day: 'numeric' }).format(new Date());
+        const arrow = dir === 'chat→rp' ? '💬→🎭' : '🎭→💬';
+        Sets.addSummary(set.character, dir, summary);
+
+        try {
+            const ch = await client.channels.fetch(set.summary).catch(() => null);
+            if (ch) await ch.send(`**${dateStr}** ${arrow}\n${summary}`);
+        } catch { /* 무시 */ }
+    },
+
     // http(s) 직접 이미지 URL만 아바타로 허용 (imgur 페이지 링크 등 잘못된 값이 들어오면 전송 전체가 실패함)
     _safeAvatarUrl(url) {
         if (!url || typeof url !== 'string') return undefined;
@@ -566,6 +700,7 @@ const Bot = {
         } else {
             const chCfg = config.channels[message.channelId];
             if (!chCfg) return;
+            if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
             // 단체 채널(group)이면 → 웹훅 단톡 (API 1번 → 인물별 웹훅 분배)
             if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
                 const gkey = 'grp:' + message.id;
@@ -972,6 +1107,7 @@ const Bot = {
             timezone: config.timezone || 'Asia/Seoul',
             notes: Notes.list(channelId),
             annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+            crossSummaries: this._crossSummariesFor(channelId),
             personaText,
             presetText,
             timeGapText,
@@ -1185,6 +1321,7 @@ const Bot = {
                 timezone: config.timezone || 'Asia/Seoul',
                 notes: Notes.list(channelId),
                 annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+                crossSummaries: this._crossSummariesFor(channelId),
                 personaText,
                 proactive: true,
                 proactiveNote: fullNote,

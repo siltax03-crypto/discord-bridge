@@ -84,6 +84,7 @@ ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
             sheetMember = '',
             charName: charNameOpt = '',
             annivStatus = [],
+            crossSummaries = [],
         } = options;
         // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
         const charName = charNameOpt || character.name || character.data?.name || 'Character';
@@ -178,6 +179,15 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         if (Array.isArray(notes) && notes.length > 0) {
             parts.push(`[Author's Note — follow these instructions]\n${notes.map((n) => `- ${n}`).join('\n')}`);
             console.log(`[Context] ✓ 작가노트 주입 (${notes.length}개)`);
+        }
+
+        // --- 다른 모드(챗↔롤플)에서 넘어온 맥락 요약 ---
+        if (Array.isArray(crossSummaries) && crossSummaries.length > 0) {
+            const lines = crossSummaries.map((s) => {
+                const d = new Intl.DateTimeFormat('ko-KR', { timeZone: timezone, month: 'numeric', day: 'numeric' }).format(new Date(s.ts || Date.now()));
+                return `- (${d}) ${s.text}`;
+            }).join('\n');
+            parts.push(`[Recent context from the other channel — this is the SAME relationship, continue it seamlessly]\n${lines}`);
         }
 
         // --- 기념일 / D-day (사용자가 /기념일 로 등록) ---
