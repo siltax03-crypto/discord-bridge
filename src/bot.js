@@ -119,6 +119,9 @@ const Bot = {
                 .addStringOption((o) =>
                     o.setName('character').setDescription('캐릭터 카드 이름 (비우면 이 채널에 연결된 캐릭터 사용)').setRequired(false)),
             new SlashCommandBuilder()
+                .setName('unsetup')
+                .setDescription('세트 해제: 롤플/요약 채널 삭제, 챗 채널은 일반 채널로 유지'),
+            new SlashCommandBuilder()
                 .setName('mode')
                 .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
                 .addStringOption((o) =>
@@ -216,6 +219,9 @@ const Bot = {
         // /setup 은 아직 매핑 안 된 채널에서도 실행 가능 (세트를 만드는 명령이므로)
         if (cmd === 'setup') {
             return this._handleSetup(interaction);
+        }
+        if (cmd === 'unsetup') {
+            return this._handleUnsetup(interaction);
         }
 
         // 단일봇만 채널 매핑 검사 (멀티봇은 봇 초대된 채널 어디서나 동작)
@@ -596,11 +602,21 @@ const Bot = {
                 { id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageWebhooks] },
             ];
 
-            const category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
+            // 카테고리: 챗 채널이 이미 같은 이름 카테고리에 있으면 재사용, 없으면 생성
+            let category = interaction.channel.parent;
+            if (!category || category.name !== charName) {
+                category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
+            }
             // 기존 챗 채널을 카테고리 안으로 이동 (같은 채널·ST연결·히스토리 그대로, 보기만 정리)
             try { await interaction.channel.setParent(category.id, { lockPermissions: false }); } catch (e) { console.warn('[Setup] 챗 채널 이동 실패(무시):', e.message); }
-            const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
-            const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+
+            // 카테고리 안에 이미 '롤플'/'요약' 채널이 있으면 재사용, 없으면 생성 (중복 방지)
+            const kids = category.children?.cache;
+            const findChild = (name) => kids?.find((c) => c.name === name && c.type === ChannelType.GuildText) || null;
+            const rp = findChild('롤플')
+                || await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+            const summary = findChild('요약')
+                || await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
 
             config.channels = config.channels || {};
             config.channels[chatId] = { ...(config.channels[chatId] || {}), character: charName };
@@ -618,6 +634,47 @@ const Bot = {
         } catch (e) {
             console.error('[Setup] 실패:', e);
             return interaction.editReply(`⚠️ 생성 실패: ${e.message}`);
+        }
+    },
+
+    // --- /unsetup: 세트 해제. 롤플/요약 채널 삭제, 챗은 일반 채널로 유지 ---
+    async _handleUnsetup(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const guild = interaction.guild;
+        const found = Sets.findByChannel(interaction.channelId);
+        if (!found) {
+            return interaction.reply({ content: '이 채널은 세트가 아니에요. 세트의 챗/롤플/요약 채널 중 한 곳에서 실행하세요.', ...eph });
+        }
+        const set = found.set;
+        const me = guild?.members.me;
+        await interaction.reply({ content: '🧹 세트 해제 중...', ...eph });
+        try {
+            // 만남 예약 정리
+            if (meetTimers[set.rp]) { clearTimeout(meetTimers[set.rp]); delete meetTimers[set.rp]; }
+            delete meetInfo[set.rp];
+
+            // 챗 채널은 유지(캐릭터 매핑 그대로). 카테고리에서 빼서 일반 위치로.
+            try { const cc = await interaction.client.channels.fetch(set.chat).catch(() => null); if (cc) await cc.setParent(null, { lockPermissions: false }); } catch { /* 무시 */ }
+
+            // 롤플/요약 채널 삭제 + 상태 정리
+            for (const id of [set.rp, set.summary]) {
+                if (!id) continue;
+                delete config.channels[id];
+                Modes.rename?.(id, `_deleted_${id}`); // 사실상 제거
+                ChatHistory.clear(id);
+                try { const ch = await interaction.client.channels.fetch(id).catch(() => null); if (ch) await ch.delete('unsetup'); } catch { /* 무시 */ }
+            }
+            // 카테고리 비었으면 삭제
+            try {
+                const cat = await interaction.client.channels.fetch(set.categoryId).catch(() => null);
+                if (cat && cat.children?.cache?.size === 0) await cat.delete('unsetup');
+            } catch { /* 무시 */ }
+
+            Sets.remove(set);
+            return interaction.editReply(`🧹 "${set.character}" 세트를 해제했어요. 챗 채널 <#${set.chat}>은 일반 채널로 유지돼요.`);
+        } catch (e) {
+            console.error('[Unsetup] 실패:', e);
+            return interaction.editReply(`⚠️ 해제 실패: ${e.message}`);
         }
     },
 
