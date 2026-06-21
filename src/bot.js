@@ -487,8 +487,11 @@ const Bot = {
         const manual = config.channels[channelId]?.persona;
         if (manual) return manual;
         const character = this._getCharacter(channelId);
-        if (!character) return '';
-        return STReader.getConnectedPersonaName(character) || '';
+        // 개별 채널: 연결된 페르소나 자동 탐색. 단톡(시트)엔 단일 캐릭터가 없으니 건너뜀.
+        const connected = character ? STReader.getConnectedPersonaName(character) : '';
+        if (connected) return connected;
+        // 폴백: ST 기본/현재 페르소나 (단톡이 직접 지정 안 했을 때도 내 얼굴로 프록시되게)
+        return STReader.getDefaultPersonaName() || '';
     },
 
     // --- 캐릭터 데이터 캐시 (5분마다 갱신). 카드명으로 로드 ---
@@ -665,10 +668,17 @@ const Bot = {
         const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
         if (!sheetCard) { console.error('[Group] 시트 카드 로드 실패:', chCfg.sheet); return; }
 
-        // 유저 메시지 저장 + 페르소나 프록시
-        const personaName = chCfg.persona || '';
+        // 유저 메시지 저장 + 페르소나 프록시 (수동 지정 → 없으면 ST 기본 페르소나로 폴백)
+        const personaName = chCfg.persona || this._getPersonaName(channelId);
         ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
-        if (personaName) { await this._proxyUserMessage(message, personaName).catch(() => {}); }
+        if (personaName) {
+            const proxied = await this._proxyUserMessage(message, personaName).catch((e) => {
+                console.warn('[Group] 페르소나 프록시 실패:', e.message); return null;
+            });
+            if (!proxied) console.warn(`[Group] 페르소나 프록시 안 됨 (persona="${personaName}") — 웹훅 권한/페르소나 확인`);
+        } else {
+            console.warn(`[Group] 페르소나 미설정 (채널 ${channelId}) — 단톡 행 페르소나 드롭다운 또는 ST 기본 페르소나 필요`);
+        }
         if (Away.isAway(channelId)) return;
 
         const roster = chCfg.members.map((m) => m.name).filter(Boolean);
