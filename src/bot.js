@@ -1329,17 +1329,50 @@ const Bot = {
         return true;
     },
 
-    // --- 응답 전송: 빈 줄 기준으로 여러 메시지로 분할 + 이미지 첨부 ---
+    // 긴 텍스트를 limit 이내 조각으로 (문단→줄→문장→하드컷 순으로 자연스럽게 끊음). 넘지 않으면 통째 1개.
+    _chunk(text, limit = 1900) {
+        const t = (text || '').trim();
+        if (t.length <= limit) return t ? [t] : [];
+        const out = [];
+        let buf = '';
+        const flush = () => { if (buf.trim()) out.push(buf.trim()); buf = ''; };
+        // 문단 단위로 모으되 limit 넘으면 끊기
+        for (const para of t.split(/\n\s*\n/)) {
+            if ((buf + '\n\n' + para).length <= limit) { buf = buf ? `${buf}\n\n${para}` : para; continue; }
+            flush();
+            if (para.length <= limit) { buf = para; continue; }
+            // 문단 자체가 너무 길면 줄/문장/하드컷으로 쪼갬
+            let rest = para;
+            while (rest.length > limit) {
+                let cut = rest.lastIndexOf('\n', limit);
+                if (cut < limit * 0.5) cut = rest.lastIndexOf('. ', limit);
+                if (cut < limit * 0.5) cut = rest.lastIndexOf(' ', limit);
+                if (cut < limit * 0.5) cut = limit;
+                out.push(rest.slice(0, cut).trim());
+                rest = rest.slice(cut).trim();
+            }
+            buf = rest;
+        }
+        flush();
+        return out;
+    },
+
+    // --- 응답 전송: 모드에 따라 분할/통짜 + 이미지 첨부 ---
     // 멀티봇: 봇 자신으로 전송(프로필=캐릭터, 온라인 상태). 단일봇: 웹훅으로 캐릭터 흉내.
     async _sendResponse(channel, character, response, photoPrompt) {
         const charName = character.name || 'Character';
         const asSelf = config.botMode === 'multi';
         const webhook = asSelf ? null : await this._getWebhook(channel, character);
 
-        // 빈 줄(\n\n) 기준 분할. splitMessages가 false면 통째로. 빈 조각은 제거.
-        const parts = (config.splitMessages === false ? [response] : response.split(/\n\s*\n/))
-            .map((s) => s.trim())
-            .filter(Boolean);
+        // RP 모드는 한 덩어리로(안 자름), 채팅 모드는 빈 줄 기준 분할(말풍선 여러 개).
+        const isRp = Modes.get(channel.id) === 'rp';
+        let parts;
+        if (isRp || config.splitMessages === false) {
+            // 안 자르되 디스코드 2000자 한계는 지킴 (문단/문장 경계에서 끊음)
+            parts = this._chunk(response, 1900);
+        } else {
+            parts = response.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+        }
 
         // 이미지 첨부 준비 (마지막 메시지에 붙임)
         let attachment = null;
