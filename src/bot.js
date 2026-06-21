@@ -568,8 +568,8 @@ const Bot = {
             const category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
             // 기존 챗 채널을 카테고리 안으로 이동 (같은 채널·ST연결·히스토리 그대로, 보기만 정리)
             try { await interaction.channel.setParent(category.id, { lockPermissions: false }); } catch (e) { console.warn('[Setup] 챗 채널 이동 실패(무시):', e.message); }
-            const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv });
-            const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv });
+            const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+            const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
 
             config.channels = config.channels || {};
             config.channels[chatId] = { ...(config.channels[chatId] || {}), character: charName };
@@ -583,7 +583,7 @@ const Bot = {
             await summary.send(`📝 **${charName} 요약**\n챗↔롤플 전환 때마다 무슨 얘기를 했는지 자동 기록돼요.`).catch(() => {});
             await rp.send('🎭 롤플 채널이에요. 채팅으로 돌아가려면 `/mode chat`').catch(() => {});
 
-            return interaction.editReply(`✅ "${charName}" 세트 완료! (챗은 기존 <#${chatId}> 그대로)\n💬 <#${chatId}>  🎭 <#${rp.id}> (비공개)  📝 <#${summary.id}> (비공개)`);
+            return interaction.editReply(`✅ "${charName}" 세트 완료! (챗은 기존 <#${chatId}> 그대로)\n💬 <#${chatId}>  🎭 <#${rp.id}> (비공개·🔞)  📝 <#${summary.id}> (비공개·🔞)`);
         } catch (e) {
             console.error('[Setup] 실패:', e);
             return interaction.editReply(`⚠️ 생성 실패: ${e.message}`);
