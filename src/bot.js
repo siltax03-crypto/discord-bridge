@@ -644,23 +644,28 @@ const Bot = {
     async _summarizeChannel(set, channelId, dir, client) {
         const history = ChatHistory.toAPIMessages(channelId, 30);
         if (!history.length) { console.warn(`[Summary] 히스토리 비어 요약 생략 (채널 ${channelId})`); return; }
-        const convo = history.map((m) => `${m.role === 'user' ? '유저' : '캐릭터'}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n').slice(-4000);
-        const sys = 'Summarize the following chat log in Korean, in 1-2 short sentences. Capture only what they were talking about / what happened, so the other channel knows the context. No preface, just the summary.';
-        let summary = '';
+        const convo = history.map((m) => `${m.role === 'user' ? 'User' : 'Character'}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n').slice(-4000);
+        // 영어(주입용) + 한국어(요약채널 표시용) 둘 다 받는다
+        const sys = 'Summarize the following chat log so another channel knows what was discussed / what happened. Output EXACTLY two lines, no preface, no extra text:\nEN: <1-2 sentence summary in English>\nKO: <the same summary in Korean>';
+        let raw = '';
         try {
             // thinking 모델은 토큰을 생각에 먼저 쓰므로 본문 여유분을 넉넉히 (300이면 빈 응답 남)
-            summary = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: convo }], { maxTokens: 2048 });
+            raw = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: convo }], { maxTokens: 2048 });
         } catch (e) { console.warn('[Summary] 생성 오류:', e.message); }
-        summary = (summary || '').trim();
-        if (!summary) { console.warn(`[Summary] 빈 요약 — 게시 생략 (채널 ${channelId})`); return; }
+        raw = (raw || '').trim();
+        if (!raw) { console.warn(`[Summary] 빈 요약 — 게시 생략 (채널 ${channelId})`); return; }
+
+        // EN/KO 파싱 (형식 안 지켜졌으면 전체를 영어로 간주, 한국어는 영어로 폴백)
+        const en = (raw.match(/EN:\s*(.+)/i)?.[1] || raw).trim();
+        const ko = (raw.match(/KO:\s*(.+)/i)?.[1] || en).trim();
 
         const dateStr = new Intl.DateTimeFormat('ko-KR', { timeZone: config.timezone || 'Asia/Seoul', month: 'long', day: 'numeric' }).format(new Date());
         const arrow = dir === 'chat→rp' ? '💬→🎭' : '🎭→💬';
-        Sets.addSummary(set.character, dir, summary);
+        Sets.addSummary(set.character, dir, en); // 주입용은 영어
 
         try {
             const ch = await client.channels.fetch(set.summary).catch(() => null);
-            if (ch) await ch.send(`**${dateStr}** ${arrow}\n${summary}`);
+            if (ch) await ch.send(`**${dateStr}** ${arrow}\n${ko}`); // 채널 표시는 한국어
         } catch { /* 무시 */ }
     },
 
