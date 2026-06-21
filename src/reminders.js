@@ -110,7 +110,7 @@ const Reminders = {
         list = list.filter((x) => x.id !== r.id);
         this._save();
         if (!sendFn) return;
-        await sendFn(r.channelId, `약속했던 리마인드 시간이야. 다음 내용을 자연스럽게 전해: ${r.text}`);
+        await sendFn(r.channelId, `It's the reminder time you promised. Naturally bring up this: ${r.text}`);
     },
 
     // --- 조회/삭제 (/reminders 명령용) ---

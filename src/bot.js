@@ -999,7 +999,7 @@ const Bot = {
         });
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
-        if (seedNote) messages.push({ role: 'user', content: `(상황: ${seedNote} — 등장인물들끼리 자연스럽게 단톡을 먼저 시작해.)` });
+        if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
@@ -1060,7 +1060,7 @@ const Bot = {
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
-        if (seedNote) messages.push({ role: 'user', content: `(상황: ${seedNote} — 등장인물들끼리 자연스럽게 단톡을 시작해.)` });
+        if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start the group chat among themselves.)` });
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
@@ -1472,8 +1472,8 @@ const Bot = {
             const last = ChatHistory.getMessages(channelId, 1)[0];
             if (last?.role !== 'assistant') return; // 유저가 답함 → 취소
             const noteText = note
-                ? `방금 "${note}"라고 했는데 ${mins}분 동안 답이 없어. 그 말대로 살짝 재촉하며 다시 연락해.`
-                : `${mins}분째 답이 없어. 아까 한 말대로 살짝 재촉하며 다시 연락해.`;
+                ? `You said "${note}" and they haven't replied for ${mins} minutes. Message them again, lightly pressing/teasing as you said you would.`
+                : `It's been ${mins} minutes with no reply. Message them again, lightly nudging them as you implied earlier.`;
             await this.sendProactive(channelId, noteText);
         }, mins * 60_000);
         t.unref?.();
@@ -1573,7 +1573,7 @@ const Bot = {
         if (config.botMode === 'multi') {
             const groupMembers = this._channelGroupMembers(channelId);
             if (groupMembers.length >= 2) {
-                const seed = note || '지금 단톡방에 아무나 먼저 말을 꺼내서 등장인물들끼리 자연스럽게 수다를 시작해.';
+                const seed = note || 'The group chat has been quiet. Someone should speak up first and the characters start chatting naturally among themselves.';
                 return this._handleGroupMessage(null, groupMembers, seed).catch((e) => console.error('[Group] 선톡 오류:', e));
             }
         }
@@ -1581,7 +1581,7 @@ const Bot = {
         // 단일봇 단톡(웹훅) 채널이면: 등장인물끼리 먼저 수다 시작 (API 1회)
         const grpCfg = config.channels[channelId];
         if (grpCfg?.group && Array.isArray(grpCfg.members) && grpCfg.members.length >= 1) {
-            const seed = '지금 단톡방이 한동안 조용했어. 누군가 먼저 말을 꺼내서 등장인물들끼리 자연스럽게 수다를 시작해 (일상 잡담이든 서로 놀리든 티키타카로).';
+            const seed = 'The group chat has been quiet for a while. Someone speaks up first and the characters start chatting naturally among themselves (everyday small talk, teasing, banter).';
             return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
 
@@ -1603,7 +1603,7 @@ const Bot = {
             const photosOn = !!config.proactive?.photos;
             const wantPhoto = photosOn && Math.random() < 0.35;
             const fullNote = wantPhoto
-                ? `${note} 이번엔 지금 너의 모습(셀카)이나 보고 있는 풍경 등을 담은 사진을 메시지 끝에 [SEND_PHOTO: 영어 묘사]로 같이 보내.`
+                ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
                 : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
