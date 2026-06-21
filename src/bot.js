@@ -28,8 +28,9 @@ const characterCache = {};
 const proxiedMessageIds = new Set();
 // 채널별 "답 없으면 재촉" 타이머 (유저가 답하면 취소)
 const followupTimers = {};
-// 세트별 "만남 예약" 타이머: { rpChannelId: timer }
+// 세트별 "만남 예약" 타이머/정보: { rpChannelId: timer }, { rpChannelId: {fireAt, note, character} }
 const meetTimers = {};
+const meetInfo = {};
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
@@ -326,6 +327,22 @@ const Bot = {
             const charm = STReader.getCharmMemory(charId);
             const charmCount = charm?.memories?.length || 0;
 
+            // 세트/만남 예약 정보
+            const setFound = Sets.findByChannel(channelId);
+            let setLine = '';
+            let meetLine = '';
+            if (setFound) {
+                const s = setFound.set;
+                setLine = `• 세트(${setFound.role}): 💬<#${s.chat}> 🎭<#${s.rp}> 📝<#${s.summary}>`;
+                const mi = meetInfo[s.rp];
+                if (mi) {
+                    const left = Math.max(0, Math.round((mi.fireAt - Date.now()) / 60000));
+                    meetLine = `• 만남 예약: 🚪 ${left}분 후 롤플 채널에서 시작${mi.note ? ` (${mi.note})` : ''}`;
+                } else {
+                    meetLine = '• 만남 예약: 없음';
+                }
+            }
+
             const lines = [
                 '**📋 채널 주입 정보**',
                 `• 캐릭터: ${charName} (설명 ${descLen}자)`,
@@ -340,7 +357,9 @@ const Bot = {
                 `• 상태: ${Away.isAway(channelId) ? '🔇 잠수 중 (응답 안 함)' : '🟢 응답 중'}`,
                 `• 프로필: ${AIClient.getProfile()?.name || '?'}`,
                 `• 프리셋: ${AIClient.getProfile()?.preset || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
-            ];
+                setLine,
+                meetLine,
+            ].filter(Boolean);
             return interaction.reply({ content: lines.join('\n'), ...eph });
         }
 
@@ -585,31 +604,37 @@ const Bot = {
         const { set } = found;
         const target = type === 'rp' ? set.rp : set.chat;
         const fromId = type === 'rp' ? set.chat : set.rp;   // 떠나는 채널
-        const dir = type === 'rp' ? 'chat→rp' : 'rp→chat';
 
         if (channelId === target) {
             return interaction.reply({ content: `이미 ${type === 'rp' ? '🎭 롤플' : '💬 챗'} 채널이에요. → <#${target}>`, ...eph });
         }
 
-        await interaction.reply({ content: '🔄 전환 중 (요약 정리)...', ...eph });
-        // 떠나는 채널 대화를 요약해서 요약 채널 + 데이터에 기록 → 들어가는 모드에 주입됨
-        try { await this._summarizeChannel(set, fromId, dir, interaction.client); } catch (e) { console.warn('[Mode] 요약 실패:', e.message); }
+        // 내가 직접 롤플로 전환 = 지금 바로 만남 시작. _startRpScene이 챗 요약→주입까지 함.
+        if (type === 'rp') {
+            await interaction.reply({ content: '🎭 만남 시작 중 (직전 대화 정리)...', ...eph });
+            try { await this._startRpScene(set, '', { notifyChat: false }); } catch (e) { console.warn('[Mode] 장면 시작 실패:', e.message); }
+            return interaction.editReply(`🎭 롤플 시작! → <#${set.rp}>\n📝 직전 챗은 <#${set.summary}>에 요약해뒀어요.`);
+        }
 
-        return interaction.editReply(`${type === 'rp' ? '🎭 롤플' : '💬 챗'}로 이동! → <#${target}>\n📝 직전 대화는 <#${set.summary}>에 요약해뒀어요.`);
+        // 롤플 → 챗: 떠나는 롤플 대화를 요약해 챗 맥락으로
+        await interaction.reply({ content: '🔄 전환 중 (요약 정리)...', ...eph });
+        try { await this._summarizeChannel(set, fromId, 'rp→chat', interaction.client); } catch (e) { console.warn('[Mode] 요약 실패:', e.message); }
+        return interaction.editReply(`💬 챗으로 이동! → <#${set.chat}>\n📝 직전 롤플은 <#${set.summary}>에 요약해뒀어요.`);
     },
 
     // --- 채널 최근 대화를 짧게 요약 → 요약채널 게시 + Sets에 저장 ---
     async _summarizeChannel(set, channelId, dir, client) {
         const history = ChatHistory.toAPIMessages(channelId, 30);
-        if (!history.length) return;
+        if (!history.length) { console.warn(`[Summary] 히스토리 비어 요약 생략 (채널 ${channelId})`); return; }
         const convo = history.map((m) => `${m.role === 'user' ? '유저' : '캐릭터'}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n').slice(-4000);
         const sys = 'Summarize the following chat log in Korean, in 1-2 short sentences. Capture only what they were talking about / what happened, so the other channel knows the context. No preface, just the summary.';
         let summary = '';
         try {
-            summary = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: convo }], { maxTokens: 300 });
-        } catch { /* 무시 */ }
+            // thinking 모델은 토큰을 생각에 먼저 쓰므로 본문 여유분을 넉넉히 (300이면 빈 응답 남)
+            summary = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: convo }], { maxTokens: 2048 });
+        } catch (e) { console.warn('[Summary] 생성 오류:', e.message); }
         summary = (summary || '').trim();
-        if (!summary) return;
+        if (!summary) { console.warn(`[Summary] 빈 요약 — 게시 생략 (채널 ${channelId})`); return; }
 
         const dateStr = new Intl.DateTimeFormat('ko-KR', { timeZone: config.timezone || 'Asia/Seoul', month: 'long', day: 'numeric' }).format(new Date());
         const arrow = dir === 'chat→rp' ? '💬→🎭' : '🎭→💬';
@@ -1290,6 +1315,9 @@ const Bot = {
             return '';
         }).trim();
 
+        // 태그를 안 달았어도 "곧/지금 만나러 간다"는 말투면 자동으로 만남 예약 (폴백)
+        this._maybeAutoMeet(channelId, response);
+
         // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
         if (!response && !photoPrompt) {
             console.warn('[Bot] 응답 본문 없음(태그뿐) — 저장/전송 생략');
@@ -1404,28 +1432,68 @@ const Bot = {
         if (meetTimers[key]) clearTimeout(meetTimers[key]);
         const t = setTimeout(() => {
             delete meetTimers[key];
+            delete meetInfo[key];
             this._startRpScene(set, note).catch((e) => console.error('[Meet] 장면 시작 오류:', e));
         }, mins * 60_000);
         t.unref?.();
         meetTimers[key] = t;
+        meetInfo[key] = { fireAt: Date.now() + mins * 60_000, note, character: set.character };
         console.log(`[Meet] "${set.character}" 만남 예약: ${mins}분 후 롤플 채널(${key})`);
     },
 
+    // 텍스트에서 "곧/지금 만남" 신호 → 분 단위 (없으면 null)
+    _detectMeetMinutes(text) {
+        const t = (text || '');
+        // 도착/임박 신호 → 즉시(1분)
+        if (/도착|문\s*앞|다\s*왔|왔어|열어\s*줘|들어갈게|들어간다|초인종|벨\s*눌/.test(t)) return 1;
+        // "N분 (안에/뒤/후/만에)" → 그 분
+        const m = t.match(/(\d{1,3})\s*분\s*(안|뒤|후|만)/);
+        if (m) return Math.min(parseInt(m[1], 10), 360);
+        // 출발/이동 신호 → 기본 15분
+        if (/갈게|갈래|데리러|데리러\s*가|출발|가는\s*중|가고\s*있|이따\s*가|곧\s*가|지금\s*가/.test(t)) return 15;
+        return null;
+    },
+
+    // 챗에서 만남 신호 자동 감지 → MEET 예약 (캐릭터가 태그를 안 달았을 때 폴백)
+    _maybeAutoMeet(chatChannelId, text) {
+        const found = Sets.findByChannel(chatChannelId);
+        if (!found || found.role !== 'chat' || !found.set.rp) return;
+        const mins = this._detectMeetMinutes(text);
+        if (mins == null) return;
+        const key = found.set.rp;
+        const existing = meetInfo[key];
+        if (existing) {
+            // 이미 예약돼 있으면: "도착 임박" 신호일 때만 1분으로 앞당김
+            if (mins <= 1 && existing.fireAt > Date.now() + 2 * 60_000) {
+                this._scheduleMeet(chatChannelId, 1, existing.note);
+                console.log('[Meet] 자동감지(도착) → 1분으로 앞당김');
+            }
+            return;
+        }
+        this._scheduleMeet(chatChannelId, mins, '');
+        console.log(`[Meet] 자동감지: "${(text || '').slice(0, 30)}" → ${mins}분`);
+    },
+
     // 만남 시각 도달 → 챗 대화를 요약(맥락 전달)하고 롤플 채널에 만남 장면 시작
-    async _startRpScene(set, note) {
+    async _startRpScene(set, note, { notifyChat = true } = {}) {
         const client = channelClients[set.rp] || primaryClient;
         if (!client) return;
+        // 예약이 남아있으면 정리 (수동/중복 호출 대비)
+        if (meetTimers[set.rp]) { clearTimeout(meetTimers[set.rp]); delete meetTimers[set.rp]; }
+        delete meetInfo[set.rp];
         // /mode를 안 거치고 자동으로 넘어오는 거라, 여기서 직접 챗을 요약해 rp 맥락으로 넘김
         try { await this._summarizeChannel(set, set.chat, 'chat→rp', client); } catch (e) { console.warn('[Meet] 요약 실패:', e.message); }
 
         const sceneNote = `${note ? note + ' ' : ''}They have just arrived and you two are now meeting IN PERSON. Open the roleplay scene RIGHT NOW: narrate the moment you meet (the door/arrival, seeing each other, your reaction) using narration and *actions*. This is the start of an in-person scene, not texting.`;
         await this.sendProactive(set.rp, sceneNote);
 
-        // 챗 채널에 "도착했어" 알림 + 롤플 채널 점프 링크
-        try {
-            const chatCh = await client.channels.fetch(set.chat).catch(() => null);
-            if (chatCh) await chatCh.send(`🚪 (도착했어) 이제부터 여기서 → <#${set.rp}>`);
-        } catch { /* 무시 */ }
+        // 챗 채널에 "도착했어" 알림 + 롤플 채널 점프 링크 (수동 /mode 전환 땐 생략)
+        if (notifyChat) {
+            try {
+                const chatCh = await client.channels.fetch(set.chat).catch(() => null);
+                if (chatCh) await chatCh.send(`🚪 (도착했어) 이제부터 여기서 → <#${set.rp}>`);
+            } catch { /* 무시 */ }
+        }
     },
 
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---

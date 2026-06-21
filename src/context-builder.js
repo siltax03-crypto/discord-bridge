@@ -251,7 +251,7 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
 
         // 만남 예약: 곧 직접 만나기로 하면 그 시간 뒤 롤플 채널에서 만남 장면이 시작됨
         const meetInstruction =
-            `- If you two agree to meet IN PERSON soon (they say they're coming over / on their way / "I'll be there in N minutes", or you decide to head to them), append [MEET: <minutes> | what is about to happen when you meet] at the very END. When that time passes, your in-person meeting will automatically begin as a roleplay scene. Use realistic minutes. ONLY when an in-person meetup is actually agreed; never make the tag your whole message.`;
+            `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY for a real in-person meetup; never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`;
 
         // 리얼타임: 이전 메시지로부터 시간이 흐름
         const timeGapInstruction = timeGapText
