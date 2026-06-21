@@ -1568,7 +1568,7 @@ const Bot = {
         try { await this._summarizeChannel(set, set.chat, 'chat→rp', client); } catch (e) { console.warn('[Meet] 요약 실패:', e.message); }
 
         const sceneNote = `${note ? note + ' ' : ''}They have just arrived and you two are now meeting IN PERSON. Open the roleplay scene RIGHT NOW: narrate the moment you meet (the door/arrival, seeing each other, your reaction) using narration and *actions*. This is the start of an in-person scene, not texting.`;
-        await this.sendProactive(set.rp, sceneNote);
+        await this.sendProactive(set.rp, sceneNote, { allowRp: true });
 
         // 챗 채널에 "도착했어" 알림 + 롤플 채널 점프 링크 (수동 /mode 전환 땐 생략)
         if (notifyChat) {
@@ -1580,9 +1580,11 @@ const Bot = {
     },
 
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
-    async sendProactive(channelId, note = '') {
+    async sendProactive(channelId, note = '', { allowRp = false } = {}) {
         // 요약 채널은 선톡 안 함
         if (config.channels[channelId]?.summaryOnly) return;
+        // 롤플 채널은 선톡 절대 금지 — 만남 전환(_startRpScene)으로 장면 열 때만 예외
+        if (!allowRp && Sets.findByChannel(channelId)?.role === 'rp') return;
         // 잠수 중이면 선톡/리마인더/재촉 다 생략 (복귀 연락은 Away가 잠수 해제 후 호출하므로 통과됨)
         if (Away.isAway(channelId)) {
             console.log(`[Bot] 잠수 중 - 선톡 생략 (채널 ${channelId})`);
