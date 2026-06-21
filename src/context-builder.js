@@ -85,6 +85,7 @@ ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
             charName: charNameOpt = '',
             annivStatus = [],
             crossSummaries = [],
+            crossRecent = null,
         } = options;
         // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
         const charName = charNameOpt || character.name || character.data?.name || 'Character';
@@ -181,6 +182,12 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             console.log(`[Context] ✓ 작가노트 주입 (${notes.length}개)`);
         }
 
+        // --- 다른 채널(챗↔롤플)의 최근 원본 대화 (요약이 놓치는 직전 분위기 보존) ---
+        if (crossRecent && Array.isArray(crossRecent.lines) && crossRecent.lines.length > 0) {
+            const where = crossRecent.from === 'chat' ? 'text chat' : 'roleplay';
+            parts.push(`[Most recent messages from your ${where} with ${userName} — the SAME relationship, continue from here seamlessly]\n${crossRecent.lines.join('\n')}`);
+        }
+
         // --- 다른 모드(챗↔롤플)에서 넘어온 맥락 요약 ---
         if (Array.isArray(crossSummaries) && crossSummaries.length > 0) {
             const lines = crossSummaries.map((s) => {
@@ -212,8 +219,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             ? '- You may use emoji, ㅋㅋ, ㅎㅎ, etc. naturally.'
             : "- Do NOT use ㅋㅋ/ㅎㅎ or excessive emoji. Speak in the character's own voice.";
 
-        const photoInstruction =
-            '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
+        // 사진 전송은 채팅 모드에서만. 롤플 모드는 이미지 전송 절대 금지.
+        const photoInstruction = mode === 'rp'
+            ? ''
+            : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
 
         // 하루 일정 — 살아있는 사람처럼 (요일/주말 인식 포함)
         const clock = this._clock(timezone);
@@ -253,10 +262,12 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const meetInstruction =
             `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY for a real in-person meetup; never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`;
 
-        // 리얼타임: 이전 메시지로부터 시간이 흐름
-        const timeGapInstruction = timeGapText
-            ? `- About ${timeGapText} have passed since the previous message. Real time has moved on in your life — do NOT seamlessly continue the earlier topic as if no time passed. React to the time gap naturally (what you've been doing, the changed mood/time of day). To bring back an earlier topic, reference it explicitly (e.g. "아까 얘기하던 거"). This is a place where you actually live your life.`
-            : '';
+        // 리얼타임 시간차. 채팅은 실시간(시간 흐르면 화제도 바뀜). 롤플은 리얼타임 아님 — 흐름만 은은하게.
+        const timeGapInstruction = !timeGapText
+            ? ''
+            : mode === 'rp'
+                ? `- About ${timeGapText} have passed in real time since the previous message. This is an ongoing immersive roleplay scene that is written slowly — it is NOT real-time. Do NOT reset, skip, or jump the scene based on the real clock. Just let a soft, natural sense of time passing color the scene if it fits; otherwise continue the scene as it is.`
+                : `- About ${timeGapText} have passed since the previous message. Real time has moved on in your life — do NOT seamlessly continue the earlier topic as if no time passed. React to the time gap naturally (what you've been doing, the changed mood/time of day). To bring back an earlier topic, reference it explicitly (e.g. "아까 얘기하던 거"). This is a place where you actually live your life.`;
 
         // 현재 시각(tz 벽시계, 요일 포함) + 리마인더 인식 지시
         const nowStr = clock.full;

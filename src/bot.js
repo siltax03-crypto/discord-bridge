@@ -473,6 +473,19 @@ const Bot = {
         return Sets.recentSummaries(found.set.character, 6);
     },
 
+    // 반대편 채널의 최근 원본 대화 꼬리 (챗→롤플: 챗 10개 / 롤플→챗: 롤플 3개)
+    _crossRecentFor(channelId) {
+        const found = Sets.findByChannel(channelId);
+        if (!found || found.role === 'summary') return null;
+        const otherId = found.role === 'rp' ? found.set.chat : found.set.rp;
+        const from = found.role === 'rp' ? 'chat' : 'rp';
+        const n = found.role === 'rp' ? 10 : 3; // 롤플에 있을 땐 챗 10개, 챗에 있을 땐 롤플 3개
+        const msgs = ChatHistory.getMessages(otherId, n);
+        if (!msgs.length) return null;
+        const lines = msgs.map((m) => `${m.role === 'user' ? 'User' : (m.author || 'Character')}: ${typeof m.content === 'string' ? m.content : ''}`);
+        return { from, lines };
+    },
+
     // --- /purge: 디코 메시지 최근 N개 삭제 + 히스토리 동기화 ---
     async _handlePurge(interaction, channelId, eph) {
         const ch = interaction.channel;
@@ -1282,6 +1295,7 @@ const Bot = {
             notes: Notes.list(channelId),
             annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
             crossSummaries: this._crossSummariesFor(channelId),
+            crossRecent: this._crossRecentFor(channelId),
             personaText,
             presetText,
             timeGapText,
@@ -1302,11 +1316,11 @@ const Bot = {
             return false;
         }
 
-        // [SEND_PHOTO: ...] 태그
+        // [SEND_PHOTO: ...] 태그 — 롤플 모드는 이미지 전송 절대 금지(태그만 제거)
         let photoPrompt = null;
         const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
         if (photoMatch) {
-            photoPrompt = photoMatch[1].trim();
+            if (mode !== 'rp') photoPrompt = photoMatch[1].trim();
             response = response.replace(photoMatch[0], '').trim();
         }
 
@@ -1604,8 +1618,8 @@ const Bot = {
                 ? (config.rpResponseTokens || 8192)
                 : (config.maxResponseTokens || 1000);
 
-            // 선톡 사진(이미지 생성 비용) — config에서 켰을 때만, 35% 확률
-            const photosOn = !!config.proactive?.photos;
+            // 선톡 사진(이미지 생성 비용) — config에서 켰을 때만, 35% 확률. 롤플 모드는 이미지 금지.
+            const photosOn = !!config.proactive?.photos && mode !== 'rp';
             const wantPhoto = photosOn && Math.random() < 0.35;
             const fullNote = wantPhoto
                 ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
@@ -1625,6 +1639,7 @@ const Bot = {
                 notes: Notes.list(channelId),
                 annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
                 crossSummaries: this._crossSummariesFor(channelId),
+                crossRecent: this._crossRecentFor(channelId),
                 personaText,
                 proactive: true,
                 proactiveNote: fullNote,
@@ -1645,7 +1660,7 @@ const Bot = {
             let photoPrompt = null;
             const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
             if (photoMatch) {
-                photoPrompt = photoMatch[1].trim();
+                if (mode !== 'rp') photoPrompt = photoMatch[1].trim(); // 롤플 모드 이미지 금지
                 response = response.replace(photoMatch[0], '').trim();
             }
 
