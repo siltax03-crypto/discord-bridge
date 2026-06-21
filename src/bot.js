@@ -951,28 +951,38 @@ const Bot = {
 
     // --- 단일봇 단체 채널: API 1번 호출 → 인물별 웹훅(이름+아바타URL)으로 분배 ---
     // chCfg = { group:true, sheet, persona, members:[{name, avatarUrl}] }
-    async _handleSingleGroup(message, chCfg) {
-        const channelId = message.channelId;
-        const channel = message.channel;
-        const userName = message.author?.displayName || message.author?.username || 'User';
+    // message 없으면(선톡): opts.channelId + opts.seedNote 로 등장인물끼리 먼저 수다 시작
+    async _handleSingleGroup(message, chCfg, opts = {}) {
+        const channelId = message ? message.channelId : opts.channelId;
+        if (!channelId) return;
+        let channel = message ? message.channel : null;
+        if (!channel) {
+            const owner = channelClients[channelId] || primaryClient;
+            channel = owner && await owner.channels.fetch(channelId).catch(() => null);
+        }
+        if (!channel) return;
+        const seedNote = opts.seedNote || null;
+        const userName = message ? (message.author?.displayName || message.author?.username || 'User') : 'User';
 
         // 시트 카드 로드 (단체 시트 본문)
         const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
         if (!sheetCard) { console.error('[Group] 시트 카드 로드 실패:', chCfg.sheet); return; }
 
-        // 유저 메시지 저장 + 페르소나 프록시
-        // 우선순위: 단톡 행 수동 지정 → 시트 카드에 ST 연결된 페르소나 → ST 기본 페르소나
-        const personaName = chCfg.persona
-            || STReader.getConnectedPersonaName(sheetCard)
-            || STReader.getDefaultPersonaName();
-        ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
-        if (personaName) {
-            const proxied = await this._proxyUserMessage(message, personaName).catch((e) => {
-                console.warn('[Group] 페르소나 프록시 실패:', e.message); return null;
-            });
-            if (!proxied) console.warn(`[Group] 페르소나 프록시 안 됨 (persona="${personaName}") — 웹훅 권한/페르소나 확인`);
-        } else {
-            console.warn(`[Group] 페르소나 미설정 (채널 ${channelId}) — 단톡 행 페르소나 드롭다운 또는 ST 기본 페르소나 필요`);
+        // 유저 메시지 저장 + 페르소나 프록시 (선톡이면 유저 메시지 없음 → 생략)
+        if (message) {
+            // 우선순위: 단톡 행 수동 지정 → 시트 카드에 ST 연결된 페르소나 → ST 기본 페르소나
+            const personaName = chCfg.persona
+                || STReader.getConnectedPersonaName(sheetCard)
+                || STReader.getDefaultPersonaName();
+            ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
+            if (personaName) {
+                const proxied = await this._proxyUserMessage(message, personaName).catch((e) => {
+                    console.warn('[Group] 페르소나 프록시 실패:', e.message); return null;
+                });
+                if (!proxied) console.warn(`[Group] 페르소나 프록시 안 됨 (persona="${personaName}") — 웹훅 권한/페르소나 확인`);
+            } else {
+                console.warn(`[Group] 페르소나 미설정 (채널 ${channelId})`);
+            }
         }
         if (Away.isAway(channelId)) return;
 
@@ -985,9 +995,11 @@ const Bot = {
             language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
+            seedNote,
         });
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
+        if (seedNote) messages.push({ role: 'user', content: `(상황: ${seedNote} — 등장인물들끼리 자연스럽게 단톡을 먼저 시작해.)` });
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
@@ -1549,6 +1561,8 @@ const Bot = {
 
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
     async sendProactive(channelId, note = '') {
+        // 요약 채널은 선톡 안 함
+        if (config.channels[channelId]?.summaryOnly) return;
         // 잠수 중이면 선톡/리마인더/재촉 다 생략 (복귀 연락은 Away가 잠수 해제 후 호출하므로 통과됨)
         if (Away.isAway(channelId)) {
             console.log(`[Bot] 잠수 중 - 선톡 생략 (채널 ${channelId})`);
@@ -1562,6 +1576,13 @@ const Bot = {
                 const seed = note || '지금 단톡방에 아무나 먼저 말을 꺼내서 등장인물들끼리 자연스럽게 수다를 시작해.';
                 return this._handleGroupMessage(null, groupMembers, seed).catch((e) => console.error('[Group] 선톡 오류:', e));
             }
+        }
+
+        // 단일봇 단톡(웹훅) 채널이면: 등장인물끼리 먼저 수다 시작 (API 1회)
+        const grpCfg = config.channels[channelId];
+        if (grpCfg?.group && Array.isArray(grpCfg.members) && grpCfg.members.length >= 1) {
+            const seed = '지금 단톡방이 한동안 조용했어. 누군가 먼저 말을 꺼내서 등장인물들끼리 자연스럽게 수다를 시작해 (일상 잡담이든 서로 놀리든 티키타카로).';
+            return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
 
         const owner = channelClients[channelId] || primaryClient;
