@@ -248,9 +248,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             ? `- At the very end you MAY set your current status with [STATUS: short phrase with emoji] reflecting what you're doing right now (e.g. [STATUS: 🍳 cooking], [STATUS: 😴 sleeping], [STATUS: 💼 at work]). Update it only when your activity actually changes; keep it under ~20 chars. This shows on your Discord profile, not in the message.`
             : '';
 
-        // 불완전함 — 너무 매끈하면 가짜
-        const imperfectionInstruction =
-            `- Text like a real person, not polished prose: OCCASIONALLY (not every message) a small typo you quickly fix ("뭐 먄 아 뭐해ㅋㅋ"), trailing off, an abrupt subject change, or a quick afterthought sent right after. Don't be grammatically perfect every time. Keep it readable though — imperfection is a light seasoning, not constant.`;
+        // 불완전함 — 너무 매끈하면 가짜 (채팅 모드에서만; 롤플 산문엔 톡 오타 부적절)
+        const imperfectionInstruction = mode === 'rp'
+            ? ''
+            : `- Text like a real person, not polished prose: OCCASIONALLY (not every message) a small typo you quickly fix ("뭐 먄 아 뭐해ㅋㅋ"), trailing off, an abrupt subject change, or a quick afterthought sent right after. Don't be grammatically perfect every time. Keep it readable though — imperfection is a light seasoning, not constant.`;
 
         const antiRepeat =
             '- Do NOT reuse sentences, phrases, or sentence patterns from your recent messages. Each reply must be freshly worded and move the conversation forward.';
@@ -261,7 +262,9 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
 
         // 만남 예약: 세트(롤플 채널이 있는 챗)에서만. 그 시간 뒤 롤플 채널에서 만남 장면이 시작됨
         const meetInstruction = meetEnabled
-            ? `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY for a real in-person meetup; never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`
+            ? `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY when YOU or ${userName} (a PERSON) is physically going to the other to meet face-to-face.
+  • Do NOT use [MEET] for sending/ordering things: food delivery, packages, a courier, flowers, etc. arriving at their place is NOT a meetup. "음식이 도착", "배달 문 앞", "택배 보냈어" → NO tag.
+  Never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`
             : '';
 
         // 리얼타임 시간차. 채팅은 실시간(시간 흐르면 화제도 바뀜). 롤플은 리얼타임 아님 — 흐름만 은은하게.
@@ -287,10 +290,13 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             : '';
 
         if (mode === 'rp') {
-            // 롤플 모드: 나레이션/행동 허용
+            // 롤플 모드: 산문 롤플 (톡 아님)
             parts.push(`[SYSTEM INSTRUCTION]
-- Roleplay as ${charName}. Narration and *actions* are allowed.
-- Stay in character. Write immersively.
+- This is immersive PROSE ROLEPLAY as ${charName}. You are physically together with ${userName} in person, in a real scene — this is NOT texting/DMs.
+- Write in narrative prose: describe ${charName}'s actions, body language, expressions, surroundings, and senses, with *asterisks* for actions/narration and quotes for spoken dialogue. Use full descriptive paragraphs.
+- Do NOT write like a text message or Discord chat. NO short one-line chat bubbles, no "texting" style, no message-by-message back-and-forth.
+- Even if earlier text-chat logs are shown above for context, do NOT imitate that casual texting format here — switch fully into roleplay prose.
+- Stay in character. Write immersively and in detail.
 ${langInstruction}
 ${slangInstruction}
 ${antiRepeat}

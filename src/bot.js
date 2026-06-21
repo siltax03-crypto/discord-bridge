@@ -1365,8 +1365,7 @@ const Bot = {
             return '';
         }).trim();
 
-        // 태그를 안 달았어도 "곧/지금 만나러 간다"는 말투면 자동으로 만남 예약 (폴백)
-        this._maybeAutoMeet(channelId, response);
+        // (만남 자동감지 폴백 제거: "도착/문 열어줘" 등이 음식배달 등과 구분 안 돼 오발동 → 모델의 [MEET] 태그만 신뢰)
 
         // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
         if (!response && !photoPrompt) {
