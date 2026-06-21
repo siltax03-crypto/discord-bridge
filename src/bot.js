@@ -96,6 +96,7 @@ const Bot = {
             client.on(Events.MessageCreate, (message) => this._onMessage(message, client));
             client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
             client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
+            client.on(Events.ChannelDelete, (ch) => this._onChannelDelete(ch));
         } else {
             // 페르소나 전담봇: 웹훅 단톡(토큰 없는 멤버만 있는 채널)에선 이 봇이 메시지를 받아 그룹 처리
             client.on(Events.MessageCreate, (message) => this._onPersonaMessage(message));
@@ -395,6 +396,21 @@ const Bot = {
         }
     },
 
+    // 채널이 디코에서 삭제되면 세트/매핑 정리 (다음 /setup이 깨끗하게 다시 만들 수 있게)
+    _onChannelDelete(ch) {
+        const id = ch?.id;
+        if (!id) return;
+        const found = Sets.findByChannel(id);
+        if (found) {
+            const s = found.set;
+            for (const cid of [s.chat, s.rp, s.summary]) if (cid) delete config.channels[cid];
+            Sets.remove(s);
+            console.log(`[Bot] 채널 삭제 감지 → "${s.character}" 세트 정리`);
+        } else if (config.channels[id]) {
+            delete config.channels[id];
+        }
+    },
+
     // 이 채널이 세트의 chat/rp면, 반대편에서 넘어온 요약을 주입용으로 반환
     _crossSummariesFor(channelId) {
         const found = Sets.findByChannel(channelId);
@@ -417,12 +433,22 @@ const Bot = {
         const card = this._loadCharacterByName(charName);
         if (!card) return interaction.reply({ content: `⚠️ "${charName}" 캐릭터 카드를 못 찾았어요. ST 캐릭터 이름 그대로 적어주세요.`, ...eph });
 
-        if (Sets.findByChannel(chatId)) {
-            return interaction.reply({ content: '이 채널은 이미 세트에 속해 있어요. `/info`로 확인하세요.', ...eph });
-        }
-        const existing = Sets.findByCharacter(charName);
+        // 채널이 아직 살아있는지 확인 (유저가 디코에서 지웠을 수 있음)
+        const alive = async (id) => !!(id && await guild.channels.fetch(id).catch(() => null));
+
+        // 이 채널 또는 캐릭터로 기존 세트가 있으면: 채널이 다 살아있으면 막고, 하나라도 죽었으면 정리 후 재생성
+        const existing = Sets.findByChannel(chatId)?.set || Sets.findByCharacter(charName);
         if (existing) {
-            return interaction.reply({ content: `이미 "${charName}" 세트가 있어요:\n💬 <#${existing.chat}>  🎭 <#${existing.rp}>  📝 <#${existing.summary}>`, ...eph });
+            const [c, r, s] = await Promise.all([alive(existing.chat), alive(existing.rp), alive(existing.summary)]);
+            if (c && r && s) {
+                return interaction.reply({ content: `이미 "${existing.character}" 세트가 있어요:\n💬 <#${existing.chat}>  🎭 <#${existing.rp}>  📝 <#${existing.summary}>`, ...eph });
+            }
+            // 깨진 세트 정리 (삭제된 채널 매핑도 제거)
+            for (const id of [existing.chat, existing.rp, existing.summary]) {
+                if (id && id !== chatId) delete config.channels[id];
+            }
+            Sets.remove(existing);
+            console.log(`[Setup] 깨진 세트 정리: ${existing.character}`);
         }
 
         const me = guild.members.me;

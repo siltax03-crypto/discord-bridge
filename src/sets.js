@@ -31,6 +31,20 @@ const Sets = {
         return set;
     },
 
+    // 세트 1개 제거 (객체 참조 또는 캐릭터명)
+    remove(setOrChar) {
+        this._load();
+        const before = cache.length;
+        if (typeof setOrChar === 'string') {
+            const n = setOrChar.toLowerCase();
+            cache = cache.filter((s) => (s.character || '').toLowerCase() !== n);
+        } else {
+            cache = cache.filter((s) => s !== setOrChar);
+        }
+        if (cache.length !== before) this._save();
+        return before - cache.length;
+    },
+
     findByCharacter(name) {
         if (!name) return null;
         const n = name.toLowerCase();
