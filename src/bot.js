@@ -373,13 +373,47 @@ const Bot = {
     },
 
     // --- 이름별 웹훅 가져오기/생성 (캐릭터·페르소나 공용) ---
+    // http(s) 직접 이미지 URL만 아바타로 허용 (imgur 페이지 링크 등 잘못된 값이 들어오면 전송 전체가 실패함)
+    _safeAvatarUrl(url) {
+        if (!url || typeof url !== 'string') return undefined;
+        const u = url.trim();
+        if (!/^https?:\/\//i.test(u)) return undefined;
+        return u;
+    },
+
+    // 단톡 한 인물의 대사를 웹훅(이름+아바타)으로 전송. 실패하면 아바타 빼고 재시도, 그래도 안 되면 일반 메시지로 폴백.
+    async _groupSendVia(channel, name, parts, avatarUrl) {
+        const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), null);
+        const avatarURL = this._safeAvatarUrl(avatarUrl);
+        for (const part of parts) {
+            if (hook) {
+                try {
+                    await hook.send({ content: part, username: name, avatarURL });
+                    continue;
+                } catch (e1) {
+                    // 아바타 URL이 원인일 수 있으니 아바타 빼고 한 번 더
+                    try {
+                        await hook.send({ content: part, username: name });
+                        continue;
+                    } catch (e2) {
+                        delete webhookCache[`${channel.id}:${`grp-${name}`.slice(0, 80)}`];
+                        console.warn(`[Group] 웹훅 전송 실패(${name}) → 일반 메시지로 폴백:`, e2.message);
+                    }
+                }
+            }
+            // 폴백: 그냥 채널에 이름 붙여 전송 (최소한 단톡은 굴러가게)
+            await channel.send(`**${name}**: ${part}`).catch((e) => console.warn(`[Group] 폴백도 실패(${name}):`, e.message));
+        }
+    },
+
     async _getNamedWebhook(channel, hookName, avatarPath) {
         const key = `${channel.id}:${hookName}`;
         if (webhookCache[key]) return webhookCache[key];
 
         try {
             const webhooks = await channel.fetchWebhooks();
-            let webhook = webhooks.find(wh => wh.name === hookName);
+            // 이름이 같아도 토큰이 없는 웹훅(다른 앱/UI가 만든 것)은 .send() 불가 → 무시하고 새로 만든다
+            let webhook = webhooks.find(wh => wh.name === hookName && wh.token);
 
             if (!webhook) {
                 const opts = { name: hookName };
@@ -391,7 +425,7 @@ const Bot = {
             webhookCache[key] = webhook;
             return webhook;
         } catch (e) {
-            console.error(`[Bot] 웹훅 생성 실패:`, e.message);
+            console.error(`[Bot] 웹훅 생성 실패(#${channel?.name} ${hookName}):`, e.message);
             return null;
         }
     },
@@ -663,15 +697,10 @@ const Bot = {
             const mem = chCfg.members.find((m) => m.name === name)
                 || chCfg.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
             if (!mem) continue;
-            const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), null);
-            if (!hook) { console.warn(`[Group] 웹훅 없음(${name})`); continue; }
-            try {
-                await channel.sendTyping().catch(() => {});
-                await delay(700 + Math.min(text.length * 18, 2200));
-                for (const part of text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)) {
-                    await hook.send({ content: part, username: name, avatarURL: mem.avatarUrl || undefined });
-                }
-            } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
+            const parts = text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+            await channel.sendTyping().catch(() => {});
+            await delay(700 + Math.min(text.length * 18, 2200));
+            await this._groupSendVia(channel, name, parts, mem.avatarUrl);
         }
     },
 
@@ -752,13 +781,9 @@ const Bot = {
                     const sender = personaClient || primaryClient;
                     const ch = sender && await sender.channels.fetch(channelId).catch(() => null);
                     if (!ch) continue;
-                    const hook = await this._getNamedWebhook(ch, `grp-${name}`.slice(0, 80), null);
-                    if (!hook) { console.warn(`[Group] 웹훅 없음(${name})`); continue; }
                     await ch.sendTyping().catch(() => {});
                     await delay(700 + Math.min(text.length * 18, 2200));
-                    for (const part of parts) {
-                        await hook.send({ content: part, username: name, avatarURL: mem.avatarUrl || undefined });
-                    }
+                    await this._groupSendVia(ch, name, parts, mem.avatarUrl);
                 }
             } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
         }

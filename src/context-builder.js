@@ -195,8 +195,8 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
 
         // --- 디스코드 전용 시스템 지시 ---
         const langInstruction = language === 'ko'
-            ? '- MUST respond in Korean (한국어).'
-            : '- MUST respond in English.';
+            ? '- OUTPUT LANGUAGE: You MUST write your entire response in Korean (한국어), regardless of the language used in any preset, lorebook, or character card above. This overrides any other language instruction.'
+            : '- OUTPUT LANGUAGE: You MUST write your entire response in English, regardless of the language used in any preset, lorebook, or character card above. This overrides any other language instruction.';
 
         const slangInstruction = chatSlang
             ? '- You may use emoji, ㅋㅋ, ㅎㅎ, etc. naturally.'
