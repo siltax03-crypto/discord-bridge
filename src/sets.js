@@ -45,6 +45,18 @@ const Sets = {
         return before - cache.length;
     },
 
+    // 채널 ID 변경(nuke 복제) 시 세트 내 해당 역할의 채널 ID 갱신
+    renameChannel(oldId, newId) {
+        this._load();
+        let changed = false;
+        for (const s of cache) {
+            if (s.chat === oldId) { s.chat = newId; changed = true; }
+            if (s.rp === oldId) { s.rp = newId; changed = true; }
+            if (s.summary === oldId) { s.summary = newId; changed = true; }
+        }
+        if (changed) this._save();
+    },
+
     findByCharacter(name) {
         if (!name) return null;
         const n = name.toLowerCase();

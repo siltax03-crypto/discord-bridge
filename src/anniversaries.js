@@ -45,6 +45,14 @@ const Anniv = {
         return true;
     },
 
+    rename(oldId, newId) {
+        this._load();
+        if (cache[oldId] === undefined) return;
+        cache[newId] = cache[oldId];
+        delete cache[oldId];
+        this._save();
+    },
+
     /**
      * 지정 tz 기준 오늘 날짜로 각 기념일 상태 계산.
      * @returns [{ label, type, days, milestone, isToday, text }]

@@ -142,6 +142,13 @@ const Reminders = {
         return arr.length;
     },
 
+    // 채널 ID 변경(nuke) 시 예약된 리마인더의 채널을 새 ID로 (타이머는 그대로, 발송 대상만 갱신)
+    renameChannel(oldId, newId) {
+        let changed = false;
+        for (const r of list) if (r.channelId === oldId) { r.channelId = newId; changed = true; }
+        if (changed) this._save();
+    },
+
     // 표시용: tz 기준 "MM/DD HH:MM" 포맷
     formatTime(fireAt) {
         return new Intl.DateTimeFormat('sv-SE', {

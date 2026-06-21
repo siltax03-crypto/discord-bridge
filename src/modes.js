@@ -36,6 +36,14 @@ const Modes = {
         cache[channelId] = mode;
         this._save();
     },
+
+    rename(oldId, newId) {
+        this._load();
+        if (cache[oldId] === undefined) return;
+        cache[newId] = cache[oldId];
+        delete cache[oldId];
+        this._save();
+    },
 };
 
 export default Modes;

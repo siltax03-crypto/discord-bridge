@@ -101,9 +101,34 @@ const ChatHistory = {
         return false;
     },
 
+    // 내용이 일치하는 가장 최근 메시지 1개 제거 (디코에서 메시지를 지웠을 때 동기화용)
+    // 분할 전송된 봇 메시지의 한 조각만 지운 경우 그 묶음 전체를 제거.
+    removeByContent(channelId, content) {
+        const target = (content || '').trim();
+        if (!target) return false;
+        const data = this._load(channelId);
+        for (let i = data.messages.length - 1; i >= 0; i--) {
+            const c = (data.messages[i].content || '').trim();
+            if (c === target || c.split(/\n\s*\n/).map((s) => s.trim()).includes(target)) {
+                data.messages.splice(i, 1);
+                this._save(channelId, data);
+                return true;
+            }
+        }
+        return false;
+    },
+
+    // 채널 통째 이름 변경(닉/복제로 채널 ID가 바뀔 때): 파일 이동
+    rename(oldId, newId) {
+        const oldPath = this._getFilePath(oldId);
+        const newPath = this._getFilePath(newId);
+        try { if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath); } catch { /* 무시 */ }
+    },
+
     clear(channelId) {
         const data = { channelId, messages: [] };
         this._save(channelId, data);
+        try { fs.unlinkSync(this._getFilePath(channelId)); } catch { /* 무시 */ }
     },
 };
 

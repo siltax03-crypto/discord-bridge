@@ -138,7 +138,15 @@ const Bot = {
                         .addChoices({ name: '한국어 (ko)', value: 'ko' }, { name: 'English (en)', value: 'en' })),
             new SlashCommandBuilder()
                 .setName('clear')
-                .setDescription('이 채널의 대화 기록 초기화'),
+                .setDescription('이 채널의 대화 기록 초기화 (봇 기억만)'),
+            new SlashCommandBuilder()
+                .setName('purge')
+                .setDescription('디코 메시지 최근 N개 삭제 + 봇 기억에서도 제거 (14일 이내만)')
+                .addIntegerOption((o) =>
+                    o.setName('count').setDescription('지울 개수 (1~100, 기본 20)').setRequired(false)),
+            new SlashCommandBuilder()
+                .setName('nuke')
+                .setDescription('채널 통째 비우기: 복제 후 원본 삭제 (14일 제한 없음, 채널 ID 바뀜)'),
             new SlashCommandBuilder()
                 .setName('retry')
                 .setDescription('마지막 메시지에 다시 답하기 (오류로 답이 안 왔을 때)'),
@@ -225,6 +233,14 @@ const Bot = {
         if (cmd === 'clear') {
             ChatHistory.clear(channelId);
             return interaction.reply({ content: '🧹 대화 기록을 초기화했어요.', ...eph });
+        }
+
+        if (cmd === 'purge') {
+            return this._handlePurge(interaction, channelId, eph);
+        }
+
+        if (cmd === 'nuke') {
+            return this._handleNuke(interaction, channelId, eph);
         }
 
         if (cmd === 'retry') {
@@ -418,6 +434,68 @@ const Bot = {
         const found = Sets.findByChannel(channelId);
         if (!found || found.role === 'summary') return [];
         return Sets.recentSummaries(found.set.character, 6);
+    },
+
+    // --- /purge: 디코 메시지 최근 N개 삭제 + 히스토리 동기화 ---
+    async _handlePurge(interaction, channelId, eph) {
+        const ch = interaction.channel;
+        const me = interaction.guild?.members.me;
+        if (!me || !ch?.permissionsFor(me)?.has(PermissionFlagsBits.ManageMessages)) {
+            return interaction.reply({ content: '⚠️ 봇에 "메시지 관리(Manage Messages)" 권한이 필요해요.', ...eph });
+        }
+        const n = Math.min(Math.max(interaction.options.getInteger('count') || 20, 1), 100);
+        await interaction.reply({ content: `🧹 최근 ${n}개 삭제 중...`, ...eph });
+        try {
+            const fetched = await ch.messages.fetch({ limit: n });
+            const deleted = await ch.bulkDelete(fetched, true); // true = 14일 넘은 건 건너뜀
+            let synced = 0;
+            for (const m of deleted.values()) {
+                const c = (m.content || '').trim();
+                if (c && ChatHistory.removeByContent(channelId, c)) synced++;
+            }
+            const old = n - deleted.size;
+            return interaction.editReply(`🧹 디코 ${deleted.size}개 삭제 + 기억 ${synced}개 정리 완료.${old > 0 ? `\n※ ${old}개는 14일이 지나 일괄삭제가 안 돼요 (개별 삭제만 가능).` : ''}`);
+        } catch (e) {
+            console.error('[Purge] 실패:', e);
+            return interaction.editReply(`⚠️ 실패: ${e.message}`);
+        }
+    },
+
+    // --- /nuke: 채널 복제 후 원본 삭제 (전부 비움). 매핑/세트/상태 새 채널로 이전, 기억은 초기화 ---
+    async _handleNuke(interaction, channelId, eph) {
+        const ch = interaction.channel;
+        const me = interaction.guild?.members.me;
+        if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 필요해요.', ...eph });
+        }
+        await interaction.reply({ content: '💣 채널 비우는 중... (복제 후 원본 삭제)', ...eph });
+        try {
+            const clone = await ch.clone();
+            try { await clone.setPosition(ch.position); } catch { /* 무시 */ }
+            const newId = clone.id;
+            this._migrateChannel(channelId, newId, interaction.client);
+            ChatHistory.clear(channelId); // 비우기이므로 기억도 초기화 (새 채널은 빈 상태로 시작)
+            await ch.delete('nuke').catch(() => {});
+            await clone.send('💣 채널을 깨끗하게 비웠어요.').catch(() => {});
+            return interaction.editReply(`💣 완료 → <#${newId}>`).catch(() => {});
+        } catch (e) {
+            console.error('[Nuke] 실패:', e);
+            return interaction.editReply(`⚠️ 실패: ${e.message}`).catch(() => {});
+        }
+    },
+
+    // 채널 ID가 바뀔 때(nuke) 봇 상태를 새 ID로 이전
+    _migrateChannel(oldId, newId, client) {
+        if (config.channels[oldId]) { config.channels[newId] = config.channels[oldId]; delete config.channels[oldId]; }
+        if (channelClients[oldId]) { channelClients[newId] = channelClients[oldId]; delete channelClients[oldId]; }
+        if (client) channelClients[newId] = client;
+        Modes.rename?.(oldId, newId);
+        Langs.rename?.(oldId, newId);
+        Notes.rename?.(oldId, newId);
+        Anniv.rename?.(oldId, newId);
+        Reminders.renameChannel?.(oldId, newId);
+        Sets.renameChannel?.(oldId, newId);
+        for (const k of Object.keys(webhookCache)) if (k.startsWith(`${oldId}:`)) delete webhookCache[k];
     },
 
     // --- /setup: 지금 이 챗 채널을 챗으로 두고, 롤플/요약만 새로 만들어 세트로 묶기 ---
@@ -1452,24 +1530,24 @@ const Bot = {
 
     // --- 메시지 삭제 동기화 ---
     async _onMessageDelete(message, client) {
-        if (message.author?.bot) return;
         const multi = config.botMode === 'multi';
         if (!multi && !config.channels[message.channelId]) return;
-        // 페르소나 프록시가 지운 메시지는 동기화 대상이 아님 (히스토리 유지)
+        // 페르소나 프록시가 지운 원본은 동기화 대상 아님 (재게시된 웹훅이 대체)
         if (proxiedMessageIds.has(message.id)) {
             proxiedMessageIds.delete(message.id);
             return;
         }
-        // 멀티봇: 여러 멤버봇이 같은 삭제를 보므로 1회만 처리
-        if (multi) {
-            const k = 'del:' + message.id;
-            if (intakeDone.has(k)) return;
-            intakeDone.add(k);
-            setTimeout(() => intakeDone.delete(k), 60_000);
-        }
+        // 같은 삭제를 여러 봇/이벤트가 보므로 1회만 처리
+        const k = 'del:' + message.id;
+        if (intakeDone.has(k)) return;
+        intakeDone.add(k);
+        setTimeout(() => intakeDone.delete(k), 60_000);
 
-        const removed = ChatHistory.removeLastUserMessage(message.channelId);
-        if (removed) {
+        // 내용으로 매칭해 그 메시지를 히스토리에서 제거 (유저/페르소나/캐릭터 버블 모두)
+        // 캐시 안 된 옛 메시지는 content가 없어 매칭 불가 → 조용히 스킵
+        const content = (message.content || '').trim();
+        if (!content) return;
+        if (ChatHistory.removeByContent(message.channelId, content)) {
             console.log(`[Bot] 메시지 삭제 동기화: 채널 ${message.channelId}`);
         }
     },
