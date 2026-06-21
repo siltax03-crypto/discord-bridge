@@ -249,6 +249,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const distanceInstruction =
             `- You and ${userName} are physically far apart, texting from a distance. You are NOT together in person. Do NOT do in-person actions (no kissing/touching/hugging right now). References to the future or to when you meet are fine (e.g. "집에 가면 뽀뽀해줘").`;
 
+        // 만남 예약: 곧 직접 만나기로 하면 그 시간 뒤 롤플 채널에서 만남 장면이 시작됨
+        const meetInstruction =
+            `- If you two agree to meet IN PERSON soon (they say they're coming over / on their way / "I'll be there in N minutes", or you decide to head to them), append [MEET: <minutes> | what is about to happen when you meet] at the very END. When that time passes, your in-person meeting will automatically begin as a roleplay scene. Use realistic minutes. ONLY when an in-person meetup is actually agreed; never make the tag your whole message.`;
+
         // 리얼타임: 이전 메시지로부터 시간이 흐름
         const timeGapInstruction = timeGapText
             ? `- About ${timeGapText} have passed since the previous message. Real time has moved on in your life — do NOT seamlessly continue the earlier topic as if no time passed. React to the time gap naturally (what you've been doing, the changed mood/time of day). To bring back an earlier topic, reference it explicitly (e.g. "아까 얘기하던 거"). This is a place where you actually live your life.`
@@ -294,6 +298,7 @@ ${remindInstruction}${proactiveLines}`);
 - Respond naturally as if texting a real person on Discord.
 - Write like real texting: keep it short. Break your reply into 1-3 short messages, each separated by a BLANK LINE (they become separate chat bubbles). Never write one long paragraph.
 ${distanceInstruction}
+${meetInstruction}
 ${langInstruction}
 ${slangInstruction}
 ${antiRepeat}
