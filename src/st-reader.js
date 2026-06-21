@@ -185,6 +185,20 @@ const STReader = {
         return '';
     },
 
+    // ST에서 현재 선택/기본 페르소나 이름 (단톡처럼 연결 캐릭터가 없을 때 폴백용)
+    // power_user.default_persona(잠금 기본) → settings.user_avatar(현재 선택) 순서로 아바타→이름 변환
+    getDefaultPersonaName() {
+        const settings = this.getSettings();
+        const pu = settings.power_user || {};
+        const personas = pu.personas || {};
+        const avatar = pu.default_persona || settings.user_avatar;
+        if (avatar && personas[avatar]) return personas[avatar];
+        // default가 없으면 페르소나가 단 하나일 때 그걸 사용
+        const names = Object.values(personas);
+        if (names.length === 1) return names[0];
+        return '';
+    },
+
     // 이름으로 특정 페르소나 설명 조회 (채널별 페르소나용)
     // ST 구조: power_user.personas = { [avatar]: name }, power_user.persona_descriptions = { [avatar]: { description } }
     getPersonaByName(name) {

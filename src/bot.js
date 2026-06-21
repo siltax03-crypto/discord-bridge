@@ -1,13 +1,16 @@
-import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType } from 'discord.js';
+import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType, ChannelType, PermissionFlagsBits } from 'discord.js';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
 import ChatHistory from './chat-history.js';
 import ImageGen from './image-gen.js';
 import Modes from './modes.js';
+import Langs from './langs.js';
 import Reminders from './reminders.js';
 import Notes from './notes.js';
+import Anniv from './anniversaries.js';
 import Away from './away.js';
+import Sets from './sets.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -25,6 +28,9 @@ const characterCache = {};
 const proxiedMessageIds = new Set();
 // 채널별 "답 없으면 재촉" 타이머 (유저가 답하면 취소)
 const followupTimers = {};
+// 세트별 "만남 예약" 타이머/정보: { rpChannelId: timer }, { rpChannelId: {fireAt, note, character} }
+const meetTimers = {};
+const meetInfo = {};
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
@@ -36,6 +42,9 @@ const intakeDone = new Set();
 const Bot = {
     async start(cfg) {
         config = cfg;
+
+        // /setup 으로 만든 세트(데이터 파일)를 채널 매핑에 병합 (config.json은 플러그인 소유라 안 건드림)
+        this._mergeSets();
 
         if (cfg.botMode === 'multi') {
             // 멀티봇: 멤버(캐릭터)마다 봇 1개. 채널 지정 없음 — 봇이 초대된 채널 어디서든 그 캐릭터로 동작.
@@ -90,6 +99,7 @@ const Bot = {
             client.on(Events.MessageCreate, (message) => this._onMessage(message, client));
             client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
             client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
+            client.on(Events.ChannelDelete, (ch) => this._onChannelDelete(ch));
         } else {
             // 페르소나 전담봇: 웹훅 단톡(토큰 없는 멤버만 있는 채널)에선 이 봇이 메시지를 받아 그룹 처리
             client.on(Events.MessageCreate, (message) => this._onPersonaMessage(message));
@@ -104,6 +114,11 @@ const Bot = {
     async _registerCommands(client) {
         const commands = [
             new SlashCommandBuilder()
+                .setName('setup')
+                .setDescription('지금 이 챗 채널을 기준으로 롤플/요약 채널을 만들어 세트로 묶기')
+                .addStringOption((o) =>
+                    o.setName('character').setDescription('캐릭터 카드 이름 (비우면 이 채널에 연결된 캐릭터 사용)').setRequired(false)),
+            new SlashCommandBuilder()
                 .setName('mode')
                 .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
                 .addStringOption((o) =>
@@ -117,8 +132,25 @@ const Bot = {
                         ),
                 ),
             new SlashCommandBuilder()
+                .setName('nsfw')
+                .setDescription('이 채널 연령제한(NSFW) 켜기/끄기'),
+            new SlashCommandBuilder()
+                .setName('lang')
+                .setDescription('이 채널 응답 언어 (한국어 ↔ English)')
+                .addStringOption((o) =>
+                    o.setName('lang').setDescription('ko = 한국어, en = English').setRequired(true)
+                        .addChoices({ name: '한국어 (ko)', value: 'ko' }, { name: 'English (en)', value: 'en' })),
+            new SlashCommandBuilder()
                 .setName('clear')
-                .setDescription('이 채널의 대화 기록 초기화'),
+                .setDescription('이 채널의 대화 기록 초기화 (봇 기억만)'),
+            new SlashCommandBuilder()
+                .setName('purge')
+                .setDescription('디코 메시지 최근 N개 삭제 + 봇 기억에서도 제거 (14일 이내만)')
+                .addIntegerOption((o) =>
+                    o.setName('count').setDescription('지울 개수 (1~100, 기본 20)').setRequired(false)),
+            new SlashCommandBuilder()
+                .setName('nuke')
+                .setDescription('채널 통째 비우기: 복제 후 원본 삭제 (14일 제한 없음, 채널 ID 바뀜)'),
             new SlashCommandBuilder()
                 .setName('retry')
                 .setDescription('마지막 메시지에 다시 답하기 (오류로 답이 안 왔을 때)'),
@@ -133,6 +165,19 @@ const Bot = {
                     s.setName('del').setDescription('노트 삭제').addIntegerOption((o) =>
                         o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true)))
                 .addSubcommand((s) => s.setName('clear').setDescription('노트 전체 삭제')),
+            new SlashCommandBuilder()
+                .setName('anniv')
+                .setDescription('기념일/D-day 관리 (사귄 날·생일 등 — 캐릭터가 챙김)')
+                .addSubcommand((s) =>
+                    s.setName('add').setDescription('기념일 추가')
+                        .addStringOption((o) => o.setName('label').setDescription('이름 예: 사귄 날, 생일').setRequired(true))
+                        .addStringOption((o) => o.setName('date').setDescription('날짜 YYYY-MM-DD').setRequired(true))
+                        .addStringOption((o) => o.setName('type').setDescription('since=그날부터 D+N / yearly=매년반복')
+                            .addChoices({ name: 'D-day 카운트 (사귄날·만난날)', value: 'since' }, { name: '매년 반복 (생일·기념일)', value: 'yearly' })))
+                .addSubcommand((s) => s.setName('list').setDescription('기념일 목록/현황 보기'))
+                .addSubcommand((s) =>
+                    s.setName('del').setDescription('기념일 삭제').addIntegerOption((o) =>
+                        o.setName('index').setDescription('목록 번호 (1부터)').setRequired(true))),
             new SlashCommandBuilder()
                 .setName('info')
                 .setDescription('이 채널에 주입되는 정보 보기 (캐릭터/페르소나/메모리 등)'),
@@ -166,24 +211,55 @@ const Bot = {
         if (!interaction.isChatInputCommand()) return;
         const channelId = interaction.channelId;
         const eph = { flags: MessageFlags.Ephemeral };
+        const cmd = interaction.commandName;
+
+        // /setup 은 아직 매핑 안 된 채널에서도 실행 가능 (세트를 만드는 명령이므로)
+        if (cmd === 'setup') {
+            return this._handleSetup(interaction);
+        }
 
         // 단일봇만 채널 매핑 검사 (멀티봇은 봇 초대된 채널 어디서나 동작)
         if (config.botMode !== 'multi' && !config.channels[channelId]) {
             return interaction.reply({ content: '이 채널은 캐릭터와 매핑돼 있지 않아요.', ...eph });
         }
 
-        const cmd = interaction.commandName;
-
         if (cmd === 'mode') {
-            const type = interaction.options.getString('type');
-            Modes.set(channelId, type);
-            const label = type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드';
-            return interaction.reply({ content: `${label}로 전환했어요.`, ...eph });
+            return this._handleModeSwitch(interaction, channelId, eph);
+        }
+
+        if (cmd === 'nsfw') {
+            const ch = interaction.channel;
+            const me = interaction.guild?.members.me;
+            if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+                return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 필요해요. (또는 채널 편집 → 연령 제한 채널 토글로 직접 켜도 돼요)', ...eph });
+            }
+            try {
+                const next = !ch.nsfw;
+                await ch.setNSFW(next);
+                return interaction.reply({ content: next ? '🔞 이 채널을 연령제한(NSFW)으로 켰어요.' : '이 채널 연령제한을 껐어요.', ...eph });
+            } catch (e) {
+                return interaction.reply({ content: `⚠️ 실패: ${e.message}`, ...eph });
+            }
+        }
+
+        if (cmd === 'lang') {
+            const lang = interaction.options.getString('lang');
+            Langs.set(channelId, lang);
+            const label = lang === 'en' ? '🇺🇸 English' : '🇰🇷 한국어';
+            return interaction.reply({ content: `${label}(으)로 전환했어요. 다음 답변부터 바로 적용돼요.`, ...eph });
         }
 
         if (cmd === 'clear') {
             ChatHistory.clear(channelId);
             return interaction.reply({ content: '🧹 대화 기록을 초기화했어요.', ...eph });
+        }
+
+        if (cmd === 'purge') {
+            return this._handlePurge(interaction, channelId, eph);
+        }
+
+        if (cmd === 'nuke') {
+            return this._handleNuke(interaction, channelId, eph);
         }
 
         if (cmd === 'retry') {
@@ -224,6 +300,33 @@ const Bot = {
             }
         }
 
+        if (cmd === 'anniv') {
+            const sub = interaction.options.getSubcommand();
+            const tz = config.timezone || 'Asia/Seoul';
+            if (sub === 'add') {
+                const label = interaction.options.getString('label');
+                const date = interaction.options.getString('date');
+                const type = interaction.options.getString('type') || 'since';
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                    return interaction.reply({ content: '⚠️ 날짜는 YYYY-MM-DD 형식으로 적어주세요. 예: 2025-03-14', ...eph });
+                }
+                Anniv.add(channelId, label, date, type);
+                return interaction.reply({ content: `💝 "${label}" (${date}, ${type === 'yearly' ? '매년 반복' : 'D-day'}) 등록했어요. 캐릭터가 이제 챙길 거예요.`, ...eph });
+            }
+            if (sub === 'list') {
+                const st = Anniv.status(channelId, tz);
+                const body = st.length
+                    ? st.map((a, i) => `${i + 1}. ${a.text}`).join('\n')
+                    : '(등록된 기념일 없음 — /anniv add 로 추가)';
+                return interaction.reply({ content: `💝 기념일/D-day\n${body}`, ...eph });
+            }
+            if (sub === 'del') {
+                const idx = interaction.options.getInteger('index');
+                const ok = Anniv.remove(channelId, idx - 1);
+                return interaction.reply({ content: ok ? `🗑 ${idx}번 기념일을 삭제했어요.` : '⚠️ 그 번호의 기념일이 없어요.', ...eph });
+            }
+        }
+
         if (cmd === 'info') {
             const character = this._getCharacter(channelId);
             if (!character) return interaction.reply({ content: '⚠️ 캐릭터 로드 실패', ...eph });
@@ -242,19 +345,39 @@ const Bot = {
             const charm = STReader.getCharmMemory(charId);
             const charmCount = charm?.memories?.length || 0;
 
+            // 세트/만남 예약 정보
+            const setFound = Sets.findByChannel(channelId);
+            let setLine = '';
+            let meetLine = '';
+            if (setFound) {
+                const s = setFound.set;
+                setLine = `• 세트(${setFound.role}): 💬<#${s.chat}> 🎭<#${s.rp}> 📝<#${s.summary}>`;
+                const mi = meetInfo[s.rp];
+                if (mi) {
+                    const left = Math.max(0, Math.round((mi.fireAt - Date.now()) / 60000));
+                    meetLine = `• 만남 예약: 🚪 ${left}분 후 롤플 채널에서 시작${mi.note ? ` (${mi.note})` : ''}`;
+                } else {
+                    meetLine = '• 만남 예약: 없음';
+                }
+            }
+
             const lines = [
                 '**📋 채널 주입 정보**',
                 `• 캐릭터: ${charName} (설명 ${descLen}자)`,
                 `• 페르소나: ${personaName || '(기본)'} ${personaText ? `(${personaText.length}자)` : '(없음)'}`,
                 `• 모드: ${mode === 'rp' ? '🎭 롤플' : '💬 채팅'}`,
+                `• 언어: ${Langs.get(channelId, config.language || 'ko') === 'en' ? '🇺🇸 English' : '🇰🇷 한국어'}`,
                 `• 로어북: 캐릭터북 ${charBook}개 + 월드"${worldName || '-'}" ${worldEntries}개`,
                 `• CHARM 메모리: ${charmCount}개`,
                 `• 작가노트: ${Notes.list(channelId).length}개`,
+                `• 기념일: ${Anniv.list(channelId).length}개`,
                 `• 리마인더: ${Reminders.listForChannel(channelId).length}개`,
                 `• 상태: ${Away.isAway(channelId) ? '🔇 잠수 중 (응답 안 함)' : '🟢 응답 중'}`,
                 `• 프로필: ${AIClient.getProfile()?.name || '?'}`,
                 `• 프리셋: ${AIClient.getProfile()?.preset || '없음'} ${mode === 'rp' ? '(RP 주입중)' : '(채팅 모드라 미주입)'}`,
-            ];
+                setLine,
+                meetLine,
+            ].filter(Boolean);
             return interaction.reply({ content: lines.join('\n'), ...eph });
         }
 
@@ -316,13 +439,290 @@ const Bot = {
     },
 
     // --- 이름별 웹훅 가져오기/생성 (캐릭터·페르소나 공용) ---
+    // --- 세트(카테고리+3채널) 매핑을 채널 설정에 병합 ---
+    _mergeSets() {
+        config.channels = config.channels || {};
+        for (const s of Sets.list()) {
+            if (s.chat && !config.channels[s.chat]) config.channels[s.chat] = { character: s.character };
+            if (s.rp && !config.channels[s.rp]) config.channels[s.rp] = { character: s.character };
+            if (s.summary) config.channels[s.summary] = { character: s.character, summaryOnly: true };
+            if (s.chat) Modes.set(s.chat, 'chat');
+            if (s.rp) Modes.set(s.rp, 'rp');
+        }
+    },
+
+    // 채널이 디코에서 삭제되면 세트/매핑 정리 (다음 /setup이 깨끗하게 다시 만들 수 있게)
+    _onChannelDelete(ch) {
+        const id = ch?.id;
+        if (!id) return;
+        const found = Sets.findByChannel(id);
+        if (found) {
+            const s = found.set;
+            for (const cid of [s.chat, s.rp, s.summary]) if (cid) delete config.channels[cid];
+            Sets.remove(s);
+            console.log(`[Bot] 채널 삭제 감지 → "${s.character}" 세트 정리`);
+        } else if (config.channels[id]) {
+            delete config.channels[id];
+        }
+    },
+
+    // 이 채널이 세트의 chat/rp면, 반대편에서 넘어온 요약을 주입용으로 반환
+    _crossSummariesFor(channelId) {
+        const found = Sets.findByChannel(channelId);
+        if (!found || found.role === 'summary') return [];
+        return Sets.recentSummaries(found.set.character, 6);
+    },
+
+    // 반대편 채널의 최근 원본 대화 꼬리 (챗→롤플: 챗 10개 / 롤플→챗: 롤플 3개)
+    _crossRecentFor(channelId) {
+        const found = Sets.findByChannel(channelId);
+        if (!found || found.role === 'summary') return null;
+        const otherId = found.role === 'rp' ? found.set.chat : found.set.rp;
+        const from = found.role === 'rp' ? 'chat' : 'rp';
+        const n = found.role === 'rp' ? 10 : 3; // 롤플에 있을 땐 챗 10개, 챗에 있을 땐 롤플 3개
+        const msgs = ChatHistory.getMessages(otherId, n);
+        if (!msgs.length) return null;
+        const lines = msgs.map((m) => `${m.role === 'user' ? 'User' : (m.author || 'Character')}: ${typeof m.content === 'string' ? m.content : ''}`);
+        return { from, lines };
+    },
+
+    // --- /purge: 디코 메시지 최근 N개 삭제 + 히스토리 동기화 ---
+    async _handlePurge(interaction, channelId, eph) {
+        const ch = interaction.channel;
+        const me = interaction.guild?.members.me;
+        if (!me || !ch?.permissionsFor(me)?.has(PermissionFlagsBits.ManageMessages)) {
+            return interaction.reply({ content: '⚠️ 봇에 "메시지 관리(Manage Messages)" 권한이 필요해요.', ...eph });
+        }
+        const n = Math.min(Math.max(interaction.options.getInteger('count') || 20, 1), 100);
+        await interaction.reply({ content: `🧹 최근 ${n}개 삭제 중...`, ...eph });
+        try {
+            const fetched = await ch.messages.fetch({ limit: n });
+            const deleted = await ch.bulkDelete(fetched, true); // true = 14일 넘은 건 건너뜀
+            let synced = 0;
+            for (const m of deleted.values()) {
+                const c = (m.content || '').trim();
+                if (c && ChatHistory.removeByContent(channelId, c)) synced++;
+            }
+            const old = n - deleted.size;
+            return interaction.editReply(`🧹 디코 ${deleted.size}개 삭제 + 기억 ${synced}개 정리 완료.${old > 0 ? `\n※ ${old}개는 14일이 지나 일괄삭제가 안 돼요 (개별 삭제만 가능).` : ''}`);
+        } catch (e) {
+            console.error('[Purge] 실패:', e);
+            return interaction.editReply(`⚠️ 실패: ${e.message}`);
+        }
+    },
+
+    // --- /nuke: 채널 복제 후 원본 삭제 (전부 비움). 매핑/세트/상태 새 채널로 이전, 기억은 초기화 ---
+    async _handleNuke(interaction, channelId, eph) {
+        const ch = interaction.channel;
+        const me = interaction.guild?.members.me;
+        if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 필요해요.', ...eph });
+        }
+        await interaction.reply({ content: '💣 채널 비우는 중... (복제 후 원본 삭제)', ...eph });
+        try {
+            const clone = await ch.clone();
+            try { await clone.setPosition(ch.position); } catch { /* 무시 */ }
+            const newId = clone.id;
+            this._migrateChannel(channelId, newId, interaction.client);
+            ChatHistory.clear(channelId); // 비우기이므로 기억도 초기화 (새 채널은 빈 상태로 시작)
+            await ch.delete('nuke').catch(() => {});
+            await clone.send('💣 채널을 깨끗하게 비웠어요.').catch(() => {});
+            return interaction.editReply(`💣 완료 → <#${newId}>`).catch(() => {});
+        } catch (e) {
+            console.error('[Nuke] 실패:', e);
+            return interaction.editReply(`⚠️ 실패: ${e.message}`).catch(() => {});
+        }
+    },
+
+    // 채널 ID가 바뀔 때(nuke) 봇 상태를 새 ID로 이전
+    _migrateChannel(oldId, newId, client) {
+        if (config.channels[oldId]) { config.channels[newId] = config.channels[oldId]; delete config.channels[oldId]; }
+        if (channelClients[oldId]) { channelClients[newId] = channelClients[oldId]; delete channelClients[oldId]; }
+        if (client) channelClients[newId] = client;
+        Modes.rename?.(oldId, newId);
+        Langs.rename?.(oldId, newId);
+        Notes.rename?.(oldId, newId);
+        Anniv.rename?.(oldId, newId);
+        Reminders.renameChannel?.(oldId, newId);
+        Sets.renameChannel?.(oldId, newId);
+        for (const k of Object.keys(webhookCache)) if (k.startsWith(`${oldId}:`)) delete webhookCache[k];
+    },
+
+    // --- /setup: 지금 이 챗 채널을 챗으로 두고, 롤플/요약만 새로 만들어 세트로 묶기 ---
+    async _handleSetup(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const guild = interaction.guild;
+        if (!guild) return interaction.reply({ content: '서버 채널 안에서 실행해주세요.', ...eph });
+
+        const chatId = interaction.channelId;
+        // 캐릭터: 옵션 우선, 없으면 이 채널에 연결된 캐릭터
+        const charName = ((interaction.options.getString('character') || config.channels[chatId]?.character) || '').trim();
+        if (!charName) {
+            return interaction.reply({ content: '⚠️ 이 채널에 연결된 캐릭터가 없어요. character 옵션에 캐릭터 이름을 적거나, ST 확장에서 이 채널을 캐릭터에 연결한 뒤 다시 실행하세요.', ...eph });
+        }
+        const card = this._loadCharacterByName(charName);
+        if (!card) return interaction.reply({ content: `⚠️ "${charName}" 캐릭터 카드를 못 찾았어요. ST 캐릭터 이름 그대로 적어주세요.`, ...eph });
+
+        // 채널이 아직 살아있는지 확인 (유저가 디코에서 지웠을 수 있음)
+        const alive = async (id) => !!(id && await guild.channels.fetch(id).catch(() => null));
+
+        // 이 채널 또는 캐릭터로 기존 세트가 있으면: 채널이 다 살아있으면 막고, 하나라도 죽었으면 정리 후 재생성
+        const existing = Sets.findByChannel(chatId)?.set || Sets.findByCharacter(charName);
+        if (existing) {
+            const [c, r, s] = await Promise.all([alive(existing.chat), alive(existing.rp), alive(existing.summary)]);
+            if (c && r && s) {
+                return interaction.reply({ content: `이미 "${existing.character}" 세트가 있어요:\n💬 <#${existing.chat}>  🎭 <#${existing.rp}>  📝 <#${existing.summary}>`, ...eph });
+            }
+            // 깨진 세트 정리 (삭제된 채널 매핑도 제거)
+            for (const id of [existing.chat, existing.rp, existing.summary]) {
+                if (id && id !== chatId) delete config.channels[id];
+            }
+            Sets.remove(existing);
+            console.log(`[Setup] 깨진 세트 정리: ${existing.character}`);
+        }
+
+        const me = guild.members.me;
+        if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+            return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 없어요. 서버 설정 → 역할에서 켜주세요.', ...eph });
+        }
+
+        await interaction.reply({ content: '🔧 롤플/요약 채널 만드는 중...', ...eph });
+        try {
+            const everyone = guild.roles.everyone.id;
+            // 비공개(나+봇만): 롤플/요약 채널
+            const priv = [
+                { id: everyone, deny: [PermissionFlagsBits.ViewChannel] },
+                { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                { id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageWebhooks] },
+            ];
+
+            const category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
+            // 기존 챗 채널을 카테고리 안으로 이동 (같은 채널·ST연결·히스토리 그대로, 보기만 정리)
+            try { await interaction.channel.setParent(category.id, { lockPermissions: false }); } catch (e) { console.warn('[Setup] 챗 채널 이동 실패(무시):', e.message); }
+            const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+            const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+
+            config.channels = config.channels || {};
+            config.channels[chatId] = { ...(config.channels[chatId] || {}), character: charName };
+            config.channels[rp.id] = { character: charName };
+            config.channels[summary.id] = { character: charName, summaryOnly: true };
+            channelClients[rp.id] = channelClients[summary.id] = interaction.client;
+            Modes.set(chatId, 'chat');
+            Modes.set(rp.id, 'rp');
+            Sets.add({ character: charName, guildId: guild.id, categoryId: category.id, chat: chatId, rp: rp.id, summary: summary.id });
+
+            await summary.send(`📝 **${charName} 요약**\n챗↔롤플 전환 때마다 무슨 얘기를 했는지 자동 기록돼요.`).catch(() => {});
+            await rp.send('🎭 롤플 채널이에요. 채팅으로 돌아가려면 `/mode chat`').catch(() => {});
+
+            return interaction.editReply(`✅ "${charName}" 세트 완료! (챗은 기존 <#${chatId}> 그대로)\n💬 <#${chatId}>  🎭 <#${rp.id}> (비공개·🔞)  📝 <#${summary.id}> (비공개·🔞)`);
+        } catch (e) {
+            console.error('[Setup] 실패:', e);
+            return interaction.editReply(`⚠️ 생성 실패: ${e.message}`);
+        }
+    },
+
+    // --- /mode: 세트면 채널 이동(요약 기록 후 점프 링크), 아니면 기존처럼 같은 채널 모드 토글 ---
+    async _handleModeSwitch(interaction, channelId, eph) {
+        const type = interaction.options.getString('type');
+        const found = Sets.findByChannel(channelId);
+
+        // 세트가 아니면: 기존 동작 (같은 채널 모드 플래그)
+        if (!found) {
+            Modes.set(channelId, type);
+            return interaction.reply({ content: `${type === 'rp' ? '🎭 롤플 모드' : '💬 채팅 모드'}로 전환했어요.`, ...eph });
+        }
+
+        const { set } = found;
+        const target = type === 'rp' ? set.rp : set.chat;
+        const fromId = type === 'rp' ? set.chat : set.rp;   // 떠나는 채널
+
+        if (channelId === target) {
+            return interaction.reply({ content: `이미 ${type === 'rp' ? '🎭 롤플' : '💬 챗'} 채널이에요. → <#${target}>`, ...eph });
+        }
+
+        // 내가 직접 롤플로 전환 = 지금 바로 만남 시작. _startRpScene이 챗 요약→주입까지 함.
+        if (type === 'rp') {
+            await interaction.reply({ content: '🎭 만남 시작 중 (직전 대화 정리)...', ...eph });
+            try { await this._startRpScene(set, '', { notifyChat: false }); } catch (e) { console.warn('[Mode] 장면 시작 실패:', e.message); }
+            return interaction.editReply(`🎭 롤플 시작! → <#${set.rp}>\n📝 직전 챗은 <#${set.summary}>에 요약해뒀어요.`);
+        }
+
+        // 롤플 → 챗: 떠나는 롤플 대화를 요약해 챗 맥락으로
+        await interaction.reply({ content: '🔄 전환 중 (요약 정리)...', ...eph });
+        try { await this._summarizeChannel(set, fromId, 'rp→chat', interaction.client); } catch (e) { console.warn('[Mode] 요약 실패:', e.message); }
+        return interaction.editReply(`💬 챗으로 이동! → <#${set.chat}>\n📝 직전 롤플은 <#${set.summary}>에 요약해뒀어요.`);
+    },
+
+    // --- 채널 최근 대화를 짧게 요약 → 요약채널 게시 + Sets에 저장 ---
+    async _summarizeChannel(set, channelId, dir, client) {
+        const history = ChatHistory.toAPIMessages(channelId, 30);
+        if (!history.length) { console.warn(`[Summary] 히스토리 비어 요약 생략 (채널 ${channelId})`); return; }
+        const convo = history.map((m) => `${m.role === 'user' ? 'User' : 'Character'}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n').slice(-4000);
+        // 영어(주입용) + 한국어(요약채널 표시용) 둘 다 받는다
+        const sys = 'Summarize the following chat log so another channel knows what was discussed / what happened. Output EXACTLY two lines, no preface, no extra text:\nEN: <1-2 sentence summary in English>\nKO: <the same summary in Korean>';
+        let raw = '';
+        try {
+            // thinking 모델은 토큰을 생각에 먼저 쓰므로 본문 여유분을 넉넉히 (300이면 빈 응답 남)
+            raw = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: convo }], { maxTokens: 2048 });
+        } catch (e) { console.warn('[Summary] 생성 오류:', e.message); }
+        raw = (raw || '').trim();
+        if (!raw) { console.warn(`[Summary] 빈 요약 — 게시 생략 (채널 ${channelId})`); return; }
+
+        // EN/KO 파싱 (형식 안 지켜졌으면 전체를 영어로 간주, 한국어는 영어로 폴백)
+        const en = (raw.match(/EN:\s*(.+)/i)?.[1] || raw).trim();
+        const ko = (raw.match(/KO:\s*(.+)/i)?.[1] || en).trim();
+
+        const dateStr = new Intl.DateTimeFormat('ko-KR', { timeZone: config.timezone || 'Asia/Seoul', month: 'long', day: 'numeric' }).format(new Date());
+        const arrow = dir === 'chat→rp' ? '💬→🎭' : '🎭→💬';
+        Sets.addSummary(set.character, dir, en); // 주입용은 영어
+
+        try {
+            const ch = await client.channels.fetch(set.summary).catch(() => null);
+            if (ch) await ch.send(`**${dateStr}** ${arrow}\n${ko}`); // 채널 표시는 한국어
+        } catch { /* 무시 */ }
+    },
+
+    // http(s) 직접 이미지 URL만 아바타로 허용 (imgur 페이지 링크 등 잘못된 값이 들어오면 전송 전체가 실패함)
+    _safeAvatarUrl(url) {
+        if (!url || typeof url !== 'string') return undefined;
+        const u = url.trim();
+        if (!/^https?:\/\//i.test(u)) return undefined;
+        return u;
+    },
+
+    // 단톡 한 인물의 대사를 웹훅(이름+아바타)으로 전송. 실패하면 아바타 빼고 재시도, 그래도 안 되면 일반 메시지로 폴백.
+    async _groupSendVia(channel, name, parts, avatarUrl) {
+        const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), null);
+        const avatarURL = this._safeAvatarUrl(avatarUrl);
+        for (const part of parts) {
+            if (hook) {
+                try {
+                    await hook.send({ content: part, username: name, avatarURL });
+                    continue;
+                } catch (e1) {
+                    // 아바타 URL이 원인일 수 있으니 아바타 빼고 한 번 더
+                    try {
+                        await hook.send({ content: part, username: name });
+                        continue;
+                    } catch (e2) {
+                        delete webhookCache[`${channel.id}:${`grp-${name}`.slice(0, 80)}`];
+                        console.warn(`[Group] 웹훅 전송 실패(${name}) → 일반 메시지로 폴백:`, e2.message);
+                    }
+                }
+            }
+            // 폴백: 그냥 채널에 이름 붙여 전송 (최소한 단톡은 굴러가게)
+            await channel.send(`**${name}**: ${part}`).catch((e) => console.warn(`[Group] 폴백도 실패(${name}):`, e.message));
+        }
+    },
+
     async _getNamedWebhook(channel, hookName, avatarPath) {
         const key = `${channel.id}:${hookName}`;
         if (webhookCache[key]) return webhookCache[key];
 
         try {
             const webhooks = await channel.fetchWebhooks();
-            let webhook = webhooks.find(wh => wh.name === hookName);
+            // 이름이 같아도 토큰이 없는 웹훅(다른 앱/UI가 만든 것)은 .send() 불가 → 무시하고 새로 만든다
+            let webhook = webhooks.find(wh => wh.name === hookName && wh.token);
 
             if (!webhook) {
                 const opts = { name: hookName };
@@ -334,7 +734,7 @@ const Bot = {
             webhookCache[key] = webhook;
             return webhook;
         } catch (e) {
-            console.error(`[Bot] 웹훅 생성 실패:`, e.message);
+            console.error(`[Bot] 웹훅 생성 실패(#${channel?.name} ${hookName}):`, e.message);
             return null;
         }
     },
@@ -396,8 +796,11 @@ const Bot = {
         const manual = config.channels[channelId]?.persona;
         if (manual) return manual;
         const character = this._getCharacter(channelId);
-        if (!character) return '';
-        return STReader.getConnectedPersonaName(character) || '';
+        // 개별 채널: 연결된 페르소나 자동 탐색. 단톡(시트)엔 단일 캐릭터가 없으니 건너뜀.
+        const connected = character ? STReader.getConnectedPersonaName(character) : '';
+        if (connected) return connected;
+        // 폴백: ST 기본/현재 페르소나 (단톡이 직접 지정 안 했을 때도 내 얼굴로 프록시되게)
+        return STReader.getDefaultPersonaName() || '';
     },
 
     // --- 캐릭터 데이터 캐시 (5분마다 갱신). 카드명으로 로드 ---
@@ -472,6 +875,7 @@ const Bot = {
         } else {
             const chCfg = config.channels[message.channelId];
             if (!chCfg) return;
+            if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
             // 단체 채널(group)이면 → 웹훅 단톡 (API 1번 → 인물별 웹훅 분배)
             if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
                 const gkey = 'grp:' + message.id;
@@ -565,19 +969,39 @@ const Bot = {
 
     // --- 단일봇 단체 채널: API 1번 호출 → 인물별 웹훅(이름+아바타URL)으로 분배 ---
     // chCfg = { group:true, sheet, persona, members:[{name, avatarUrl}] }
-    async _handleSingleGroup(message, chCfg) {
-        const channelId = message.channelId;
-        const channel = message.channel;
-        const userName = message.author?.displayName || message.author?.username || 'User';
+    // message 없으면(선톡): opts.channelId + opts.seedNote 로 등장인물끼리 먼저 수다 시작
+    async _handleSingleGroup(message, chCfg, opts = {}) {
+        const channelId = message ? message.channelId : opts.channelId;
+        if (!channelId) return;
+        let channel = message ? message.channel : null;
+        if (!channel) {
+            const owner = channelClients[channelId] || primaryClient;
+            channel = owner && await owner.channels.fetch(channelId).catch(() => null);
+        }
+        if (!channel) return;
+        const seedNote = opts.seedNote || null;
+        const userName = message ? (message.author?.displayName || message.author?.username || 'User') : 'User';
 
         // 시트 카드 로드 (단체 시트 본문)
         const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
         if (!sheetCard) { console.error('[Group] 시트 카드 로드 실패:', chCfg.sheet); return; }
 
-        // 유저 메시지 저장 + 페르소나 프록시
-        const personaName = chCfg.persona || '';
-        ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
-        if (personaName) { await this._proxyUserMessage(message, personaName).catch(() => {}); }
+        // 유저 메시지 저장 + 페르소나 프록시 (선톡이면 유저 메시지 없음 → 생략)
+        if (message) {
+            // 우선순위: 단톡 행 수동 지정 → 시트 카드에 ST 연결된 페르소나 → ST 기본 페르소나
+            const personaName = chCfg.persona
+                || STReader.getConnectedPersonaName(sheetCard)
+                || STReader.getDefaultPersonaName();
+            ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
+            if (personaName) {
+                const proxied = await this._proxyUserMessage(message, personaName).catch((e) => {
+                    console.warn('[Group] 페르소나 프록시 실패:', e.message); return null;
+                });
+                if (!proxied) console.warn(`[Group] 페르소나 프록시 안 됨 (persona="${personaName}") — 웹훅 권한/페르소나 확인`);
+            } else {
+                console.warn(`[Group] 페르소나 미설정 (채널 ${channelId})`);
+            }
+        }
         if (Away.isAway(channelId)) return;
 
         const roster = chCfg.members.map((m) => m.name).filter(Boolean);
@@ -586,12 +1010,14 @@ const Bot = {
 
         const sys = ContextBuilder.buildGroup(sheetCard, {
             roster,
-            language: config.language || 'ko',
+            language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
+            seedNote,
         });
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
+        if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
@@ -606,15 +1032,10 @@ const Bot = {
             const mem = chCfg.members.find((m) => m.name === name)
                 || chCfg.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
             if (!mem) continue;
-            const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), null);
-            if (!hook) { console.warn(`[Group] 웹훅 없음(${name})`); continue; }
-            try {
-                await channel.sendTyping().catch(() => {});
-                await delay(700 + Math.min(text.length * 18, 2200));
-                for (const part of text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)) {
-                    await hook.send({ content: part, username: name, avatarURL: mem.avatarUrl || undefined });
-                }
-            } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
+            const parts = text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+            await channel.sendTyping().catch(() => {});
+            await delay(700 + Math.min(text.length * 18, 2200));
+            await this._groupSendVia(channel, name, parts, mem.avatarUrl);
         }
     },
 
@@ -649,7 +1070,7 @@ const Bot = {
         // 단톡 전용 시스템 프롬프트
         const sys = ContextBuilder.buildGroup(baseChar, {
             roster,
-            language: config.language || 'ko',
+            language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
             seedNote,
@@ -657,7 +1078,7 @@ const Bot = {
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
-        if (seedNote) messages.push({ role: 'user', content: `(상황: ${seedNote} — 등장인물들끼리 자연스럽게 단톡을 시작해.)` });
+        if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start the group chat among themselves.)` });
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
@@ -695,13 +1116,9 @@ const Bot = {
                     const sender = personaClient || primaryClient;
                     const ch = sender && await sender.channels.fetch(channelId).catch(() => null);
                     if (!ch) continue;
-                    const hook = await this._getNamedWebhook(ch, `grp-${name}`.slice(0, 80), null);
-                    if (!hook) { console.warn(`[Group] 웹훅 없음(${name})`); continue; }
                     await ch.sendTyping().catch(() => {});
                     await delay(700 + Math.min(text.length * 18, 2200));
-                    for (const part of parts) {
-                        await hook.send({ content: part, username: name, avatarURL: mem.avatarUrl || undefined });
-                    }
+                    await this._groupSendVia(ch, name, parts, mem.avatarUrl);
                 }
             } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
         }
@@ -871,11 +1288,14 @@ const Bot = {
 
         const systemPrompt = ContextBuilder.build(character, {
             userName: effUserName,
-            language: config.language || 'ko',
+            language: Langs.get(channelId, config.language || 'ko'),
             mode,
             chatSlang: config.chatSlang !== false,
             timezone: config.timezone || 'Asia/Seoul',
             notes: Notes.list(channelId),
+            annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+            crossSummaries: this._crossSummariesFor(channelId),
+            crossRecent: this._crossRecentFor(channelId),
             personaText,
             presetText,
             timeGapText,
@@ -896,11 +1316,11 @@ const Bot = {
             return false;
         }
 
-        // [SEND_PHOTO: ...] 태그
+        // [SEND_PHOTO: ...] 태그 — 롤플 모드는 이미지 전송 절대 금지(태그만 제거)
         let photoPrompt = null;
         const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
         if (photoMatch) {
-            photoPrompt = photoMatch[1].trim();
+            if (mode !== 'rp') photoPrompt = photoMatch[1].trim();
             response = response.replace(photoMatch[0], '').trim();
         }
 
@@ -938,6 +1358,15 @@ const Bot = {
             return '';
         }).trim();
 
+        // [MEET: 분 | 상황] → 그 시간 뒤 세트의 롤플 채널에서 만남 RP 장면 자동 시작
+        response = response.replace(/\[MEET:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
+            this._scheduleMeet(channelId, parseInt(min, 10), (note || '').trim());
+            return '';
+        }).trim();
+
+        // 태그를 안 달았어도 "곧/지금 만나러 간다"는 말투면 자동으로 만남 예약 (폴백)
+        this._maybeAutoMeet(channelId, response);
+
         // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
         if (!response && !photoPrompt) {
             console.warn('[Bot] 응답 본문 없음(태그뿐) — 저장/전송 생략');
@@ -949,17 +1378,50 @@ const Bot = {
         return true;
     },
 
-    // --- 응답 전송: 빈 줄 기준으로 여러 메시지로 분할 + 이미지 첨부 ---
+    // 긴 텍스트를 limit 이내 조각으로 (문단→줄→문장→하드컷 순으로 자연스럽게 끊음). 넘지 않으면 통째 1개.
+    _chunk(text, limit = 1900) {
+        const t = (text || '').trim();
+        if (t.length <= limit) return t ? [t] : [];
+        const out = [];
+        let buf = '';
+        const flush = () => { if (buf.trim()) out.push(buf.trim()); buf = ''; };
+        // 문단 단위로 모으되 limit 넘으면 끊기
+        for (const para of t.split(/\n\s*\n/)) {
+            if ((buf + '\n\n' + para).length <= limit) { buf = buf ? `${buf}\n\n${para}` : para; continue; }
+            flush();
+            if (para.length <= limit) { buf = para; continue; }
+            // 문단 자체가 너무 길면 줄/문장/하드컷으로 쪼갬
+            let rest = para;
+            while (rest.length > limit) {
+                let cut = rest.lastIndexOf('\n', limit);
+                if (cut < limit * 0.5) cut = rest.lastIndexOf('. ', limit);
+                if (cut < limit * 0.5) cut = rest.lastIndexOf(' ', limit);
+                if (cut < limit * 0.5) cut = limit;
+                out.push(rest.slice(0, cut).trim());
+                rest = rest.slice(cut).trim();
+            }
+            buf = rest;
+        }
+        flush();
+        return out;
+    },
+
+    // --- 응답 전송: 모드에 따라 분할/통짜 + 이미지 첨부 ---
     // 멀티봇: 봇 자신으로 전송(프로필=캐릭터, 온라인 상태). 단일봇: 웹훅으로 캐릭터 흉내.
     async _sendResponse(channel, character, response, photoPrompt) {
         const charName = character.name || 'Character';
         const asSelf = config.botMode === 'multi';
         const webhook = asSelf ? null : await this._getWebhook(channel, character);
 
-        // 빈 줄(\n\n) 기준 분할. splitMessages가 false면 통째로. 빈 조각은 제거.
-        const parts = (config.splitMessages === false ? [response] : response.split(/\n\s*\n/))
-            .map((s) => s.trim())
-            .filter(Boolean);
+        // RP 모드는 한 덩어리로(안 자름), 채팅 모드는 빈 줄 기준 분할(말풍선 여러 개).
+        const isRp = Modes.get(channel.id) === 'rp';
+        let parts;
+        if (isRp || config.splitMessages === false) {
+            // 안 자르되 디스코드 2000자 한계는 지킴 (문단/문장 경계에서 끊음)
+            parts = this._chunk(response, 1900);
+        } else {
+            parts = response.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+        }
 
         // 이미지 첨부 준비 (마지막 메시지에 붙임)
         let attachment = null;
@@ -1029,8 +1491,8 @@ const Bot = {
             const last = ChatHistory.getMessages(channelId, 1)[0];
             if (last?.role !== 'assistant') return; // 유저가 답함 → 취소
             const noteText = note
-                ? `방금 "${note}"라고 했는데 ${mins}분 동안 답이 없어. 그 말대로 살짝 재촉하며 다시 연락해.`
-                : `${mins}분째 답이 없어. 아까 한 말대로 살짝 재촉하며 다시 연락해.`;
+                ? `You said "${note}" and they haven't replied for ${mins} minutes. Message them again, lightly pressing/teasing as you said you would.`
+                : `It's been ${mins} minutes with no reply. Message them again, lightly nudging them as you implied earlier.`;
             await this.sendProactive(channelId, noteText);
         }, mins * 60_000);
         t.unref?.();
@@ -1038,8 +1500,88 @@ const Bot = {
         console.log(`[Bot] 재촉 예약: 채널 ${channelId}, ${mins}분 후`);
     },
 
+    // --- 만남 예약: 챗에서 "곧 만나자" → 그 시간 뒤 세트의 롤플 채널에서 만남 RP 시작 ---
+    _scheduleMeet(chatChannelId, minutes, note) {
+        if (!Number.isFinite(minutes)) return;
+        const found = Sets.findByChannel(chatChannelId);
+        if (!found || found.role !== 'chat' || !found.set.rp) {
+            console.log('[Meet] 세트 챗 채널이 아니라 만남 예약 스킵');
+            return;
+        }
+        const set = found.set;
+        const mins = Math.min(Math.max(minutes, 1), 360); // 1분~6시간
+        const key = set.rp;
+        if (meetTimers[key]) clearTimeout(meetTimers[key]);
+        const t = setTimeout(() => {
+            delete meetTimers[key];
+            delete meetInfo[key];
+            this._startRpScene(set, note).catch((e) => console.error('[Meet] 장면 시작 오류:', e));
+        }, mins * 60_000);
+        t.unref?.();
+        meetTimers[key] = t;
+        meetInfo[key] = { fireAt: Date.now() + mins * 60_000, note, character: set.character };
+        console.log(`[Meet] "${set.character}" 만남 예약: ${mins}분 후 롤플 채널(${key})`);
+    },
+
+    // 텍스트에서 "곧/지금 만남" 신호 → 분 단위 (없으면 null)
+    _detectMeetMinutes(text) {
+        const t = (text || '');
+        // 도착/임박 신호 → 즉시(1분)
+        if (/도착|문\s*앞|다\s*왔|왔어|열어\s*줘|들어갈게|들어간다|초인종|벨\s*눌/.test(t)) return 1;
+        // "N분 (안에/뒤/후/만에)" → 그 분
+        const m = t.match(/(\d{1,3})\s*분\s*(안|뒤|후|만)/);
+        if (m) return Math.min(parseInt(m[1], 10), 360);
+        // 출발/이동 신호 → 기본 15분
+        if (/갈게|갈래|데리러|데리러\s*가|출발|가는\s*중|가고\s*있|이따\s*가|곧\s*가|지금\s*가/.test(t)) return 15;
+        return null;
+    },
+
+    // 챗에서 만남 신호 자동 감지 → MEET 예약 (캐릭터가 태그를 안 달았을 때 폴백)
+    _maybeAutoMeet(chatChannelId, text) {
+        const found = Sets.findByChannel(chatChannelId);
+        if (!found || found.role !== 'chat' || !found.set.rp) return;
+        const mins = this._detectMeetMinutes(text);
+        if (mins == null) return;
+        const key = found.set.rp;
+        const existing = meetInfo[key];
+        if (existing) {
+            // 이미 예약돼 있으면: "도착 임박" 신호일 때만 1분으로 앞당김
+            if (mins <= 1 && existing.fireAt > Date.now() + 2 * 60_000) {
+                this._scheduleMeet(chatChannelId, 1, existing.note);
+                console.log('[Meet] 자동감지(도착) → 1분으로 앞당김');
+            }
+            return;
+        }
+        this._scheduleMeet(chatChannelId, mins, '');
+        console.log(`[Meet] 자동감지: "${(text || '').slice(0, 30)}" → ${mins}분`);
+    },
+
+    // 만남 시각 도달 → 챗 대화를 요약(맥락 전달)하고 롤플 채널에 만남 장면 시작
+    async _startRpScene(set, note, { notifyChat = true } = {}) {
+        const client = channelClients[set.rp] || primaryClient;
+        if (!client) return;
+        // 예약이 남아있으면 정리 (수동/중복 호출 대비)
+        if (meetTimers[set.rp]) { clearTimeout(meetTimers[set.rp]); delete meetTimers[set.rp]; }
+        delete meetInfo[set.rp];
+        // /mode를 안 거치고 자동으로 넘어오는 거라, 여기서 직접 챗을 요약해 rp 맥락으로 넘김
+        try { await this._summarizeChannel(set, set.chat, 'chat→rp', client); } catch (e) { console.warn('[Meet] 요약 실패:', e.message); }
+
+        const sceneNote = `${note ? note + ' ' : ''}They have just arrived and you two are now meeting IN PERSON. Open the roleplay scene RIGHT NOW: narrate the moment you meet (the door/arrival, seeing each other, your reaction) using narration and *actions*. This is the start of an in-person scene, not texting.`;
+        await this.sendProactive(set.rp, sceneNote);
+
+        // 챗 채널에 "도착했어" 알림 + 롤플 채널 점프 링크 (수동 /mode 전환 땐 생략)
+        if (notifyChat) {
+            try {
+                const chatCh = await client.channels.fetch(set.chat).catch(() => null);
+                if (chatCh) await chatCh.send(`🚪 (도착했어) 이제부터 여기서 → <#${set.rp}>`);
+            } catch { /* 무시 */ }
+        }
+    },
+
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
     async sendProactive(channelId, note = '') {
+        // 요약 채널은 선톡 안 함
+        if (config.channels[channelId]?.summaryOnly) return;
         // 잠수 중이면 선톡/리마인더/재촉 다 생략 (복귀 연락은 Away가 잠수 해제 후 호출하므로 통과됨)
         if (Away.isAway(channelId)) {
             console.log(`[Bot] 잠수 중 - 선톡 생략 (채널 ${channelId})`);
@@ -1050,9 +1592,16 @@ const Bot = {
         if (config.botMode === 'multi') {
             const groupMembers = this._channelGroupMembers(channelId);
             if (groupMembers.length >= 2) {
-                const seed = note || '지금 단톡방에 아무나 먼저 말을 꺼내서 등장인물들끼리 자연스럽게 수다를 시작해.';
+                const seed = note || 'The group chat has been quiet. Someone should speak up first and the characters start chatting naturally among themselves.';
                 return this._handleGroupMessage(null, groupMembers, seed).catch((e) => console.error('[Group] 선톡 오류:', e));
             }
+        }
+
+        // 단일봇 단톡(웹훅) 채널이면: 등장인물끼리 먼저 수다 시작 (API 1회)
+        const grpCfg = config.channels[channelId];
+        if (grpCfg?.group && Array.isArray(grpCfg.members) && grpCfg.members.length >= 1) {
+            const seed = 'The group chat has been quiet for a while. Someone speaks up first and the characters start chatting naturally among themselves (everyday small talk, teasing, banter).';
+            return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
 
         const owner = channelClients[channelId] || primaryClient;
@@ -1069,11 +1618,11 @@ const Bot = {
                 ? (config.rpResponseTokens || 8192)
                 : (config.maxResponseTokens || 1000);
 
-            // 선톡 사진(이미지 생성 비용) — config에서 켰을 때만, 35% 확률
-            const photosOn = !!config.proactive?.photos;
+            // 선톡 사진(이미지 생성 비용) — config에서 켰을 때만, 35% 확률. 롤플 모드는 이미지 금지.
+            const photosOn = !!config.proactive?.photos && mode !== 'rp';
             const wantPhoto = photosOn && Math.random() < 0.35;
             const fullNote = wantPhoto
-                ? `${note} 이번엔 지금 너의 모습(셀카)이나 보고 있는 풍경 등을 담은 사진을 메시지 끝에 [SEND_PHOTO: 영어 묘사]로 같이 보내.`
+                ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
                 : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
@@ -1083,11 +1632,14 @@ const Bot = {
 
             const systemPrompt = ContextBuilder.build(character, {
                 userName: effUserName,
-                language: config.language || 'ko',
+                language: Langs.get(channelId, config.language || 'ko'),
                 mode,
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
                 notes: Notes.list(channelId),
+                annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+                crossSummaries: this._crossSummariesFor(channelId),
+                crossRecent: this._crossRecentFor(channelId),
                 personaText,
                 proactive: true,
                 proactiveNote: fullNote,
@@ -1108,7 +1660,7 @@ const Bot = {
             let photoPrompt = null;
             const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
             if (photoMatch) {
-                photoPrompt = photoMatch[1].trim();
+                if (mode !== 'rp') photoPrompt = photoMatch[1].trim(); // 롤플 모드 이미지 금지
                 response = response.replace(photoMatch[0], '').trim();
             }
 
@@ -1136,20 +1688,26 @@ const Bot = {
         }
     },
 
-    // --- 메시지 삭제 동기화 (단일봇 전용) ---
-    // 멀티봇은 페르소나 프록시가 원본을 항상 지우므로, 삭제 동기화를 켜면
-    // 프록시 삭제 ↔ 동기화가 레이스로 엇갈려 방금 저장한 유저 메시지를 도로 지운다(→ 빈 응답).
-    // 그래서 멀티봇에선 삭제 동기화를 하지 않는다.
+    // --- 메시지 삭제 동기화 ---
     async _onMessageDelete(message, client) {
-        if (message.author?.bot) return;
-        if (config.botMode === 'multi') return; // 멀티봇은 동기화 안 함
-        if (!config.channels[message.channelId]) return;
+        const multi = config.botMode === 'multi';
+        if (!multi && !config.channels[message.channelId]) return;
+        // 페르소나 프록시가 지운 원본은 동기화 대상 아님 (재게시된 웹훅이 대체)
         if (proxiedMessageIds.has(message.id)) {
             proxiedMessageIds.delete(message.id);
             return;
         }
-        const removed = ChatHistory.removeLastUserMessage(message.channelId);
-        if (removed) {
+        // 같은 삭제를 여러 봇/이벤트가 보므로 1회만 처리
+        const k = 'del:' + message.id;
+        if (intakeDone.has(k)) return;
+        intakeDone.add(k);
+        setTimeout(() => intakeDone.delete(k), 60_000);
+
+        // 내용으로 매칭해 그 메시지를 히스토리에서 제거 (유저/페르소나/캐릭터 버블 모두)
+        // 캐시 안 된 옛 메시지는 content가 없어 매칭 불가 → 조용히 스킵
+        const content = (message.content || '').trim();
+        if (!content) return;
+        if (ChatHistory.removeByContent(message.channelId, content)) {
             console.log(`[Bot] 메시지 삭제 동기화: 채널 ${message.channelId}`);
         }
     },

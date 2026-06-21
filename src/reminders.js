@@ -110,7 +110,7 @@ const Reminders = {
         list = list.filter((x) => x.id !== r.id);
         this._save();
         if (!sendFn) return;
-        await sendFn(r.channelId, `약속했던 리마인드 시간이야. 다음 내용을 자연스럽게 전해: ${r.text}`);
+        await sendFn(r.channelId, `It's the reminder time you promised. Naturally bring up this: ${r.text}`);
     },
 
     // --- 조회/삭제 (/reminders 명령용) ---
@@ -140,6 +140,13 @@ const Reminders = {
         const arr = this.listForChannel(channelId);
         for (const r of arr) this.removeById(r.id);
         return arr.length;
+    },
+
+    // 채널 ID 변경(nuke) 시 예약된 리마인더의 채널을 새 ID로 (타이머는 그대로, 발송 대상만 갱신)
+    renameChannel(oldId, newId) {
+        let changed = false;
+        for (const r of list) if (r.channelId === oldId) { r.channelId = newId; changed = true; }
+        if (changed) this._save();
     },
 
     // 표시용: tz 기준 "MM/DD HH:MM" 포맷

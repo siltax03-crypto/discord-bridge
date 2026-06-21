@@ -63,7 +63,7 @@ const Scheduler = {
         const t = setTimeout(async () => {
             const idle = Date.now() - ChatHistory.lastTimestamp(channelId);
             if (idle >= min && inActiveHours(activeHours)) {
-                await sendProactive(channelId, '한동안 조용했어. 지금 네 일상의 한 장면(뭐 하는 중인지, 방금 있었던 일 등)을 자연스럽게 공유하거나 안부를 물으며 먼저 말 걸어.');
+                await sendProactive(channelId, "It's been quiet for a while. Reach out first: naturally share a moment from your day right now (what you're doing, something that just happened) or ask how they're doing.");
             }
             // 다시 예약
             this._scheduleIdle(channelId, min, max, activeHours, sendProactive);

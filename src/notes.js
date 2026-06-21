@@ -52,6 +52,14 @@ const Notes = {
         delete cache[channelId];
         this._save();
     },
+
+    rename(oldId, newId) {
+        this._load();
+        if (cache[oldId] === undefined) return;
+        cache[newId] = cache[oldId];
+        delete cache[oldId];
+        this._save();
+    },
 };
 
 export default Notes;
