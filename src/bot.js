@@ -132,6 +132,9 @@ const Bot = {
                         ),
                 ),
             new SlashCommandBuilder()
+                .setName('nsfw')
+                .setDescription('이 채널 연령제한(NSFW) 켜기/끄기'),
+            new SlashCommandBuilder()
                 .setName('lang')
                 .setDescription('이 채널 응답 언어 (한국어 ↔ English)')
                 .addStringOption((o) =>
@@ -222,6 +225,21 @@ const Bot = {
 
         if (cmd === 'mode') {
             return this._handleModeSwitch(interaction, channelId, eph);
+        }
+
+        if (cmd === 'nsfw') {
+            const ch = interaction.channel;
+            const me = interaction.guild?.members.me;
+            if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+                return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 필요해요. (또는 채널 편집 → 연령 제한 채널 토글로 직접 켜도 돼요)', ...eph });
+            }
+            try {
+                const next = !ch.nsfw;
+                await ch.setNSFW(next);
+                return interaction.reply({ content: next ? '🔞 이 채널을 연령제한(NSFW)으로 켰어요.' : '이 채널 연령제한을 껐어요.', ...eph });
+            } catch (e) {
+                return interaction.reply({ content: `⚠️ 실패: ${e.message}`, ...eph });
+            }
         }
 
         if (cmd === 'lang') {
