@@ -111,9 +111,9 @@ const Bot = {
         const commands = [
             new SlashCommandBuilder()
                 .setName('setup')
-                .setDescription('캐릭터 세트 생성: 카테고리 + 챗/롤플/요약 채널 자동 생성')
+                .setDescription('지금 이 챗 채널을 기준으로 롤플/요약 채널을 만들어 세트로 묶기')
                 .addStringOption((o) =>
-                    o.setName('character').setDescription('캐릭터 카드 이름 (카테고리 이름이 됨)').setRequired(true)),
+                    o.setName('character').setDescription('캐릭터 카드 이름 (비우면 이 채널에 연결된 캐릭터 사용)').setRequired(false)),
             new SlashCommandBuilder()
                 .setName('mode')
                 .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
@@ -402,16 +402,24 @@ const Bot = {
         return Sets.recentSummaries(found.set.character, 6);
     },
 
-    // --- /setup: 카테고리 + 챗/롤플/요약 채널 자동 생성 ---
+    // --- /setup: 지금 이 챗 채널을 챗으로 두고, 롤플/요약만 새로 만들어 세트로 묶기 ---
     async _handleSetup(interaction) {
         const eph = { flags: MessageFlags.Ephemeral };
         const guild = interaction.guild;
         if (!guild) return interaction.reply({ content: '서버 채널 안에서 실행해주세요.', ...eph });
 
-        const charName = (interaction.options.getString('character') || '').trim();
+        const chatId = interaction.channelId;
+        // 캐릭터: 옵션 우선, 없으면 이 채널에 연결된 캐릭터
+        const charName = ((interaction.options.getString('character') || config.channels[chatId]?.character) || '').trim();
+        if (!charName) {
+            return interaction.reply({ content: '⚠️ 이 채널에 연결된 캐릭터가 없어요. character 옵션에 캐릭터 이름을 적거나, ST 확장에서 이 채널을 캐릭터에 연결한 뒤 다시 실행하세요.', ...eph });
+        }
         const card = this._loadCharacterByName(charName);
         if (!card) return interaction.reply({ content: `⚠️ "${charName}" 캐릭터 카드를 못 찾았어요. ST 캐릭터 이름 그대로 적어주세요.`, ...eph });
 
+        if (Sets.findByChannel(chatId)) {
+            return interaction.reply({ content: '이 채널은 이미 세트에 속해 있어요. `/info`로 확인하세요.', ...eph });
+        }
         const existing = Sets.findByCharacter(charName);
         if (existing) {
             return interaction.reply({ content: `이미 "${charName}" 세트가 있어요:\n💬 <#${existing.chat}>  🎭 <#${existing.rp}>  📝 <#${existing.summary}>`, ...eph });
@@ -422,7 +430,7 @@ const Bot = {
             return interaction.reply({ content: '⚠️ 봇에 "채널 관리(Manage Channels)" 권한이 없어요. 서버 설정 → 역할에서 켜주세요.', ...eph });
         }
 
-        await interaction.reply({ content: '🔧 채널 만드는 중...', ...eph });
+        await interaction.reply({ content: '🔧 롤플/요약 채널 만드는 중...', ...eph });
         try {
             const everyone = guild.roles.everyone.id;
             // 비공개(나+봇만): 롤플/요약 채널
@@ -433,24 +441,24 @@ const Bot = {
             ];
 
             const category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
-            const chat = await guild.channels.create({ name: '챗', type: ChannelType.GuildText, parent: category.id });
+            // 기존 챗 채널을 카테고리 안으로 이동 (같은 채널·ST연결·히스토리 그대로, 보기만 정리)
+            try { await interaction.channel.setParent(category.id, { lockPermissions: false }); } catch (e) { console.warn('[Setup] 챗 채널 이동 실패(무시):', e.message); }
             const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv });
             const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv });
 
             config.channels = config.channels || {};
-            config.channels[chat.id] = { character: charName };
+            config.channels[chatId] = { ...(config.channels[chatId] || {}), character: charName };
             config.channels[rp.id] = { character: charName };
             config.channels[summary.id] = { character: charName, summaryOnly: true };
-            channelClients[chat.id] = channelClients[rp.id] = channelClients[summary.id] = interaction.client;
-            Modes.set(chat.id, 'chat');
+            channelClients[rp.id] = channelClients[summary.id] = interaction.client;
+            Modes.set(chatId, 'chat');
             Modes.set(rp.id, 'rp');
-            Sets.add({ character: charName, guildId: guild.id, categoryId: category.id, chat: chat.id, rp: rp.id, summary: summary.id });
+            Sets.add({ character: charName, guildId: guild.id, categoryId: category.id, chat: chatId, rp: rp.id, summary: summary.id });
 
             await summary.send(`📝 **${charName} 요약**\n챗↔롤플 전환 때마다 무슨 얘기를 했는지 자동 기록돼요.`).catch(() => {});
-            await chat.send('💬 일상 채팅 채널이에요. 롤플로 넘어가려면 `/mode rp`').catch(() => {});
             await rp.send('🎭 롤플 채널이에요. 채팅으로 돌아가려면 `/mode chat`').catch(() => {});
 
-            return interaction.editReply(`✅ "${charName}" 세트 생성 완료!\n💬 <#${chat.id}>  🎭 <#${rp.id}> (비공개)  📝 <#${summary.id}> (비공개)`);
+            return interaction.editReply(`✅ "${charName}" 세트 완료! (챗은 기존 <#${chatId}> 그대로)\n💬 <#${chatId}>  🎭 <#${rp.id}> (비공개)  📝 <#${summary.id}> (비공개)`);
         } catch (e) {
             console.error('[Setup] 실패:', e);
             return interaction.editReply(`⚠️ 생성 실패: ${e.message}`);
