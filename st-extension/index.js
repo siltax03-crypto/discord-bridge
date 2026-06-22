@@ -87,6 +87,7 @@ async function loadAll() {
             stPath: c.stPath || '',
             splitMessages: c.splitMessages !== false,
             chatSlang: c.chatSlang !== false,
+            movieToken: c.movieToken || '',
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -187,6 +188,9 @@ function render() {
     // 메시지/말투
     $('#dbridge_split').prop('checked', state.splitMessages);
     $('#dbridge_slang').prop('checked', state.chatSlang);
+
+    // 영화 같이보기 토큰
+    $('#dbridge_movietoken').val(state.movieToken || '');
 
     // 선톡
     const p = state.proactive;
@@ -451,6 +455,7 @@ async function save() {
             proactive: state.proactive,
             channels: state.channels,
             members: state.members,
+            movieToken: ($('#dbridge_movietoken').val() || '').trim(),
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const mainTok = ($('#dbridge_token').val() || '').trim();
@@ -609,6 +614,14 @@ const SETTINGS_HTML = `
             <div class="dbridge_hint">⏰ "8시에 깨워줘", "2시에 약속 리마인드 해줘" 같은 <b>특정 시각 알람은 봇한테 채팅으로 말하면</b> 알아서 그 시각에 연락합니다 (설정 불필요).</div>
 
             <hr/>
+            <label>🎬 영화 같이보기 토큰 <span class="dbridge_hint">(크롬 확장에 똑같이 입력)</span></label>
+            <div class="dbridge_inline">
+                <input type="text" id="dbridge_movietoken" class="text_pole" autocomplete="off" placeholder="아무 긴 랜덤 문자열" />
+                <div class="menu_button" id="dbridge_movietoken_gen" title="랜덤 생성"><i class="fa-solid fa-dice"></i></div>
+            </div>
+            <div class="dbridge_hint">넷플/유튜브/디즈니+ 같이보기용. 이 값과 크롬 확장의 토큰이 일치해야 합니다. 변경 후 봇·ST 재시작.</div>
+
+            <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
             <div class="dbridge_hint">⚠ 토큰/채널 변경 후 봇을 재시작해야 적용됩니다 (pm2 restart discord-bridge).</div>
         </div>
@@ -677,6 +690,11 @@ jQuery(async () => {
     $('#dbridge_token_eye').on('click', () => {
         const $t = $('#dbridge_token');
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
+    });
+    // 영화 토큰 랜덤 생성
+    $('#dbridge_movietoken_gen').on('click', () => {
+        const rnd = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        $('#dbridge_movietoken').val((rnd() + rnd()).slice(0, 48));
     });
     // 봇 모드 전환: 입력 보존하고 모드에 맞게 다시 그림
     $('#dbridge_botmode').on('change', () => { syncFromDom(); render(); });
