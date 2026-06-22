@@ -91,8 +91,11 @@ async function proxyToBot(subPath, req, res) {
     movieCors(res);
     const config = readJson(CONFIG_PATH, {}) || {};
     const port = config.moviePort || 8788;
-    const body = req.body || {};
-    // 확장이 올바른 토큰을 보냈는지 검증 (아무나 POST 못 하게)
+    // GET 쿼리(CSRF 회피) 또는 POST 바디 둘 다 허용
+    const src = (req.method === 'GET') ? (req.query || {}) : (req.body || {});
+    const body = { ...src };
+    if (typeof body.cues === 'string') { try { body.cues = JSON.parse(body.cues); } catch { body.cues = []; } }
+    // 확장이 올바른 토큰을 보냈는지 검증 (아무나 못 쏘게)
     if (config.movieToken && body.token !== config.movieToken) {
         return res.status(401).json({ error: 'bad token' });
     }
@@ -460,8 +463,11 @@ async function init(router) {
     router.post('/restart', jsonParser, postRestart);
     router.post('/update', jsonParser, postUpdate);
     router.post('/dev-update', jsonParser, postDevUpdate);
-    // 영화 같이보기 프록시 (브라우저 확장 → 봇)
+    // 영화 같이보기 프록시 (브라우저 확장 → 봇). GET 사용(ST CSRF 회피), POST도 허용.
     router.options('/movie/:action', moviePreflight);
+    router.get('/movie/start', (req, res) => proxyToBot('/movie/start', req, res));
+    router.get('/movie/sub', (req, res) => proxyToBot('/movie/sub', req, res));
+    router.get('/movie/end', (req, res) => proxyToBot('/movie/end', req, res));
     router.post('/movie/start', jsonParser, (req, res) => proxyToBot('/movie/start', req, res));
     router.post('/movie/sub', jsonParser, (req, res) => proxyToBot('/movie/sub', req, res));
     router.post('/movie/end', jsonParser, (req, res) => proxyToBot('/movie/end', req, res));
