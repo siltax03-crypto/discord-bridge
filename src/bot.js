@@ -1786,7 +1786,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const user = `[방금 나온 자막]\n${lines.join('\n').slice(-1800)}`;
 
         let resp = '';
-        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: 500 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
+        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
         resp = (resp || '').trim();
         if (!resp) return;
         ChatHistory.addMessage(movieSession.channelId, 'assistant', resp, movieSession.card.name || movieSession.character);
@@ -1808,7 +1808,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const history = ChatHistory.getMessages(s.channelId, 30).map((m) => `${m.role === 'user' ? 'User' : m.author || 'me'}: ${m.content}`).join('\n').slice(-2500);
         const sys = `You just finished watching "${s.movie}" together with the user. Give your honest short review/impression of it IN CHARACTER (2-3 sentences): what you felt, best/worst part, rating out of 10. Casual, like talking to someone you watched with. ${langLine}`;
         let review = '';
-        try { review = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: `[우리가 보면서 나눈 대화 일부]\n${history}` }], { maxTokens: 800 }); } catch { /* 무시 */ }
+        try { review = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: `[우리가 보면서 나눈 대화 일부]\n${history}` }], { maxTokens: 2048 }); } catch { /* 무시 */ }
         review = (review || '').trim();
 
         if (channel) {
