@@ -13,6 +13,10 @@
   "devBranch": "dev",
   "botMode": "single",
   "personaBotToken": "",
+  "movieEnabled": true,
+  "moviePort": 8788,
+  "movieToken": "여기에_아무_긴_랜덤_문자열_확장과_동일하게",
+  "movieReactSec": 60,
   "proactive": {
     "enabled": false,
     "photos": false,
