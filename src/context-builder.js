@@ -57,6 +57,7 @@ const ContextBuilder = {
 - Keep each line short like real texting. 2~5 lines total per turn is usually enough; don't flood.
 - If the user names someone, that character answers; others may chime in.
 - Stay in each character's personality/speech from the sheet. NO narration/asterisk actions — pure chat text.
+- If the user asks to be reminded/contacted at a specific time (e.g. "5분 뒤에 연락 줘", "이따 8시에 깨워줘"), append [REMIND: YYYY-MM-DD HH:MM | what to bring up] at the VERY END of the whole output, on its own line OUTSIDE any [name] line. Use 24-hour, a FUTURE time computed from the current time above. Add it only once.
 ${langLine}
 ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
 

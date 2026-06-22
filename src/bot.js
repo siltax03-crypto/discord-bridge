@@ -464,9 +464,17 @@ const Bot = {
         const found = Sets.findByChannel(id);
         if (found) {
             const s = found.set;
-            for (const cid of [s.chat, s.rp, s.summary]) if (cid) delete config.channels[cid];
-            Sets.remove(s);
-            console.log(`[Bot] 채널 삭제 감지 → "${s.character}" 세트 정리`);
+            if (found.role === 'chat') {
+                // 챗 채널이 사라짐 = 세트 자체가 의미 없음 → 전체 정리
+                for (const cid of [s.chat, s.rp, s.summary]) if (cid) delete config.channels[cid];
+                Sets.remove(s);
+                console.log(`[Bot] 챗 채널 삭제 → "${s.character}" 세트 전체 정리`);
+            } else {
+                // 롤플/요약만 사라짐 → 세트만 해제하고 챗 매핑은 살림 (일반 채널로 유지)
+                delete config.channels[id];
+                Sets.remove(s);
+                console.log(`[Bot] ${found.role} 채널 삭제 → "${s.character}" 세트 해제(챗 <#${s.chat}>는 유지)`);
+            }
         } else if (config.channels[id]) {
             delete config.channels[id];
         }
@@ -653,15 +661,20 @@ const Bot = {
             if (meetTimers[set.rp]) { clearTimeout(meetTimers[set.rp]); delete meetTimers[set.rp]; }
             delete meetInfo[set.rp];
 
-            // 챗 채널은 유지(캐릭터 매핑 그대로). 카테고리에서 빼서 일반 위치로.
-            try { const cc = await interaction.client.channels.fetch(set.chat).catch(() => null); if (cc) await cc.setParent(null, { lockPermissions: false }); } catch { /* 무시 */ }
-
-            // 롤플/요약 채널 삭제 + 상태 정리
+            // ★ 채널을 지우기 전에 먼저 세트/매핑을 제거한다.
+            //   (안 그러면 채널 삭제 이벤트가 아직 살아있는 세트를 보고 챗 매핑까지 지워버림)
+            Sets.remove(set);
             for (const id of [set.rp, set.summary]) {
                 if (!id) continue;
                 delete config.channels[id];
-                Modes.rename?.(id, `_deleted_${id}`); // 사실상 제거
                 ChatHistory.clear(id);
+            }
+            // 챗 매핑은 유지. 챗 채널은 카테고리에서 빼서 일반 위치로.
+            try { const cc = await interaction.client.channels.fetch(set.chat).catch(() => null); if (cc) await cc.setParent(null, { lockPermissions: false }); } catch { /* 무시 */ }
+
+            // 이제 롤플/요약 채널 실제 삭제
+            for (const id of [set.rp, set.summary]) {
+                if (!id) continue;
                 try { const ch = await interaction.client.channels.fetch(id).catch(() => null); if (ch) await ch.delete('unsetup'); } catch { /* 무시 */ }
             }
             // 카테고리 비었으면 삭제
@@ -670,7 +683,6 @@ const Bot = {
                 if (cat && cat.children?.cache?.size === 0) await cat.delete('unsetup');
             } catch { /* 무시 */ }
 
-            Sets.remove(set);
             return interaction.editReply(`🧹 "${set.character}" 세트를 해제했어요. 챗 채널 <#${set.chat}>은 일반 채널로 유지돼요.`);
         } catch (e) {
             console.error('[Unsetup] 실패:', e);
@@ -1078,6 +1090,14 @@ const Bot = {
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
+
+        // [REMIND] 태그 추출 (단톡도 "5분 뒤 연락 줘" 지원) — 파싱 전에 제거
+        response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
+            const fireAt = Reminders.parseToFireAt(timeStr);
+            if (fireAt) { Reminders.add(channelId, fireAt, text.trim()); console.log(`[Group] 리마인더 등록: ${timeStr.trim()}`); }
+            else console.warn(`[Group] 리마인더 시각 해석 실패/과거: "${timeStr.trim()}"`);
+            return '';
+        }).trim();
 
         const lines = this._parseGroupLines(response, roster);
         if (lines.length === 0) { console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return; }
@@ -1659,7 +1679,8 @@ const Bot = {
         // 단일봇 단톡(웹훅) 채널이면: 등장인물끼리 먼저 수다 시작 (API 1회)
         const grpCfg = config.channels[channelId];
         if (grpCfg?.group && Array.isArray(grpCfg.members) && grpCfg.members.length >= 1) {
-            const seed = 'The group chat has been quiet for a while. Someone speaks up first and the characters start chatting naturally among themselves (everyday small talk, teasing, banter).';
+            // 리마인더 등 note가 있으면 그걸 씨앗으로(내용 살림), 없으면 일반 잡담 시작
+            const seed = note || 'The group chat has been quiet for a while. Someone speaks up first and the characters start chatting naturally among themselves (everyday small talk, teasing, banter).';
             return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
 
