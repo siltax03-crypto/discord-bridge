@@ -1077,12 +1077,17 @@ const Bot = {
         const mode = Modes.get(channelId);
         const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
 
+        // 마지막 대화로부터 흐른 시간 (단톡도 리얼타임 반영)
+        const lastTs = ChatHistory.lastTimestamp(channelId);
+        const gapText = lastTs ? this._humanizeGap((Date.now() - lastTs) / 60000) : '';
+
         const sys = ContextBuilder.buildGroup(sheetCard, {
             roster,
             language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
             seedNote,
+            timeGapText: gapText,
         });
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
@@ -1098,6 +1103,13 @@ const Bot = {
             else console.warn(`[Group] 리마인더 시각 해석 실패/과거: "${timeStr.trim()}"`);
             return '';
         }).trim();
+        // [FOLLOWUP] — 답 없으면 그 시간 뒤 단톡이 다시 말 검
+        response = response.replace(/\[FOLLOWUP:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
+            this._scheduleFollowup(channelId, parseInt(min, 10), (note || '').trim());
+            return '';
+        }).trim();
+        // 단톡에서 의미 없는 개별용 태그는 텍스트로 새지 않게 제거 (STATUS/AWAY/SEND_PHOTO/REACT/MEET)
+        response = response.replace(/\[(?:STATUS|AWAY|SEND_PHOTO|REACT|MEET):[^\]]*\]/gi, '').trim();
 
         const lines = this._parseGroupLines(response, roster);
         if (lines.length === 0) { console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return; }
@@ -1144,6 +1156,10 @@ const Bot = {
         const mode = Modes.get(channelId);
         const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
 
+        // 마지막 대화로부터 흐른 시간 (단톡도 리얼타임 반영)
+        const lastTs = ChatHistory.lastTimestamp(channelId);
+        const gapText = lastTs ? this._humanizeGap((Date.now() - lastTs) / 60000) : '';
+
         // 단톡 전용 시스템 프롬프트
         const sys = ContextBuilder.buildGroup(baseChar, {
             roster,
@@ -1151,6 +1167,7 @@ const Bot = {
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
             seedNote,
+            timeGapText: gapText,
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);

@@ -24,7 +24,7 @@ const ContextBuilder = {
      * 출력 형식을 "[이름] 대사" 줄로 강제 → 봇이 파싱해 각 캐릭터로 분배.
      */
     buildGroup(character, options = {}) {
-        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '' } = options;
+        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '', timeGapText = '' } = options;
         const parts = [];
 
         // 시트 본문(등장인물 전원 정보)
@@ -41,14 +41,22 @@ const ContextBuilder = {
             if (lore.length) parts.push(`[World Info]\n${lore.join('\n---\n')}`);
         } catch { /* skip */ }
 
-        const now = this._clock(timezone).full;
+        const clock = this._clock(timezone);
+        const now = clock.full;
         const langLine = language === 'ko' ? '- Write IN KOREAN (한국어).' : '- Write in English.';
         const slangLine = chatSlang ? '- Casual texting tone; emoji/ㅋㅋ ok.' : "- No ㅋㅋ/emoji spam; each character's own voice.";
+        const dayLine = clock.isWeekend ? "It's the weekend (everyone more free, lazy mornings, up late)."
+            : clock.isFriday ? "It's Friday (week ending, a bit hyped)."
+            : "It's a weekday (work/school on; busy daytime, freer in the evening).";
+        const gapLine = timeGapText
+            ? `- About ${timeGapText} have passed since the last message here. Real time moved on for everyone — don't seamlessly continue as if no time passed; react to the gap (what they were each doing, the changed time of day) and don't just repeat the earlier topic unless someone brings it back.`
+            : '';
 
         parts.push(`[GROUP CHAT — HIGHEST PRIORITY]
 - This is a Discord group chat. The participants are: ${roster.join(', ')}.
 - You voice ALL of these characters at once. The user is a separate person in the chat.
-- Current time: ${now} (${timezone}).
+- Current time: ${now} (${timezone}). ${dayLine} Each character has their own life/schedule and reacts to the current time (busy, eating, sleepy, etc.).
+${gapLine ? gapLine + '\n' : ''}- Each character carries their own mood across messages (if they were annoyed/teasing/sweet, keep it going; let it shift naturally over time).
 - OUTPUT FORMAT: each message on its own line, prefixed with the speaker in square brackets, e.g.
   [${roster[0] || 'Name'}] their message
   [${roster[1] || 'Other'}] their reply
