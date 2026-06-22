@@ -1712,13 +1712,22 @@ const Bot = {
     },
 
     // 확장: 같이보기 시작 → {캐릭터}MOVIE 카테고리 + {영화} 채널 생성
-    async _movieStart({ character, movie, site }) {
+    async _movieStart({ character, movie, site, group }) {
         const charName = (character || '').trim();
         if (!charName) return { error: '캐릭터 미지정' };
         const card = this._loadCharacterByName(charName);
         if (!card) return { error: `캐릭터 카드 없음: ${charName}` };
         const client = primaryClient;
         if (!client) return { error: '봇 미연결' };
+
+        // 단톡으로 보기: 기존 단톡 설정(멤버+아바타)을 찾아 재사용
+        let members = null;
+        if (group) {
+            for (const c of Object.values(config.channels)) {
+                if (c?.group && Array.isArray(c.members) && c.members.length && (c.sheet === charName || c.character === charName)) { members = c.members; break; }
+            }
+            if (!members) return { error: `"${charName}" 단톡 설정을 ST 확장에서 먼저 만들어주세요 (멤버 목록 필요).` };
+        }
 
         // 길드: 세트가 있으면 그 길드, 없으면 첫 길드
         const set = Sets.findByCharacter(charName);
@@ -1737,7 +1746,9 @@ const Bot = {
         const chName = this._sanitizeChannelName(movie);
         const channel = await guild.channels.create({ name: chName, type: ChannelType.GuildText, parent: category.id });
 
-        config.channels[channel.id] = { character: charName, movie: true };
+        config.channels[channel.id] = members
+            ? { group: true, sheet: charName, members, movie: true }
+            : { character: charName, movie: true };
         channelClients[channel.id] = client;
         Modes.set(channel.id, 'chat');
         ChatHistory.clear(channel.id);
@@ -1746,6 +1757,7 @@ const Bot = {
             character: charName, card, movie, site: site || '',
             categoryId: category.id, channelId: channel.id,
             mainChannelId: set?.chat || null,
+            group: !!members, members: members || null,
             buffer: [], lastReactAt: Date.now(), client, guildId: guild.id,
         };
         movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 60) * 1000);
@@ -1768,6 +1780,7 @@ const Bot = {
     // 주기적으로 모인 자막에 캐릭터가 리액션
     async _movieReact() {
         if (!movieSession) return;
+        if (movieSession.group) return this._movieReactGroup();
         const lines = movieSession.buffer.splice(0); // 모은 거 비우면서 가져옴
         if (lines.length === 0) return; // 새 자막 없으면 조용히
         movieSession.lastReactAt = Date.now();
@@ -1793,6 +1806,38 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         await this._sendResponse(channel, movieSession.card, resp, null);
     },
 
+    // 단톡 영화: 등장인물들이 같이 보며 자기들끼리 리액션 (한 번 호출 → 화자별 웹훅 분배)
+    async _movieReactGroup() {
+        const s = movieSession;
+        const lines = s.buffer.splice(0);
+        if (lines.length === 0) return;
+        s.lastReactAt = Date.now();
+        const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
+        if (!channel) return;
+        const roster = s.members.map((m) => m.name).filter(Boolean);
+        const sys = ContextBuilder.buildGroup(s.card, {
+            roster,
+            language: Langs.get(s.channelId, config.language || 'ko'),
+            timezone: config.timezone || 'Asia/Seoul',
+            chatSlang: config.chatSlang !== false,
+        });
+        const user = `(다 같이 영화 "${s.movie}"를 보는 중. 방금 나온 자막 장면에 등장인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게. 안 끼는 사람은 빠져도 됨.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
+        let resp = '';
+        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 그룹 생성 오류:', e.message); }
+        resp = (resp || '').trim();
+        if (!resp) return;
+        const parsed = this._parseGroupLines(resp, roster);
+        if (!parsed.length) return;
+        ChatHistory.addMessage(s.channelId, 'assistant', parsed.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
+        for (const { name, text } of parsed) {
+            const mem = s.members.find((m) => m.name === name) || s.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
+            if (!mem) continue;
+            await channel.sendTyping().catch(() => {});
+            await delay(500 + Math.min(text.length * 15, 1800));
+            await this._groupSendVia(channel, name, text.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean), mem.avatarUrl);
+        }
+    },
+
     // 확장/명령: 영화 종료 → 리뷰 남기고 메인으로 복귀
     async _movieEnd() {
         if (!movieSession) return { error: '진행 중인 영화 없음' };
@@ -1803,18 +1848,35 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
         const lang = Langs.get(s.channelId, config.language || 'ko');
         const langLine = lang === 'en' ? 'Write in English.' : 'Write IN KOREAN (한국어).';
-
-        // 캐릭터 리뷰 생성
         const history = ChatHistory.getMessages(s.channelId, 30).map((m) => `${m.role === 'user' ? 'User' : m.author || 'me'}: ${m.content}`).join('\n').slice(-2500);
-        const sys = `You just finished watching "${s.movie}" together with the user. Give your honest short review/impression of it IN CHARACTER (2-3 sentences): what you felt, best/worst part, rating out of 10. Casual, like talking to someone you watched with. ${langLine}`;
-        let review = '';
-        try { review = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: `[우리가 보면서 나눈 대화 일부]\n${history}` }], { maxTokens: 2048 }); } catch { /* 무시 */ }
-        review = (review || '').trim();
 
-        if (channel) {
-            if (review) await channel.send(`📝 **${s.movie} — 리뷰**\n${review}`).catch(() => {});
-            await channel.send('다 봤다! 너도 한 줄 남겨줘. 여긴 리뷰로 남겨둘게 — 이어서 메인에서 얘기하자 🎬').catch(() => {});
+        let review = '';
+        if (s.group && channel) {
+            // 단톡: 등장인물 각자 한 줄씩 감상 → 화자별 웹훅
+            const roster = s.members.map((m) => m.name).filter(Boolean);
+            const sys = ContextBuilder.buildGroup(s.card, { roster, language: lang, timezone: config.timezone || 'Asia/Seoul', chatSlang: config.chatSlang !== false });
+            const user = `(방금 다 같이 "${s.movie}"를 다 봤다. 각자 한 줄씩 짧은 감상 + 별점(10점 만점)을 남겨. 티키타카 OK.)\n[우리가 보면서 나눈 얘기]\n${history}`;
+            let resp = '';
+            try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: 2048 }); } catch { /* 무시 */ }
+            const parsed = this._parseGroupLines((resp || '').trim(), roster);
+            await channel.send(`📝 **${s.movie} — 다 같이 본 후기**`).catch(() => {});
+            for (const { name, text } of parsed) {
+                const mem = s.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
+                if (!mem) continue;
+                await this._groupSendVia(channel, name, text.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean), mem.avatarUrl);
+            }
+            review = parsed.map((l) => `${l.name}: ${l.text}`).join(' / ');
             try { await channel.setName(this._sanitizeChannelName(`📝${s.movie}`)); } catch { /* 무시 */ }
+        } else {
+            // 단일 캐릭터 리뷰
+            const sys = `You just finished watching "${s.movie}" together with the user. Give your honest short review/impression of it IN CHARACTER (2-3 sentences): what you felt, best/worst part, rating out of 10. Casual, like talking to someone you watched with. ${langLine}`;
+            try { review = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: `[우리가 보면서 나눈 대화 일부]\n${history}` }], { maxTokens: 2048 }); } catch { /* 무시 */ }
+            review = (review || '').trim();
+            if (channel) {
+                if (review) await channel.send(`📝 **${s.movie} — 리뷰**\n${review}`).catch(() => {});
+                await channel.send('다 봤다! 너도 한 줄 남겨줘. 여긴 리뷰로 남겨둘게 — 이어서 메인에서 얘기하자 🎬').catch(() => {});
+                try { await channel.setName(this._sanitizeChannelName(`📝${s.movie}`)); } catch { /* 무시 */ }
+            }
         }
         // 리뷰 채널은 일반 채널로 유지 (캐릭터랑 계속 대화 가능)
         if (config.channels[s.channelId]) config.channels[s.channelId].movie = false;

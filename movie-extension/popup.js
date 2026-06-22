@@ -2,10 +2,11 @@ const $ = (id) => document.getElementById(id);
 const setStatus = (t) => { $('status').textContent = t; };
 
 // 저장된 설정 불러오기
-chrome.storage.local.get(['base', 'token', 'character'], (c) => {
+chrome.storage.local.get(['base', 'token', 'character', 'group'], (c) => {
     $('base').value = c.base || '';
     $('token').value = c.token || '';
     $('character').value = c.character || '';
+    $('group').checked = !!c.group;
 });
 chrome.runtime.sendMessage({ type: 'status' }, (r) => {
     if (r?.active) setStatus(`🎬 보는 중: ${r.movie || ''}`);
@@ -16,6 +17,7 @@ function save() {
         base: $('base').value.trim(),
         token: $('token').value.trim(),
         character: $('character').value.trim(),
+        group: $('group').checked,
     });
 }
 
@@ -38,9 +40,10 @@ $('start').addEventListener('click', async () => {
     }
     if (!info?.hasVideo) { setStatus('⚠️ 재생 중인 영상이 없어요.'); return; }
 
+    const group = $('group').checked;
     setStatus(`🎬 "${info.title}" 시작 중...`);
     chrome.runtime.sendMessage(
-        { type: 'start', base, token, character, movie: info.title, site: info.site, tabId: tab.id },
+        { type: 'start', base, token, character, movie: info.title, site: info.site, group, tabId: tab.id },
         (r) => {
             if (r?.ok) setStatus(`🎬 "${info.title}" 같이보기 시작! (디스코드 확인)`);
             else setStatus(`⚠️ 시작 실패: ${r?.error || '알 수 없음'}`);

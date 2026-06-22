@@ -27,8 +27,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
         try {
             if (msg.type === 'start') {
-                const { base, token, character, movie, site, tabId } = msg;
-                await callST(base, token, 'start', { character, movie, site });
+                const { base, token, character, movie, site, group, tabId } = msg;
+                await callST(base, token, 'start', { character, movie, site, group: group ? 1 : '' });
                 await setSess({ base, token, character, movie, site, tabId, active: true });
                 try { chrome.tabs.sendMessage(tabId, { type: 'begin' }); } catch { /* */ }
                 sendResponse({ ok: true });
