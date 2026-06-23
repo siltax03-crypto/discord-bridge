@@ -1125,20 +1125,7 @@ const Bot = {
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
 
-        // [REMIND] 태그 추출 (단톡도 "5분 뒤 연락 줘" 지원) — 파싱 전에 제거
-        response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
-            const fireAt = Reminders.parseToFireAt(timeStr);
-            if (fireAt) { Reminders.add(channelId, fireAt, text.trim()); console.log(`[Group] 리마인더 등록: ${timeStr.trim()}`); }
-            else console.warn(`[Group] 리마인더 시각 해석 실패/과거: "${timeStr.trim()}"`);
-            return '';
-        }).trim();
-        // [FOLLOWUP] — 답 없으면 그 시간 뒤 단톡이 다시 말 검
-        response = response.replace(/\[FOLLOWUP:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
-            this._scheduleFollowup(channelId, parseInt(min, 10), (note || '').trim());
-            return '';
-        }).trim();
-        // 단톡에서 의미 없는 개별용 태그는 텍스트로 새지 않게 제거 (STATUS/AWAY/SEND_PHOTO/REACT/MEET)
-        response = response.replace(/\[(?:STATUS|AWAY|SEND_PHOTO|REACT|MEET):[^\]]*\]/gi, '').trim();
+        response = this._stripGroupTags(channelId, response);
 
         const lines = this._parseGroupLines(response, roster);
         if (lines.length === 0) { console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return; }
@@ -1205,6 +1192,7 @@ const Bot = {
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
+        response = this._stripGroupTags(channelId, response);
 
         // 파싱: "[이름] 대사" 또는 "이름: 대사" 줄들을 화자별로
         const lines = this._parseGroupLines(response, roster);
@@ -1245,6 +1233,26 @@ const Bot = {
                 }
             } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
         }
+    },
+
+    // 못 잡은(형식 깨진) 알려진 태그가 본문에 새지 않게 강제 제거하는 안전망
+    _stripStrayTags(text) {
+        return (text || '').replace(/\[\s*(?:FOLLOW(?:UP)?|REMIND|AWAY|STATUS|REACT|MEET|SEND_PHOTO)\b[^\]]*\]/gi, '').trim();
+    },
+
+    // 단톡 응답에서 태그 처리(리마인더/팔로업 등록) + 나머지 태그 제거 → [이름] 파싱 전에 호출
+    _stripGroupTags(channelId, response) {
+        response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
+            const fireAt = Reminders.parseToFireAt(timeStr);
+            if (fireAt) Reminders.add(channelId, fireAt, text.trim());
+            return '';
+        }).trim();
+        response = response.replace(/\[\s*follow(?:up)?\b[^\]]*\]/gi, (m) => {
+            const n = m.match(/\d+/);
+            if (n) this._scheduleFollowup(channelId, parseInt(n[0], 10), '');
+            return '';
+        }).trim();
+        return this._stripStrayTags(response);
     },
 
     // "[이름] 대사" / "이름: 대사" 파싱 → [{name, text}]
@@ -1440,25 +1448,28 @@ const Bot = {
             return false;
         }
 
+        // 태그에서 키워드 뒤 내용만 뽑기 (콜론 유무/대소문자 무관)
+        const tagBody = (m, kw) => m.replace(new RegExp(`\\[\\s*${kw}\\b`, 'i'), '').replace(/^[:\s]+/, '').replace(/\]\s*$/, '').trim();
+
         // [SEND_PHOTO: ...] 태그 — 롤플 모드는 이미지 전송 절대 금지(태그만 제거)
         let photoPrompt = null;
-        const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
+        const photoMatch = response.match(/\[\s*send_photo\b[^\]]*\]/i);
         if (photoMatch) {
-            if (mode !== 'rp') photoPrompt = photoMatch[1].trim();
+            if (mode !== 'rp') photoPrompt = tagBody(photoMatch[0], 'send_photo');
             response = response.replace(photoMatch[0], '').trim();
         }
 
-        // [REACT: 이모지] 태그 → 유저 마지막 메시지에 이모지 리액션
-        const reactMatch = response.match(/\[REACT:\s*([^\]]+)\]/);
+        // [REACT: 이모지] 태그 → 유저 마지막 메시지에 이모지 리액션 (형식 깨져도 잡음)
+        const reactMatch = response.match(/\[\s*react\b[^\]]*\]/i);
         if (reactMatch) {
-            const emoji = reactMatch[1].trim();
+            const emoji = tagBody(reactMatch[0], 'react');
             response = response.replace(reactMatch[0], '').trim();
             if (reactTarget && emoji) reactTarget.react(emoji).catch((e) => console.warn('[Bot] 리액션 실패:', e.message));
         }
 
         // [STATUS: 활동] 태그 → 멀티봇 프로필 상태 갱신
-        response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, (_, text) => {
-            this._setStatus(member, text.trim());
+        response = response.replace(/\[\s*status\b[^\]]*\]/gi, (m) => {
+            this._setStatus(member, tagBody(m, 'status'));
             return '';
         }).trim();
 
@@ -1470,23 +1481,31 @@ const Bot = {
             return '';
         }).trim();
 
-        // [FOLLOWUP: 분 | 의도] → 그 시간 뒤 유저가 답 없으면 재촉
-        response = response.replace(/\[FOLLOWUP:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
-            this._scheduleFollowup(channelId, parseInt(min, 10), (note || '').trim());
+        // [FOLLOWUP] → 그 시간 뒤 유저가 답 없으면 재촉. 형식 깨져도([follow], [followup 5분]) 본문에 안 새게 너그럽게.
+        response = response.replace(/\[\s*follow(?:up)?\b[^\]]*\]/gi, (m) => {
+            const num = m.match(/\d+/);
+            const note = m.match(/\|([^\]]*)\]/);
+            if (num) this._scheduleFollowup(channelId, parseInt(num[0], 10), (note ? note[1] : '').trim());
             return '';
         }).trim();
 
         // [AWAY: 분] → 이 답변 후 그 시간 동안 잠수(무응답), 끝나면 자동 복귀 연락
-        response = response.replace(/\[AWAY:\s*(\d+)\]/gi, (_, min) => {
-            Away.setAway(channelId, parseInt(min, 10));
+        response = response.replace(/\[\s*away\b[^\]]*\]/gi, (m) => {
+            const n = m.match(/\d+/);
+            if (n) Away.setAway(channelId, parseInt(n[0], 10));
             return '';
         }).trim();
 
         // [MEET: 분 | 상황] → 그 시간 뒤 세트의 롤플 채널에서 만남 RP 장면 자동 시작
-        response = response.replace(/\[MEET:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
-            this._scheduleMeet(channelId, parseInt(min, 10), (note || '').trim());
+        response = response.replace(/\[\s*meet\b[^\]]*\]/gi, (m) => {
+            const n = m.match(/\d+/);
+            const note = m.match(/\|([^\]]*)\]/);
+            if (n) this._scheduleMeet(channelId, parseInt(n[0], 10), (note ? note[1] : '').trim());
             return '';
         }).trim();
+
+        // 안전망: 못 잡은 알려진 태그(형식 깨짐)는 본문에 안 새게 강제 제거
+        response = this._stripStrayTags(response);
 
         // (만남 자동감지 폴백 제거: "도착/문 열어줘" 등이 음식배달 등과 구분 안 돼 오발동 → 모델의 [MEET] 태그만 신뢰)
 
@@ -1824,7 +1843,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const user = `(다 같이 영화 "${s.movie}"를 보는 중. 방금 나온 자막 장면에 등장인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게. 안 끼는 사람은 빠져도 됨.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
         let resp = '';
         try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 그룹 생성 오류:', e.message); }
-        resp = (resp || '').trim();
+        resp = this._stripGroupTags(s.channelId, (resp || '').trim());
         if (!resp) return;
         const parsed = this._parseGroupLines(resp, roster);
         if (!parsed.length) return;
@@ -1858,7 +1877,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             const user = `(방금 다 같이 "${s.movie}"를 다 봤다. 각자 한 줄씩 짧은 감상 + 별점(10점 만점)을 남겨. 티키타카 OK.)\n[우리가 보면서 나눈 얘기]\n${history}`;
             let resp = '';
             try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: 2048 }); } catch { /* 무시 */ }
-            const parsed = this._parseGroupLines((resp || '').trim(), roster);
+            const parsed = this._parseGroupLines(this._stripGroupTags(s.channelId, (resp || '').trim()), roster);
             await channel.send(`📝 **${s.movie} — 다 같이 본 후기**`).catch(() => {});
             for (const { name, text } of parsed) {
                 const mem = s.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
