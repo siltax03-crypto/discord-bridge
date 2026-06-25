@@ -16,7 +16,7 @@
   "movieEnabled": true,
   "moviePort": 8788,
   "movieToken": "여기에_아무_긴_랜덤_문자열_확장과_동일하게",
-  "movieReactSec": 60,
+  "movieReactSec": 35,
   "proactive": {
     "enabled": false,
     "photos": false,

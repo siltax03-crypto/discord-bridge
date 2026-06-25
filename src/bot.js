@@ -1874,7 +1874,7 @@ const Bot = {
             group: !!members, members: members || null,
             buffer: [], recentSubs: [], lastReactAt: Date.now(), client, guildId: guild.id,
         };
-        movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 60) * 1000);
+        movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 35) * 1000);
 
         await channel.send(`🎬 **${movie}** 같이 보기 시작! 편하게 봐 — 옆에서 같이 보면서 떠들게.`).catch(() => {});
         console.log(`[Movie] 시작: "${movie}" (${charName}) → #${chName}`);
@@ -1903,8 +1903,9 @@ const Bot = {
     async _movieReact() {
         if (!movieSession) return;
         if (movieSession.group) return this._movieReactGroup();
-        const lines = movieSession.buffer.splice(0); // 모은 거 비우면서 가져옴
-        if (lines.length === 0) return; // 새 자막 없으면 조용히
+        const all = movieSession.buffer.splice(0); // 버퍼 비움
+        if (all.length === 0) return; // 새 자막 없으면 조용히
+        const lines = all.slice(-6); // 밀린 백로그는 버리고 "지금 화면" 최근 것만 → 안 뒤처지게
         movieSession.lastReactAt = Date.now();
 
         const channel = await movieSession.client.channels.fetch(movieSession.channelId).catch(() => null);
@@ -1935,8 +1936,9 @@ ${(movieSession.card.description || '').slice(0, 1500)}
     // 단톡 영화: 등장인물들이 같이 보며 자기들끼리 리액션 (한 번 호출 → 화자별 웹훅 분배)
     async _movieReactGroup() {
         const s = movieSession;
-        const lines = s.buffer.splice(0);
-        if (lines.length === 0) return;
+        const all = s.buffer.splice(0);
+        if (all.length === 0) return;
+        const lines = all.slice(-6); // 밀린 백로그 버리고 최근 것만 → 안 뒤처지게
         s.lastReactAt = Date.now();
         const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
         if (!channel) return;
