@@ -1179,7 +1179,7 @@ const Bot = {
             chatSlang: config.chatSlang !== false,
             seedNote,
             timeGapText: gapText,
-        });
+        }) + this._movieContextNote(channelId);
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
         if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
@@ -1506,7 +1506,7 @@ const Bot = {
             showStatus: multi,
             sheetMember,          // 단체시트 속 "내가 연기할 인물" 이름 (없으면 '')
             charName,             // 멤버 표시 이름
-        });
+        }) + this._movieContextNote(channelId);
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: systemPrompt }, ...history];
@@ -1870,7 +1870,7 @@ const Bot = {
             categoryId: category.id, channelId: channel.id,
             mainChannelId: set?.chat || null,
             group: !!members, members: members || null,
-            buffer: [], lastReactAt: Date.now(), client, guildId: guild.id,
+            buffer: [], recentSubs: [], lastReactAt: Date.now(), client, guildId: guild.id,
         };
         movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 60) * 1000);
 
@@ -1879,14 +1879,22 @@ const Bot = {
         return { ok: true, channelId: channel.id };
     },
 
-    // 확장: 자막 큐 수신 → 버퍼
+    // 확장: 자막 큐 수신 → 버퍼(다음 리액션용) + recentSubs(유저가 말 걸 때 맥락용, 안 비움)
     _movieSub({ cues }) {
         if (!movieSession || !Array.isArray(cues)) return;
         for (const c of cues) {
             const text = (c?.text || '').trim();
-            if (text) movieSession.buffer.push(text);
+            if (text) { movieSession.buffer.push(text); movieSession.recentSubs.push(text); }
         }
         if (movieSession.buffer.length > 400) movieSession.buffer = movieSession.buffer.slice(-400);
+        if (movieSession.recentSubs.length > 40) movieSession.recentSubs = movieSession.recentSubs.slice(-40);
+    },
+
+    // 영화 중인 채널이면 "지금 보는 중 + 최근 자막" 맥락 블록 (유저가 말 걸 때도 영상 인지하게)
+    _movieContextNote(channelId) {
+        if (!movieSession || movieSession.channelId !== channelId) return '';
+        const subs = (movieSession.recentSubs || []).slice(-15).join('\n');
+        return `\n\n[NOW WATCHING — 지금 다 같이 "${movieSession.movie}"를 보는 중]\n${subs ? `최근 화면 자막:\n${subs}\n` : ''}- 지금 이 영상을 같이 보고 있다는 걸 전제로 반응/대화해. 유저가 "이거 봤어?" 같은 말을 하면 화면에 나온 그 내용을 말하는 거다. 영상을 안 보는 것처럼 굴지 마.`;
     },
 
     // 주기적으로 모인 자막에 캐릭터가 리액션
