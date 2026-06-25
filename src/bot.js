@@ -37,6 +37,8 @@ let movieSession = null;
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
+// 유저가 입력 중인 채널: { channelId: 언제까지 타이핑 중으로 볼지(ms) } — 입력 중이면 답을 미룸
+const typingUntil = {};
 // 채널별 생성 잠금: 한 채널에서 답 생성은 한 번에 하나만 (생성 중 온 메시지가 별도 답으로 새지 않게)
 const generating = {};
 // 멀티봇 그룹챗: 한 유저 메시지를 여러 멤버봇이 보므로, 저장/프록시는 한 번만 (메시지ID 기준)
@@ -91,6 +93,8 @@ const Bot = {
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildMessages,
                 GatewayIntentBits.MessageContent,
+                GatewayIntentBits.GuildMessageTyping,
+                GatewayIntentBits.DirectMessageTyping,
             ],
         });
 
@@ -114,6 +118,11 @@ const Bot = {
             client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
             client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
             client.on(Events.ChannelDelete, (ch) => this._onChannelDelete(ch));
+            // 유저가 입력 중이면 답을 미룬다 (여러 줄 연달아 칠 때 끊지 않게)
+            client.on(Events.TypingStart, (typing) => {
+                if (typing.user?.bot) return;
+                typingUntil[typing.channel.id] = Date.now() + (config.typingGraceMs || 6000);
+            });
         } else {
             // 페르소나 전담봇: 웹훅 단톡(토큰 없는 멤버만 있는 채널)에선 이 봇이 메시지를 받아 그룹 처리
             client.on(Events.MessageCreate, (message) => this._onPersonaMessage(message));
@@ -1330,6 +1339,7 @@ const Bot = {
             character: character || prev?.character || null,
             imageBase64: imageBase64 || prev?.imageBase64 || null,
             reactTarget: reactTarget || prev?.reactTarget || null,
+            firstQueuedAt: prev?.firstQueuedAt || Date.now(),
             timer: null,
         };
         const wait = BATCH_WINDOW_MS + this._humanReplyExtra();
@@ -1350,6 +1360,15 @@ const Bot = {
     async _flushReply(key) {
         const p = pendingReplies[key];
         if (!p) return;
+        // 유저가 아직 입력 중이면 답을 미룬다 (단, 너무 오래 매달리지 않게 상한)
+        const maxWait = config.replyMaxWaitMs || 25000;
+        const stillTyping = (typingUntil[p.channelId] || 0) > Date.now();
+        const waited = Date.now() - (p.firstQueuedAt || Date.now());
+        if (stillTyping && waited < maxWait) {
+            clearTimeout(p.timer);
+            p.timer = setTimeout(() => this._flushReply(key), 1200);
+            return;
+        }
         if (generating[key]) {
             clearTimeout(p.timer);
             p.timer = setTimeout(() => this._flushReply(key), 1500);

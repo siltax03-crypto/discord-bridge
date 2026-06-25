@@ -12,7 +12,9 @@
       "matches": [
         "https://www.youtube.com/*",
         "https://www.netflix.com/*",
-        "https://www.disneyplus.com/*"
+        "https://www.disneyplus.com/*",
+        "https://www.coupangplay.com/*",
+        "https://*.coupangplay.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle",

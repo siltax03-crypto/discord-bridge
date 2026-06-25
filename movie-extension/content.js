@@ -3,13 +3,15 @@
     const host = location.hostname;
     const site = host.includes('youtube') ? 'youtube'
         : host.includes('netflix') ? 'netflix'
-            : host.includes('disney') ? 'disney' : 'unknown';
+            : host.includes('disney') ? 'disney'
+                : host.includes('coupangplay') ? 'coupang' : 'unknown';
 
     // 사이트별 자막 컨테이너 선택자 (렌더된 자막 DOM을 읽음 — 포맷 파싱 불필요)
     const CAPTION_SELECTORS = {
         youtube: ['.ytp-caption-segment', '.captions-text'],
         netflix: ['.player-timedtext-text-container', '.player-timedtext'],
         disney: ['.dss-subtitle-renderer-cue-window', '[class*="subtitle"]', '.TimedTextActiveCue'],
+        coupang: ['.subtitle', '[class*="subtitle"]', '[class*="caption"]', '[class*="Subtitle"]'],
         unknown: ['[class*="caption"]', '[class*="subtitle"]'],
     };
 
@@ -39,7 +41,7 @@
             const t = document.querySelector('[data-uia="video-title"]');
             if (t?.textContent.trim()) return t.textContent.trim().replace(/\n+/g, ' ');
         }
-        return (document.title || 'movie').replace(/\s*[-—|]\s*(YouTube|Netflix|Disney\+).*$/i, '').trim() || 'movie';
+        return (document.title || 'movie').replace(/\s*[-—|]\s*(YouTube|Netflix|Disney\+|Coupang Play|쿠팡플레이).*$/i, '').trim() || 'movie';
     }
 
     let observer = null;

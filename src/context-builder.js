@@ -332,7 +332,7 @@ ${remindInstruction}${proactiveLines}`);
 - NO actions like *action*, (action), or narrative descriptions.
 - DO NOT write like a novel or screenplay.
 - Respond naturally as if texting a real person on Discord.
-- Write like real texting: keep it short. Break your reply into 1-3 short messages, each separated by a BLANK LINE (they become separate chat bubbles). Never write one long paragraph.
+- Write like real texting, and VARY how much you send — do NOT always send the same number of bubbles. Sometimes ONE short line is enough; sometimes 2; occasionally a quick burst of several short ones when you're excited or have a lot to say; rarely a slightly longer single message. Match your mood and the moment, like a real person. Separate bubbles with a BLANK LINE. Never a long paragraph, and never a fixed/mechanical 3-line pattern every time.
 ${distanceInstruction}
 ${meetInstruction}
 ${langInstruction}
