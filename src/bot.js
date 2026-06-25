@@ -1179,7 +1179,9 @@ const Bot = {
             chatSlang: config.chatSlang !== false,
             seedNote,
             timeGapText: gapText,
-        }) + this._movieContextNote(channelId);
+        }) + this._movieContextNote(channelId)
+            // 유저가 방금 말한 경우(선톡 아님): 무시는 말되 자연스럽게. 하던 얘기 있으면 마저 하고 끼워넣어도 됨
+            + (seedNote ? '' : `\n\n[USER JUST SPOKE]\n- ${userName}(유저)가 방금 말했다. 적어도 한 명은 ${userName}에게 반응해줘 — 다만 억지로 즉답할 필요는 없고, 하던 대화가 있으면 자연스럽게 한 박자 뒤 끼워넣어도 된다(현실 단톡처럼). 유저를 끝까지 투명인간 취급만 하지 마.`);
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
         if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
