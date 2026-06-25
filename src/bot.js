@@ -1548,6 +1548,25 @@ const Bot = {
         return out;
     },
 
+    // 봇이 방금 생성해 보낸 사진을 비전으로 읽어 히스토리에 기록 → 다음 턴에 자기가 뭘 보냈는지 앎
+    async _rememberOwnImage(channelId, imageBuffer, charName) {
+        try {
+            const dataUrl = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+            const desc = await AIClient.sendMessageWithImage(
+                [
+                    { role: 'system', content: 'Look at this image the character just sent and describe ONLY what is visibly in it in one short factual Korean sentence — what the person is holding, wearing, doing, the setting, expression. No flourish.' },
+                    { role: 'user', content: '이 사진에 뭐가 보여?' },
+                ],
+                dataUrl,
+                { maxTokens: 1024 },
+            );
+            const text = (desc || '').trim();
+            if (text) ChatHistory.addMessage(channelId, 'assistant', `(방금 내가 보낸 셀카/사진: ${text})`, charName);
+        } catch (e) {
+            console.warn('[Bot] 자기 사진 읽기 실패:', e.message);
+        }
+    },
+
     // --- 응답 전송: 모드에 따라 분할/통짜 + 이미지 첨부 ---
     // 멀티봇: 봇 자신으로 전송(프로필=캐릭터, 온라인 상태). 단일봇: 웹훅으로 캐릭터 흉내.
     async _sendResponse(channel, character, response, photoPrompt) {
@@ -1572,6 +1591,8 @@ const Bot = {
                 const imageBuffer = await ImageGen.generate(photoPrompt, character);
                 if (imageBuffer) {
                     attachment = new AttachmentBuilder(imageBuffer, { name: 'photo.png' });
+                    // 자기가 생성한 사진을 실제로 "읽어서" 기억에 남김 (다음 턴에 뭘 보냈는지 앎)
+                    this._rememberOwnImage(channel.id, imageBuffer, charName).catch(() => {});
                 }
             } catch (e) {
                 console.error('[Bot] 이미지 생성 실패:', e.message);
@@ -1925,7 +1946,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         if (config.botMode === 'multi') {
             const groupMembers = this._channelGroupMembers(channelId);
             if (groupMembers.length >= 2) {
-                const seed = note || 'The group chat has been quiet. Someone should speak up first and the characters start chatting naturally among themselves.';
+                const seed = note || "The group chat went quiet. Someone revives it with something NEW — continue from the earlier conversation, do NOT repeat any message already sent.";
                 return this._handleGroupMessage(null, groupMembers, seed).catch((e) => console.error('[Group] 선톡 오류:', e));
             }
         }
@@ -1934,7 +1955,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const grpCfg = config.channels[channelId];
         if (grpCfg?.group && Array.isArray(grpCfg.members) && grpCfg.members.length >= 1) {
             // 리마인더 등 note가 있으면 그걸 씨앗으로(내용 살림), 없으면 일반 잡담 시작
-            const seed = note || 'The group chat has been quiet for a while. Someone speaks up first and the characters start chatting naturally among themselves (everyday small talk, teasing, banter).';
+            const seed = note || "The group chat went quiet. Someone revives it by bringing up something NEW (a fresh thought, what they're doing now, reacting to the time/day) — continue from the earlier conversation, do NOT repeat any message already sent.";
             return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
 

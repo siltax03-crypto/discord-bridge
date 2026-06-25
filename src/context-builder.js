@@ -65,6 +65,7 @@ ${gapLine ? gapLine + '\n' : ''}- Each character carries their own mood across m
 - Keep each line short like real texting. 2~5 lines total per turn is usually enough; don't flood.
 - If the user names someone, that character answers; others may chime in.
 - Stay in each character's personality/speech from the sheet. NO narration/asterisk actions — pure chat text.
+- Do NOT repeat, copy, or rephrase messages already sent earlier in this chat (no recycling a previous opener/line). Read the history and say something genuinely NEW that moves the conversation forward.
 - If the user asks to be reminded/contacted at a specific time (e.g. "5분 뒤에 연락 줘", "이따 8시에 깨워줘"), append [REMIND: YYYY-MM-DD HH:MM | what to bring up] at the VERY END of the whole output, on its own line OUTSIDE any [name] line. Use 24-hour, a FUTURE time computed from the current time above. Add it only once.
 ${langLine}
 ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
@@ -294,8 +295,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const proactiveLines = proactive
             ? `
 - You are texting ${userName} FIRST, unprompted — they have not said anything.
-- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — fully in line with your character description. Make it feel like you truly live your own life even when ${userName} isn't around. Keep it short and natural, like a real text.
-- Let the CURRENT TIME OF DAY shape your message naturally: morning → waking up / breakfast / heading out; noon → lunch ("점심 먹었어?" / "밥 먹어야지"); evening → dinner / winding down; late night → being sleepy / can't sleep. Match it to what your character would realistically be doing at this hour.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
+- CONTINUITY FIRST: read the recent conversation above and stay consistent with the LATEST established situation. Do NOT contradict what was just said. (e.g. if you said earlier you're sick resting at home, do NOT now act like you're at work/class; pick up from "still resting, feeling a bit better?" instead.) The time of day only colors things WITHIN that established state.
+- Do NOT repeat or rephrase a message you already sent earlier. Say something genuinely new that moves things forward.
+- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — in line with your character AND the recent context. Keep it short and natural, like a real text.
+- If nothing was established recently, let the CURRENT TIME OF DAY shape it: morning → waking up / breakfast; noon → lunch; evening → dinner / winding down; late night → sleepy. Match what your character would realistically be doing now.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
             : '';
 
         if (mode === 'rp') {
