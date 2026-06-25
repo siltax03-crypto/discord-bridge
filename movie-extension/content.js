@@ -22,6 +22,20 @@
     }
 
     function getCaptionText() {
+        // 1) 표준 TextTrack activeCues — 사이트 DOM 클래스 몰라도 잡힘 (표준 플레이어)
+        const v = getVideo();
+        if (v && v.textTracks) {
+            for (const tr of v.textTracks) {
+                if (tr.mode === 'showing' || tr.mode === 'hidden') {
+                    const cues = tr.activeCues;
+                    if (cues && cues.length) {
+                        const txt = [...cues].map((c) => (c.text || '')).join(' ').replace(/<[^>]+>/g, '').trim();
+                        if (txt) return txt;
+                    }
+                }
+            }
+        }
+        // 2) 사이트별 렌더된 자막 DOM
         for (const sel of CAPTION_SELECTORS[site]) {
             const nodes = document.querySelectorAll(sel);
             if (nodes.length) {
