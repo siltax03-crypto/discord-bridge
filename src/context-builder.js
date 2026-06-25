@@ -24,7 +24,7 @@ const ContextBuilder = {
      * 출력 형식을 "[이름] 대사" 줄로 강제 → 봇이 파싱해 각 캐릭터로 분배.
      */
     buildGroup(character, options = {}) {
-        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '' } = options;
+        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '', timeGapText = '' } = options;
         const parts = [];
 
         // 시트 본문(등장인물 전원 정보)
@@ -41,14 +41,22 @@ const ContextBuilder = {
             if (lore.length) parts.push(`[World Info]\n${lore.join('\n---\n')}`);
         } catch { /* skip */ }
 
-        const now = this._clock(timezone).full;
+        const clock = this._clock(timezone);
+        const now = clock.full;
         const langLine = language === 'ko' ? '- Write IN KOREAN (한국어).' : '- Write in English.';
         const slangLine = chatSlang ? '- Casual texting tone; emoji/ㅋㅋ ok.' : "- No ㅋㅋ/emoji spam; each character's own voice.";
+        const dayLine = clock.isWeekend ? "It's the weekend (everyone more free, lazy mornings, up late)."
+            : clock.isFriday ? "It's Friday (week ending, a bit hyped)."
+            : "It's a weekday (work/school on; busy daytime, freer in the evening).";
+        const gapLine = timeGapText
+            ? `- About ${timeGapText} have passed since the last message here. Real time moved on for everyone — don't seamlessly continue as if no time passed; react to the gap (what they were each doing, the changed time of day) and don't just repeat the earlier topic unless someone brings it back.`
+            : '';
 
         parts.push(`[GROUP CHAT — HIGHEST PRIORITY]
 - This is a Discord group chat. The participants are: ${roster.join(', ')}.
 - You voice ALL of these characters at once. The user is a separate person in the chat.
-- Current time: ${now} (${timezone}).
+- Current time: ${now} (${timezone}). ${dayLine} Each character has their own life/schedule and reacts to the current time (busy, eating, sleepy, etc.).
+${gapLine ? gapLine + '\n' : ''}- Each character carries their own mood across messages (if they were annoyed/teasing/sweet, keep it going; let it shift naturally over time).
 - OUTPUT FORMAT: each message on its own line, prefixed with the speaker in square brackets, e.g.
   [${roster[0] || 'Name'}] their message
   [${roster[1] || 'Other'}] their reply
@@ -57,6 +65,8 @@ const ContextBuilder = {
 - Keep each line short like real texting. 2~5 lines total per turn is usually enough; don't flood.
 - If the user names someone, that character answers; others may chime in.
 - Stay in each character's personality/speech from the sheet. NO narration/asterisk actions — pure chat text.
+- Do NOT repeat, copy, or rephrase messages already sent earlier in this chat (no recycling a previous opener/line). Read the history and say something genuinely NEW that moves the conversation forward.
+- If the user asks to be reminded/contacted at a specific time (e.g. "5분 뒤에 연락 줘", "이따 8시에 깨워줘"), append [REMIND: YYYY-MM-DD HH:MM | what to bring up] at the VERY END of the whole output, on its own line OUTSIDE any [name] line. Use 24-hour, a FUTURE time computed from the current time above. Add it only once.
 ${langLine}
 ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
 
@@ -248,9 +258,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             ? `- At the very end you MAY set your current status with [STATUS: short phrase with emoji] reflecting what you're doing right now (e.g. [STATUS: 🍳 cooking], [STATUS: 😴 sleeping], [STATUS: 💼 at work]). Update it only when your activity actually changes; keep it under ~20 chars. This shows on your Discord profile, not in the message.`
             : '';
 
-        // 불완전함 — 너무 매끈하면 가짜
-        const imperfectionInstruction =
-            `- Text like a real person, not polished prose: OCCASIONALLY (not every message) a small typo you quickly fix ("뭐 먄 아 뭐해ㅋㅋ"), trailing off, an abrupt subject change, or a quick afterthought sent right after. Don't be grammatically perfect every time. Keep it readable though — imperfection is a light seasoning, not constant.`;
+        // 불완전함 — 너무 매끈하면 가짜 (채팅 모드에서만; 롤플 산문엔 톡 오타 부적절)
+        const imperfectionInstruction = mode === 'rp'
+            ? ''
+            : `- Text like a real person, not polished prose: OCCASIONALLY (not every message) a small typo you quickly fix ("뭐 먄 아 뭐해ㅋㅋ"), trailing off, an abrupt subject change, or a quick afterthought sent right after. Don't be grammatically perfect every time. Keep it readable though — imperfection is a light seasoning, not constant.`;
 
         const antiRepeat =
             '- Do NOT reuse sentences, phrases, or sentence patterns from your recent messages. Each reply must be freshly worded and move the conversation forward.';
@@ -261,7 +272,9 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
 
         // 만남 예약: 세트(롤플 채널이 있는 챗)에서만. 그 시간 뒤 롤플 채널에서 만남 장면이 시작됨
         const meetInstruction = meetEnabled
-            ? `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY for a real in-person meetup; never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`
+            ? `- MEETING IN PERSON: the moment an in-person meetup becomes imminent, you MUST append [MEET: <minutes> | what's about to happen] at the very END (it's hidden from the chat). Rules:\n  • You/they say you're heading over, leaving now, "be there in N minutes", "데리러 갈게", "갈게" → [MEET: N] (use the stated minutes; default 15 if unsaid).\n  • You/they are basically there NOW — "문 앞이야", "도착", "다 왔어", "초인종 누른다", "열어줘" → [MEET: 1].\n  When the time passes, the in-person meeting automatically opens as a roleplay scene in another channel. Use it ONLY when YOU or ${userName} (a PERSON) is physically going to the other to meet face-to-face.
+  • Do NOT use [MEET] for sending/ordering things: food delivery, packages, a courier, flowers, etc. arriving at their place is NOT a meetup. "음식이 도착", "배달 문 앞", "택배 보냈어" → NO tag.
+  Never make the tag your whole message. Do NOT roleplay the in-person meeting here in chat — just text until the scene opens.`
             : '';
 
         // 리얼타임 시간차. 채팅은 실시간(시간 흐르면 화제도 바뀜). 롤플은 리얼타임 아님 — 흐름만 은은하게.
@@ -282,15 +295,20 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const proactiveLines = proactive
             ? `
 - You are texting ${userName} FIRST, unprompted — they have not said anything.
-- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — fully in line with your character description. Make it feel like you truly live your own life even when ${userName} isn't around. Keep it short and natural, like a real text.
-- Let the CURRENT TIME OF DAY shape your message naturally: morning → waking up / breakfast / heading out; noon → lunch ("점심 먹었어?" / "밥 먹어야지"); evening → dinner / winding down; late night → being sleepy / can't sleep. Match it to what your character would realistically be doing at this hour.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
+- CONTINUITY FIRST: read the recent conversation above and stay consistent with the LATEST established situation. Do NOT contradict what was just said. (e.g. if you said earlier you're sick resting at home, do NOT now act like you're at work/class; pick up from "still resting, feeling a bit better?" instead.) The time of day only colors things WITHIN that established state.
+- Do NOT repeat or rephrase a message you already sent earlier. Say something genuinely new that moves things forward.
+- Reach out like a real person who actually has a life: share a genuine moment from your day right NOW — what you're doing, where you are, something you just saw / felt / remembered — in line with your character AND the recent context. Keep it short and natural, like a real text.
+- If nothing was established recently, let the CURRENT TIME OF DAY shape it: morning → waking up / breakfast; noon → lunch; evening → dinner / winding down; late night → sleepy. Match what your character would realistically be doing now.${proactiveNote ? `\n- ${proactiveNote}` : ''}`
             : '';
 
         if (mode === 'rp') {
-            // 롤플 모드: 나레이션/행동 허용
+            // 롤플 모드: 산문 롤플 (톡 아님)
             parts.push(`[SYSTEM INSTRUCTION]
-- Roleplay as ${charName}. Narration and *actions* are allowed.
-- Stay in character. Write immersively.
+- This is immersive PROSE ROLEPLAY as ${charName}. You are physically together with ${userName} in person, in a real scene — this is NOT texting/DMs.
+- Write in narrative prose: describe ${charName}'s actions, body language, expressions, surroundings, and senses, with *asterisks* for actions/narration and quotes for spoken dialogue. Use full descriptive paragraphs.
+- Do NOT write like a text message or Discord chat. NO short one-line chat bubbles, no "texting" style, no message-by-message back-and-forth.
+- Even if earlier text-chat logs are shown above for context, do NOT imitate that casual texting format here — switch fully into roleplay prose.
+- Stay in character. Write immersively and in detail.
 ${langInstruction}
 ${slangInstruction}
 ${antiRepeat}

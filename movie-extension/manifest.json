@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "캐릭터랑 같이보기 (Discord Bridge)",
+  "version": "1.0.0",
+  "description": "넷플릭스/유튜브/디즈니+ 자막을 디스코드 봇 캐릭터에게 실시간 전송해서 같이 보는 느낌을 낸다.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "같이보기" },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://www.netflix.com/*",
+        "https://www.disneyplus.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

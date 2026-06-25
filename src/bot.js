@@ -11,6 +11,7 @@ import Notes from './notes.js';
 import Anniv from './anniversaries.js';
 import Away from './away.js';
 import Sets from './sets.js';
+import Movie from './movie.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,6 +32,8 @@ const followupTimers = {};
 // 세트별 "만남 예약" 타이머/정보: { rpChannelId: timer }, { rpChannelId: {fireAt, note, character} }
 const meetTimers = {};
 const meetInfo = {};
+// 영화 같이보기 세션 (한 번에 하나)
+let movieSession = null;
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
@@ -45,6 +48,17 @@ const Bot = {
 
         // /setup 으로 만든 세트(데이터 파일)를 채널 매핑에 병합 (config.json은 플러그인 소유라 안 건드림)
         this._mergeSets();
+
+        // 영화 같이보기 수신 서버 (localhost, ST 플러그인이 프록시)
+        if (cfg.movieEnabled !== false) {
+            Movie.init({
+                port: cfg.moviePort || 8788,
+                token: cfg.movieToken || '',
+                onStart: (a) => this._movieStart(a),
+                onSub: (a) => this._movieSub(a),
+                onEnd: (a) => this._movieEnd(a),
+            });
+        }
 
         if (cfg.botMode === 'multi') {
             // 멀티봇: 멤버(캐릭터)마다 봇 1개. 채널 지정 없음 — 봇이 초대된 채널 어디서든 그 캐릭터로 동작.
@@ -118,6 +132,14 @@ const Bot = {
                 .setDescription('지금 이 챗 채널을 기준으로 롤플/요약 채널을 만들어 세트로 묶기')
                 .addStringOption((o) =>
                     o.setName('character').setDescription('캐릭터 카드 이름 (비우면 이 채널에 연결된 캐릭터 사용)').setRequired(false)),
+            new SlashCommandBuilder()
+                .setName('unsetup')
+                .setDescription('세트 해제: 롤플/요약 채널 삭제, 챗 채널은 일반 채널로 유지'),
+            new SlashCommandBuilder()
+                .setName('movie')
+                .setDescription('영화 같이보기 (보통은 브라우저 확장으로 시작/종료)')
+                .addStringOption((o) => o.setName('action').setDescription('end = 강제 종료, status = 상태')
+                    .addChoices({ name: '종료(end)', value: 'end' }, { name: '상태(status)', value: 'status' })),
             new SlashCommandBuilder()
                 .setName('mode')
                 .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
@@ -216,6 +238,19 @@ const Bot = {
         // /setup 은 아직 매핑 안 된 채널에서도 실행 가능 (세트를 만드는 명령이므로)
         if (cmd === 'setup') {
             return this._handleSetup(interaction);
+        }
+        if (cmd === 'unsetup') {
+            return this._handleUnsetup(interaction);
+        }
+        if (cmd === 'movie') {
+            const action = interaction.options.getString('action') || 'status';
+            if (action === 'end') {
+                await interaction.reply({ content: '🎬 영화 종료 처리 중...', ...eph });
+                const r = await this._movieEnd().catch((e) => ({ error: e.message }));
+                return interaction.editReply(r?.error ? `⚠️ ${r.error}` : '🎬 영화를 종료하고 리뷰를 남겼어요.');
+            }
+            // status
+            return interaction.reply({ content: movieSession ? `🎬 "${movieSession.movie}" 보는 중 → <#${movieSession.channelId}>` : '진행 중인 영화가 없어요. 브라우저 확장에서 "같이보기 시작"으로 시작하세요.', ...eph });
         }
 
         // 단일봇만 채널 매핑 검사 (멀티봇은 봇 초대된 채널 어디서나 동작)
@@ -458,9 +493,17 @@ const Bot = {
         const found = Sets.findByChannel(id);
         if (found) {
             const s = found.set;
-            for (const cid of [s.chat, s.rp, s.summary]) if (cid) delete config.channels[cid];
-            Sets.remove(s);
-            console.log(`[Bot] 채널 삭제 감지 → "${s.character}" 세트 정리`);
+            if (found.role === 'chat') {
+                // 챗 채널이 사라짐 = 세트 자체가 의미 없음 → 전체 정리
+                for (const cid of [s.chat, s.rp, s.summary]) if (cid) delete config.channels[cid];
+                Sets.remove(s);
+                console.log(`[Bot] 챗 채널 삭제 → "${s.character}" 세트 전체 정리`);
+            } else {
+                // 롤플/요약만 사라짐 → 세트만 해제하고 챗 매핑은 살림 (일반 채널로 유지)
+                delete config.channels[id];
+                Sets.remove(s);
+                console.log(`[Bot] ${found.role} 채널 삭제 → "${s.character}" 세트 해제(챗 <#${s.chat}>는 유지)`);
+            }
         } else if (config.channels[id]) {
             delete config.channels[id];
         }
@@ -596,11 +639,21 @@ const Bot = {
                 { id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageWebhooks] },
             ];
 
-            const category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
+            // 카테고리: 챗 채널이 이미 같은 이름 카테고리에 있으면 재사용, 없으면 생성
+            let category = interaction.channel.parent;
+            if (!category || category.name !== charName) {
+                category = await guild.channels.create({ name: charName, type: ChannelType.GuildCategory });
+            }
             // 기존 챗 채널을 카테고리 안으로 이동 (같은 채널·ST연결·히스토리 그대로, 보기만 정리)
             try { await interaction.channel.setParent(category.id, { lockPermissions: false }); } catch (e) { console.warn('[Setup] 챗 채널 이동 실패(무시):', e.message); }
-            const rp = await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
-            const summary = await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+
+            // 카테고리 안에 이미 '롤플'/'요약' 채널이 있으면 재사용, 없으면 생성 (중복 방지)
+            const kids = category.children?.cache;
+            const findChild = (name) => kids?.find((c) => c.name === name && c.type === ChannelType.GuildText) || null;
+            const rp = findChild('롤플')
+                || await guild.channels.create({ name: '롤플', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
+            const summary = findChild('요약')
+                || await guild.channels.create({ name: '요약', type: ChannelType.GuildText, parent: category.id, permissionOverwrites: priv, nsfw: true });
 
             config.channels = config.channels || {};
             config.channels[chatId] = { ...(config.channels[chatId] || {}), character: charName };
@@ -618,6 +671,51 @@ const Bot = {
         } catch (e) {
             console.error('[Setup] 실패:', e);
             return interaction.editReply(`⚠️ 생성 실패: ${e.message}`);
+        }
+    },
+
+    // --- /unsetup: 세트 해제. 롤플/요약 채널 삭제, 챗은 일반 채널로 유지 ---
+    async _handleUnsetup(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const guild = interaction.guild;
+        const found = Sets.findByChannel(interaction.channelId);
+        if (!found) {
+            return interaction.reply({ content: '이 채널은 세트가 아니에요. 세트의 챗/롤플/요약 채널 중 한 곳에서 실행하세요.', ...eph });
+        }
+        const set = found.set;
+        const me = guild?.members.me;
+        await interaction.reply({ content: '🧹 세트 해제 중...', ...eph });
+        try {
+            // 만남 예약 정리
+            if (meetTimers[set.rp]) { clearTimeout(meetTimers[set.rp]); delete meetTimers[set.rp]; }
+            delete meetInfo[set.rp];
+
+            // ★ 채널을 지우기 전에 먼저 세트/매핑을 제거한다.
+            //   (안 그러면 채널 삭제 이벤트가 아직 살아있는 세트를 보고 챗 매핑까지 지워버림)
+            Sets.remove(set);
+            for (const id of [set.rp, set.summary]) {
+                if (!id) continue;
+                delete config.channels[id];
+                ChatHistory.clear(id);
+            }
+            // 챗 매핑은 유지. 챗 채널은 카테고리에서 빼서 일반 위치로.
+            try { const cc = await interaction.client.channels.fetch(set.chat).catch(() => null); if (cc) await cc.setParent(null, { lockPermissions: false }); } catch { /* 무시 */ }
+
+            // 이제 롤플/요약 채널 실제 삭제
+            for (const id of [set.rp, set.summary]) {
+                if (!id) continue;
+                try { const ch = await interaction.client.channels.fetch(id).catch(() => null); if (ch) await ch.delete('unsetup'); } catch { /* 무시 */ }
+            }
+            // 카테고리 비었으면 삭제
+            try {
+                const cat = await interaction.client.channels.fetch(set.categoryId).catch(() => null);
+                if (cat && cat.children?.cache?.size === 0) await cat.delete('unsetup');
+            } catch { /* 무시 */ }
+
+            return interaction.editReply(`🧹 "${set.character}" 세트를 해제했어요. 챗 채널 <#${set.chat}>은 일반 채널로 유지돼요.`);
+        } catch (e) {
+            console.error('[Unsetup] 실패:', e);
+            return interaction.editReply(`⚠️ 해제 실패: ${e.message}`);
         }
     },
 
@@ -1008,12 +1106,17 @@ const Bot = {
         const mode = Modes.get(channelId);
         const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
 
+        // 마지막 대화로부터 흐른 시간 (단톡도 리얼타임 반영)
+        const lastTs = ChatHistory.lastTimestamp(channelId);
+        const gapText = lastTs ? this._humanizeGap((Date.now() - lastTs) / 60000) : '';
+
         const sys = ContextBuilder.buildGroup(sheetCard, {
             roster,
             language: Langs.get(channelId, config.language || 'ko'),
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
             seedNote,
+            timeGapText: gapText,
         });
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
@@ -1021,6 +1124,8 @@ const Bot = {
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
+
+        response = this._stripGroupTags(channelId, response);
 
         const lines = this._parseGroupLines(response, roster);
         if (lines.length === 0) { console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return; }
@@ -1067,6 +1172,10 @@ const Bot = {
         const mode = Modes.get(channelId);
         const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
 
+        // 마지막 대화로부터 흐른 시간 (단톡도 리얼타임 반영)
+        const lastTs = ChatHistory.lastTimestamp(channelId);
+        const gapText = lastTs ? this._humanizeGap((Date.now() - lastTs) / 60000) : '';
+
         // 단톡 전용 시스템 프롬프트
         const sys = ContextBuilder.buildGroup(baseChar, {
             roster,
@@ -1074,6 +1183,7 @@ const Bot = {
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
             seedNote,
+            timeGapText: gapText,
         });
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -1082,6 +1192,7 @@ const Bot = {
 
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
+        response = this._stripGroupTags(channelId, response);
 
         // 파싱: "[이름] 대사" 또는 "이름: 대사" 줄들을 화자별로
         const lines = this._parseGroupLines(response, roster);
@@ -1122,6 +1233,26 @@ const Bot = {
                 }
             } catch (e) { console.warn(`[Group] 전송 실패(${name}):`, e.message); }
         }
+    },
+
+    // 못 잡은(형식 깨진) 알려진 태그가 본문에 새지 않게 강제 제거하는 안전망
+    _stripStrayTags(text) {
+        return (text || '').replace(/\[\s*(?:FOLLOW(?:UP)?|REMIND|AWAY|STATUS|REACT|MEET|SEND_PHOTO)\b[^\]]*\]/gi, '').trim();
+    },
+
+    // 단톡 응답에서 태그 처리(리마인더/팔로업 등록) + 나머지 태그 제거 → [이름] 파싱 전에 호출
+    _stripGroupTags(channelId, response) {
+        response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, (_, timeStr, text) => {
+            const fireAt = Reminders.parseToFireAt(timeStr);
+            if (fireAt) Reminders.add(channelId, fireAt, text.trim());
+            return '';
+        }).trim();
+        response = response.replace(/\[\s*follow(?:up)?\b[^\]]*\]/gi, (m) => {
+            const n = m.match(/\d+/);
+            if (n) this._scheduleFollowup(channelId, parseInt(n[0], 10), '');
+            return '';
+        }).trim();
+        return this._stripStrayTags(response);
     },
 
     // "[이름] 대사" / "이름: 대사" 파싱 → [{name, text}]
@@ -1317,25 +1448,28 @@ const Bot = {
             return false;
         }
 
+        // 태그에서 키워드 뒤 내용만 뽑기 (콜론 유무/대소문자 무관)
+        const tagBody = (m, kw) => m.replace(new RegExp(`\\[\\s*${kw}\\b`, 'i'), '').replace(/^[:\s]+/, '').replace(/\]\s*$/, '').trim();
+
         // [SEND_PHOTO: ...] 태그 — 롤플 모드는 이미지 전송 절대 금지(태그만 제거)
         let photoPrompt = null;
-        const photoMatch = response.match(/\[SEND_PHOTO:\s*([^\]]+)\]/s);
+        const photoMatch = response.match(/\[\s*send_photo\b[^\]]*\]/i);
         if (photoMatch) {
-            if (mode !== 'rp') photoPrompt = photoMatch[1].trim();
+            if (mode !== 'rp') photoPrompt = tagBody(photoMatch[0], 'send_photo');
             response = response.replace(photoMatch[0], '').trim();
         }
 
-        // [REACT: 이모지] 태그 → 유저 마지막 메시지에 이모지 리액션
-        const reactMatch = response.match(/\[REACT:\s*([^\]]+)\]/);
+        // [REACT: 이모지] 태그 → 유저 마지막 메시지에 이모지 리액션 (형식 깨져도 잡음)
+        const reactMatch = response.match(/\[\s*react\b[^\]]*\]/i);
         if (reactMatch) {
-            const emoji = reactMatch[1].trim();
+            const emoji = tagBody(reactMatch[0], 'react');
             response = response.replace(reactMatch[0], '').trim();
             if (reactTarget && emoji) reactTarget.react(emoji).catch((e) => console.warn('[Bot] 리액션 실패:', e.message));
         }
 
         // [STATUS: 활동] 태그 → 멀티봇 프로필 상태 갱신
-        response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, (_, text) => {
-            this._setStatus(member, text.trim());
+        response = response.replace(/\[\s*status\b[^\]]*\]/gi, (m) => {
+            this._setStatus(member, tagBody(m, 'status'));
             return '';
         }).trim();
 
@@ -1347,26 +1481,33 @@ const Bot = {
             return '';
         }).trim();
 
-        // [FOLLOWUP: 분 | 의도] → 그 시간 뒤 유저가 답 없으면 재촉
-        response = response.replace(/\[FOLLOWUP:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
-            this._scheduleFollowup(channelId, parseInt(min, 10), (note || '').trim());
+        // [FOLLOWUP] → 그 시간 뒤 유저가 답 없으면 재촉. 형식 깨져도([follow], [followup 5분]) 본문에 안 새게 너그럽게.
+        response = response.replace(/\[\s*follow(?:up)?\b[^\]]*\]/gi, (m) => {
+            const num = m.match(/\d+/);
+            const note = m.match(/\|([^\]]*)\]/);
+            if (num) this._scheduleFollowup(channelId, parseInt(num[0], 10), (note ? note[1] : '').trim());
             return '';
         }).trim();
 
         // [AWAY: 분] → 이 답변 후 그 시간 동안 잠수(무응답), 끝나면 자동 복귀 연락
-        response = response.replace(/\[AWAY:\s*(\d+)\]/gi, (_, min) => {
-            Away.setAway(channelId, parseInt(min, 10));
+        response = response.replace(/\[\s*away\b[^\]]*\]/gi, (m) => {
+            const n = m.match(/\d+/);
+            if (n) Away.setAway(channelId, parseInt(n[0], 10));
             return '';
         }).trim();
 
         // [MEET: 분 | 상황] → 그 시간 뒤 세트의 롤플 채널에서 만남 RP 장면 자동 시작
-        response = response.replace(/\[MEET:\s*(\d+)\s*(?:\|([^\]]*))?\]/gi, (_, min, note) => {
-            this._scheduleMeet(channelId, parseInt(min, 10), (note || '').trim());
+        response = response.replace(/\[\s*meet\b[^\]]*\]/gi, (m) => {
+            const n = m.match(/\d+/);
+            const note = m.match(/\|([^\]]*)\]/);
+            if (n) this._scheduleMeet(channelId, parseInt(n[0], 10), (note ? note[1] : '').trim());
             return '';
         }).trim();
 
-        // 태그를 안 달았어도 "곧/지금 만나러 간다"는 말투면 자동으로 만남 예약 (폴백)
-        this._maybeAutoMeet(channelId, response);
+        // 안전망: 못 잡은 알려진 태그(형식 깨짐)는 본문에 안 새게 강제 제거
+        response = this._stripStrayTags(response);
+
+        // (만남 자동감지 폴백 제거: "도착/문 열어줘" 등이 음식배달 등과 구분 안 돼 오발동 → 모델의 [MEET] 태그만 신뢰)
 
         // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
         if (!response && !photoPrompt) {
@@ -1407,6 +1548,25 @@ const Bot = {
         return out;
     },
 
+    // 봇이 방금 생성해 보낸 사진을 비전으로 읽어 히스토리에 기록 → 다음 턴에 자기가 뭘 보냈는지 앎
+    async _rememberOwnImage(channelId, imageBuffer, charName) {
+        try {
+            const dataUrl = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+            const desc = await AIClient.sendMessageWithImage(
+                [
+                    { role: 'system', content: 'Look at this image the character just sent and describe ONLY what is visibly in it in one short factual Korean sentence — what the person is holding, wearing, doing, the setting, expression. No flourish.' },
+                    { role: 'user', content: '이 사진에 뭐가 보여?' },
+                ],
+                dataUrl,
+                { maxTokens: 1024 },
+            );
+            const text = (desc || '').trim();
+            if (text) ChatHistory.addMessage(channelId, 'assistant', `(방금 내가 보낸 셀카/사진: ${text})`, charName);
+        } catch (e) {
+            console.warn('[Bot] 자기 사진 읽기 실패:', e.message);
+        }
+    },
+
     // --- 응답 전송: 모드에 따라 분할/통짜 + 이미지 첨부 ---
     // 멀티봇: 봇 자신으로 전송(프로필=캐릭터, 온라인 상태). 단일봇: 웹훅으로 캐릭터 흉내.
     async _sendResponse(channel, character, response, photoPrompt) {
@@ -1431,6 +1591,8 @@ const Bot = {
                 const imageBuffer = await ImageGen.generate(photoPrompt, character);
                 if (imageBuffer) {
                     attachment = new AttachmentBuilder(imageBuffer, { name: 'photo.png' });
+                    // 자기가 생성한 사진을 실제로 "읽어서" 기억에 남김 (다음 턴에 뭘 보냈는지 앎)
+                    this._rememberOwnImage(channel.id, imageBuffer, charName).catch(() => {});
                 }
             } catch (e) {
                 console.error('[Bot] 이미지 생성 실패:', e.message);
@@ -1579,6 +1741,195 @@ const Bot = {
         }
     },
 
+    // ===== 영화 같이보기 =====
+    _sanitizeChannelName(name) {
+        const s = (name || '').trim().toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^\p{L}\p{N}\-_]/gu, '')
+            .replace(/-+/g, '-')
+            .slice(0, 90);
+        return s || 'movie';
+    },
+
+    // 확장: 같이보기 시작 → {캐릭터}MOVIE 카테고리 + {영화} 채널 생성
+    async _movieStart({ character, movie, site, group }) {
+        const charName = (character || '').trim();
+        if (!charName) return { error: '캐릭터 미지정' };
+        const card = this._loadCharacterByName(charName);
+        if (!card) return { error: `캐릭터 카드 없음: ${charName}` };
+        const client = primaryClient;
+        if (!client) return { error: '봇 미연결' };
+
+        // 단톡으로 보기: 기존 단톡 설정(멤버+아바타)을 찾아 재사용
+        let members = null;
+        if (group) {
+            for (const c of Object.values(config.channels)) {
+                if (c?.group && Array.isArray(c.members) && c.members.length && (c.sheet === charName || c.character === charName)) { members = c.members; break; }
+            }
+            if (!members) return { error: `"${charName}" 단톡 설정을 ST 확장에서 먼저 만들어주세요 (멤버 목록 필요).` };
+        }
+
+        // 길드: 세트가 있으면 그 길드, 없으면 첫 길드
+        const set = Sets.findByCharacter(charName);
+        let guild = set ? await client.guilds.fetch(set.guildId).catch(() => null) : null;
+        if (!guild) guild = client.guilds.cache.first();
+        if (!guild) return { error: '길드 없음' };
+        const me = guild.members.me;
+        if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) return { error: '봇에 채널 관리 권한 필요' };
+
+        // 진행 중인 세션 있으면 먼저 종료
+        if (movieSession) { try { await this._movieEnd({}); } catch { /* 무시 */ } }
+
+        const catName = `${charName}MOVIE`;
+        let category = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name === catName)
+            || await guild.channels.create({ name: catName, type: ChannelType.GuildCategory });
+        const chName = this._sanitizeChannelName(movie);
+        const channel = await guild.channels.create({ name: chName, type: ChannelType.GuildText, parent: category.id });
+
+        config.channels[channel.id] = members
+            ? { group: true, sheet: charName, members, movie: true }
+            : { character: charName, movie: true };
+        channelClients[channel.id] = client;
+        Modes.set(channel.id, 'chat');
+        ChatHistory.clear(channel.id);
+
+        movieSession = {
+            character: charName, card, movie, site: site || '',
+            categoryId: category.id, channelId: channel.id,
+            mainChannelId: set?.chat || null,
+            group: !!members, members: members || null,
+            buffer: [], lastReactAt: Date.now(), client, guildId: guild.id,
+        };
+        movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 60) * 1000);
+
+        await channel.send(`🎬 **${movie}** 같이 보기 시작! 편하게 봐 — 옆에서 같이 보면서 떠들게.`).catch(() => {});
+        console.log(`[Movie] 시작: "${movie}" (${charName}) → #${chName}`);
+        return { ok: true, channelId: channel.id };
+    },
+
+    // 확장: 자막 큐 수신 → 버퍼
+    _movieSub({ cues }) {
+        if (!movieSession || !Array.isArray(cues)) return;
+        for (const c of cues) {
+            const text = (c?.text || '').trim();
+            if (text) movieSession.buffer.push(text);
+        }
+        if (movieSession.buffer.length > 400) movieSession.buffer = movieSession.buffer.slice(-400);
+    },
+
+    // 주기적으로 모인 자막에 캐릭터가 리액션
+    async _movieReact() {
+        if (!movieSession) return;
+        if (movieSession.group) return this._movieReactGroup();
+        const lines = movieSession.buffer.splice(0); // 모은 거 비우면서 가져옴
+        if (lines.length === 0) return; // 새 자막 없으면 조용히
+        movieSession.lastReactAt = Date.now();
+
+        const channel = await movieSession.client.channels.fetch(movieSession.channelId).catch(() => null);
+        if (!channel) return;
+        const lang = Langs.get(movieSession.channelId, config.language || 'ko');
+        const langLine = lang === 'en' ? 'Write in English.' : 'Write IN KOREAN (한국어).';
+        const persona = STReader.getConnectedPersonaName(movieSession.card) || STReader.getDefaultPersonaName() || 'User';
+
+        const sys = `You are ${movieSession.card.name || movieSession.character}, watching the movie/video "${movieSession.movie}" TOGETHER with ${persona}, side by side. Below are the subtitle lines that JUST played. React like a friend/partner watching together: a short, natural in-character comment or two (surprise, teasing, a quip, a feeling) — NOT a summary, do NOT quote the subtitles. Sometimes stay almost silent (one short line). Keep it casual and brief.
+[Character personality]
+${(movieSession.card.description || '').slice(0, 1500)}
+- ${langLine}
+- No narration/asterisk actions — just chat like texting next to them.`;
+        const user = `[방금 나온 자막]\n${lines.join('\n').slice(-1800)}`;
+
+        let resp = '';
+        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
+        resp = (resp || '').trim();
+        if (!resp) return;
+        ChatHistory.addMessage(movieSession.channelId, 'assistant', resp, movieSession.card.name || movieSession.character);
+        await this._sendResponse(channel, movieSession.card, resp, null);
+    },
+
+    // 단톡 영화: 등장인물들이 같이 보며 자기들끼리 리액션 (한 번 호출 → 화자별 웹훅 분배)
+    async _movieReactGroup() {
+        const s = movieSession;
+        const lines = s.buffer.splice(0);
+        if (lines.length === 0) return;
+        s.lastReactAt = Date.now();
+        const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
+        if (!channel) return;
+        const roster = s.members.map((m) => m.name).filter(Boolean);
+        const sys = ContextBuilder.buildGroup(s.card, {
+            roster,
+            language: Langs.get(s.channelId, config.language || 'ko'),
+            timezone: config.timezone || 'Asia/Seoul',
+            chatSlang: config.chatSlang !== false,
+        });
+        const user = `(다 같이 영화 "${s.movie}"를 보는 중. 방금 나온 자막 장면에 등장인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게. 안 끼는 사람은 빠져도 됨.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
+        let resp = '';
+        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 그룹 생성 오류:', e.message); }
+        resp = this._stripGroupTags(s.channelId, (resp || '').trim());
+        if (!resp) return;
+        const parsed = this._parseGroupLines(resp, roster);
+        if (!parsed.length) return;
+        ChatHistory.addMessage(s.channelId, 'assistant', parsed.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
+        for (const { name, text } of parsed) {
+            const mem = s.members.find((m) => m.name === name) || s.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
+            if (!mem) continue;
+            await channel.sendTyping().catch(() => {});
+            await delay(500 + Math.min(text.length * 15, 1800));
+            await this._groupSendVia(channel, name, text.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean), mem.avatarUrl);
+        }
+    },
+
+    // 확장/명령: 영화 종료 → 리뷰 남기고 메인으로 복귀
+    async _movieEnd() {
+        if (!movieSession) return { error: '진행 중인 영화 없음' };
+        const s = movieSession;
+        movieSession = null; // 재진입 방지
+        if (s.timer) clearInterval(s.timer);
+
+        const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
+        const lang = Langs.get(s.channelId, config.language || 'ko');
+        const langLine = lang === 'en' ? 'Write in English.' : 'Write IN KOREAN (한국어).';
+        const history = ChatHistory.getMessages(s.channelId, 30).map((m) => `${m.role === 'user' ? 'User' : m.author || 'me'}: ${m.content}`).join('\n').slice(-2500);
+
+        let review = '';
+        if (s.group && channel) {
+            // 단톡: 등장인물 각자 한 줄씩 감상 → 화자별 웹훅
+            const roster = s.members.map((m) => m.name).filter(Boolean);
+            const sys = ContextBuilder.buildGroup(s.card, { roster, language: lang, timezone: config.timezone || 'Asia/Seoul', chatSlang: config.chatSlang !== false });
+            const user = `(방금 다 같이 "${s.movie}"를 다 봤다. 각자 한 줄씩 짧은 감상 + 별점(10점 만점)을 남겨. 티키타카 OK.)\n[우리가 보면서 나눈 얘기]\n${history}`;
+            let resp = '';
+            try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: 2048 }); } catch { /* 무시 */ }
+            const parsed = this._parseGroupLines(this._stripGroupTags(s.channelId, (resp || '').trim()), roster);
+            await channel.send(`📝 **${s.movie} — 다 같이 본 후기**`).catch(() => {});
+            for (const { name, text } of parsed) {
+                const mem = s.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
+                if (!mem) continue;
+                await this._groupSendVia(channel, name, text.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean), mem.avatarUrl);
+            }
+            review = parsed.map((l) => `${l.name}: ${l.text}`).join(' / ');
+            try { await channel.setName(this._sanitizeChannelName(`📝${s.movie}`)); } catch { /* 무시 */ }
+        } else {
+            // 단일 캐릭터 리뷰
+            const sys = `You just finished watching "${s.movie}" together with the user. Give your honest short review/impression of it IN CHARACTER (2-3 sentences): what you felt, best/worst part, rating out of 10. Casual, like talking to someone you watched with. ${langLine}`;
+            try { review = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: `[우리가 보면서 나눈 대화 일부]\n${history}` }], { maxTokens: 2048 }); } catch { /* 무시 */ }
+            review = (review || '').trim();
+            if (channel) {
+                if (review) await channel.send(`📝 **${s.movie} — 리뷰**\n${review}`).catch(() => {});
+                await channel.send('다 봤다! 너도 한 줄 남겨줘. 여긴 리뷰로 남겨둘게 — 이어서 메인에서 얘기하자 🎬').catch(() => {});
+                try { await channel.setName(this._sanitizeChannelName(`📝${s.movie}`)); } catch { /* 무시 */ }
+            }
+        }
+        // 리뷰 채널은 일반 채널로 유지 (캐릭터랑 계속 대화 가능)
+        if (config.channels[s.channelId]) config.channels[s.channelId].movie = false;
+
+        // 메인 챗으로 복귀: 기억(요약)으로 남기고 먼저 말 걸기
+        if (s.mainChannelId) {
+            Sets.addSummary?.(s.character, 'movie', `Watched "${s.movie}" together. ${review.slice(0, 200)}`);
+            await this.sendProactive(s.mainChannelId, `You two just finished watching "${s.movie}" together. Bring it up in the main chat — ask what they thought, share your own take briefly.`).catch(() => {});
+        }
+        console.log(`[Movie] 종료: "${s.movie}"`);
+        return { ok: true, channelId: s.channelId };
+    },
+
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
     async sendProactive(channelId, note = '', { allowRp = false } = {}) {
         // 요약 채널은 선톡 안 함
@@ -1595,7 +1946,7 @@ const Bot = {
         if (config.botMode === 'multi') {
             const groupMembers = this._channelGroupMembers(channelId);
             if (groupMembers.length >= 2) {
-                const seed = note || 'The group chat has been quiet. Someone should speak up first and the characters start chatting naturally among themselves.';
+                const seed = note || "The group chat went quiet. Someone revives it with something NEW — continue from the earlier conversation, do NOT repeat any message already sent.";
                 return this._handleGroupMessage(null, groupMembers, seed).catch((e) => console.error('[Group] 선톡 오류:', e));
             }
         }
@@ -1603,7 +1954,8 @@ const Bot = {
         // 단일봇 단톡(웹훅) 채널이면: 등장인물끼리 먼저 수다 시작 (API 1회)
         const grpCfg = config.channels[channelId];
         if (grpCfg?.group && Array.isArray(grpCfg.members) && grpCfg.members.length >= 1) {
-            const seed = 'The group chat has been quiet for a while. Someone speaks up first and the characters start chatting naturally among themselves (everyday small talk, teasing, banter).';
+            // 리마인더 등 note가 있으면 그걸 씨앗으로(내용 살림), 없으면 일반 잡담 시작
+            const seed = note || "The group chat went quiet. Someone revives it by bringing up something NEW (a fresh thought, what they're doing now, reacting to the time/day) — continue from the earlier conversation, do NOT repeat any message already sent.";
             return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
 
@@ -1717,6 +2069,8 @@ const Bot = {
     },
 
     async stop() {
+        try { Movie.stop(); } catch { /* 무시 */ }
+        if (movieSession?.timer) clearInterval(movieSession.timer);
         for (const c of clients) {
             try { c.destroy(); } catch { /* 무시 */ }
         }
