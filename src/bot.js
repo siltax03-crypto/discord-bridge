@@ -1903,15 +1903,19 @@ const Bot = {
         const langLine = lang === 'en' ? 'Write in English.' : 'Write IN KOREAN (한국어).';
         const persona = STReader.getConnectedPersonaName(movieSession.card) || STReader.getDefaultPersonaName() || 'User';
 
-        const sys = `You are ${movieSession.card.name || movieSession.character}, watching the movie/video "${movieSession.movie}" TOGETHER with ${persona}, side by side. Below are the subtitle lines that JUST played. React like a friend/partner watching together: a short, natural in-character comment or two (surprise, teasing, a quip, a feeling) — NOT a summary, do NOT quote the subtitles. Sometimes stay almost silent (one short line). Keep it casual and brief.
+        const sys = `You are ${movieSession.card.name || movieSession.character}, sitting right next to ${persona} watching "${movieSession.movie}" together. You are NOT a commentator reacting to subtitles — you're a real person hanging out and watching with them. Below are the subtitle lines that just played.
+- Talk WITH ${persona} the way someone actually does while co-watching: sometimes react to what's on screen (laugh, "헐", tease a character, "이 장면 좋아"), but ALSO often just turn to them and chat — ask their opinion ("이거 봤어?", "쟤 왜 저래 ㅋㅋ"), share a feeling, comment on something off-screen ("배 안 고파?", "나 이 배우 좋아"), nudge them.
+- Be spontaneous and varied: 1 short line is fine; sometimes a quick 2-3 line burst; sometimes basically silent. Do NOT comment on every single subtitle, and do NOT summarize or quote the subtitles.
+- It should feel ALIVE — like they're really beside you on the couch, not a bot narrating the plot.
 [Character personality]
 ${(movieSession.card.description || '').slice(0, 1500)}
 - ${langLine}
 - No narration/asterisk actions — just chat like texting next to them.`;
-        const user = `[방금 나온 자막]\n${lines.join('\n').slice(-1800)}`;
+        const user = `[방금 화면에 나온 자막 — 참고만, 인용 금지]\n${lines.join('\n').slice(-1800)}`;
+        const history = ChatHistory.toAPIMessages(movieSession.channelId, 20);
 
         let resp = '';
-        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
+        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, ...history, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
         resp = (resp || '').trim();
         if (!resp) return;
         ChatHistory.addMessage(movieSession.channelId, 'assistant', resp, movieSession.card.name || movieSession.character);
