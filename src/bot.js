@@ -39,6 +39,9 @@ const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
 // 유저가 입력 중인 채널: { channelId: 언제까지 타이핑 중으로 볼지(ms) } — 입력 중이면 답을 미룸
 const typingUntil = {};
+// 단톡 배칭: { channelId: {timer, firstQueuedAt, chCfg} }, 생성 잠금
+const groupTimers = {};
+const groupGenerating = {};
 // 채널별 생성 잠금: 한 채널에서 답 생성은 한 번에 하나만 (생성 중 온 메시지가 별도 답으로 새지 않게)
 const generating = {};
 // 멀티봇 그룹챗: 한 유저 메시지를 여러 멤버봇이 보므로, 저장/프록시는 한 번만 (메시지ID 기준)
@@ -983,13 +986,16 @@ const Bot = {
             const chCfg = config.channels[message.channelId];
             if (!chCfg) return;
             if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
-            // 단체 채널(group)이면 → 웹훅 단톡 (API 1번 → 인물별 웹훅 분배)
+            // 단체 채널(group)이면 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
             if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
                 const gkey = 'grp:' + message.id;
                 if (intakeDone.has(gkey)) return;
                 intakeDone.add(gkey);
                 setTimeout(() => intakeDone.delete(gkey), 60_000);
-                return this._handleSingleGroup(message, chCfg).catch((e) => console.error('[Group] 처리 오류:', e));
+                await this._groupIntake(message, chCfg).catch((e) => console.error('[Group] intake 오류:', e));
+                if (Away.isAway(message.channelId)) return;
+                this._queueGroupReply(message.channelId, chCfg);
+                return;
             }
             character = this._getCharacter(message.channelId);
             if (!character) { console.error(`[Bot] 캐릭터 없음: 채널 ${message.channelId}`); return; }
@@ -1072,6 +1078,53 @@ const Bot = {
     _clientForMember(member) {
         for (const [cl, m] of clientMember) if (m === member) return cl;
         return null;
+    },
+
+    // 단톡 인테이크: 유저 메시지 저장 + 페르소나 프록시 (즉시 — 답 생성은 따로 배칭)
+    async _groupIntake(message, chCfg) {
+        const channelId = message.channelId;
+        const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
+        const userName = message.author?.displayName || message.author?.username || 'User';
+        const personaName = chCfg.persona
+            || (sheetCard && STReader.getConnectedPersonaName(sheetCard))
+            || STReader.getDefaultPersonaName();
+        ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
+        if (personaName) {
+            await this._proxyUserMessage(message, personaName).catch((e) => console.warn('[Group] 페르소나 프록시 실패:', e.message));
+        }
+    },
+
+    // 단톡 배칭: 유저가 입력 중이면 답을 미뤘다가, 멈추면 한 번에 생성
+    _queueGroupReply(channelId, chCfg) {
+        const prev = groupTimers[channelId];
+        if (prev?.timer) clearTimeout(prev.timer);
+        const firstQueuedAt = prev?.firstQueuedAt || Date.now();
+        const t = setTimeout(() => this._flushGroup(channelId), BATCH_WINDOW_MS + this._humanReplyExtra());
+        groupTimers[channelId] = { timer: t, firstQueuedAt, chCfg };
+    },
+
+    async _flushGroup(channelId) {
+        const g = groupTimers[channelId];
+        if (!g) return;
+        const maxWait = config.replyMaxWaitMs || 25000;
+        const stillTyping = (typingUntil[channelId] || 0) > Date.now();
+        const waited = Date.now() - (g.firstQueuedAt || Date.now());
+        if (stillTyping && waited < maxWait) {
+            clearTimeout(g.timer);
+            g.timer = setTimeout(() => this._flushGroup(channelId), 1200);
+            return;
+        }
+        if (groupGenerating[channelId]) {
+            clearTimeout(g.timer);
+            g.timer = setTimeout(() => this._flushGroup(channelId), 1500);
+            return;
+        }
+        const chCfg = g.chCfg;
+        delete groupTimers[channelId];
+        groupGenerating[channelId] = true;
+        try { await this._handleSingleGroup(null, chCfg, { channelId }); }
+        catch (e) { console.error('[Group] 처리 오류:', e); }
+        finally { groupGenerating[channelId] = false; }
     },
 
     // --- 단일봇 단체 채널: API 1번 호출 → 인물별 웹훅(이름+아바타URL)으로 분배 ---
@@ -1880,7 +1933,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
         });
-        const user = `(다 같이 영화 "${s.movie}"를 보는 중. 방금 나온 자막 장면에 등장인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게. 안 끼는 사람은 빠져도 됨.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
+        const user = `("${s.movie}"를 같이 보는 중. 단, 시트 인물 전원이 보는 게 아니라 — 이 영화를 보고 싶어서 모인 사람들만 방에 있다. 처음에 반응한 인물들 위주로 계속 그 사람들이 보는 거고, 갑자기 전원이 다 끼어들지 않는다. 방금 자막 장면에 그 인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
         let resp = '';
         try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 그룹 생성 오류:', e.message); }
         resp = this._stripGroupTags(s.channelId, (resp || '').trim());
