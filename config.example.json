@@ -2,6 +2,8 @@
   "stPath": "/home/ubuntu/SillyTavern",
   "discordToken": "여기에_디스코드_봇_토큰",
   "connectionProfile": "",
+  "imageProfile": "",
+  "openaiBaseUrl": "",
   "maxHistoryMessages": 50,
   "maxResponseTokens": 1000,
   "rpResponseTokens": 8192,

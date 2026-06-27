@@ -5,9 +5,17 @@ let apiKey = null;
 
 const ImageGen = {
     init(cfg) {
-        // ConnectionManager 프로필에서 API 키 재사용
-        const profile = STReader.getConnectionProfile(cfg.connectionProfile);
-        apiKey = profile.apiKey;
+        // 이미지는 Gemini/Vertex 키가 필요(나노바나나). 채팅이 클로드/잼민프록시면 키가 없으므로
+        // 이미지 전용 프로필(imageProfile)이 있으면 그 키를 우선 사용, 없으면 채팅 프로필 키.
+        try {
+            const profileName = cfg.imageProfile || cfg.connectionProfile;
+            const profile = STReader.getConnectionProfile(profileName);
+            apiKey = profile.apiKey;
+            if (cfg.imageProfile) console.log(`[ImageGen] 이미지 전용 프로필 사용: "${cfg.imageProfile}"`);
+        } catch (e) {
+            apiKey = null;
+            console.warn('[ImageGen] 이미지 프로필 로드 실패:', e.message);
+        }
     },
 
     // 캐릭터 셀카/사진 ([SEND_PHOTO]용)
