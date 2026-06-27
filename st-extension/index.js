@@ -89,6 +89,7 @@ async function loadAll() {
             splitMessages: c.splitMessages !== false,
             chatSlang: c.chatSlang !== false,
             movieToken: c.movieToken || '',
+            openSub: c.openSub || {},
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -201,6 +202,7 @@ function render() {
 
     // 영화 같이보기 토큰
     $('#dbridge_movietoken').val(state.movieToken || '');
+    $('#dbridge_opensub').val(state.openSub?.apiKey || '');
 
     // 선톡
     const p = state.proactive;
@@ -468,6 +470,7 @@ async function save() {
             channels: state.channels,
             members: state.members,
             movieToken: ($('#dbridge_movietoken').val() || '').trim(),
+            openSub: { ...(state.openSub || {}), apiKey: ($('#dbridge_opensub').val() || '').trim() },
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const mainTok = ($('#dbridge_token').val() || '').trim();
@@ -636,6 +639,10 @@ const SETTINGS_HTML = `
                 <div class="menu_button" id="dbridge_movietoken_gen" title="랜덤 생성"><i class="fa-solid fa-dice"></i></div>
             </div>
             <div class="dbridge_hint">넷플/유튜브/디즈니+ 같이보기용. 이 값과 크롬 확장의 토큰이 일치해야 합니다. 변경 후 봇·ST 재시작.</div>
+
+            <label>📄 OpenSubtitles API 키 <span class="dbridge_hint">(모바일 /watch 자막 자동검색용)</span></label>
+            <input type="text" id="dbridge_opensub" class="text_pole" autocomplete="off" placeholder="opensubtitles.com API Key (anonymous면 키만)" />
+            <div class="dbridge_hint">opensubtitles.com → 가입 → Consumers → "Allow anonymous downloads" 켜고 키 발급. 비우면 .srt 파일 직접 첨부로만 가능. 변경 후 봇 재시작.</div>
 
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
