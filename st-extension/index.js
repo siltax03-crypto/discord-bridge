@@ -81,6 +81,7 @@ async function loadAll() {
             botMode: c.botMode === 'multi' ? 'multi' : 'single',
             personaBotSaved: !!cfgRes.hasPersonaBot,
             connectionProfile: c.connectionProfile || c.connectionProfileId || '',
+            imageProfile: c.imageProfile || '',
             language: c.language || 'ko',
             maxHistoryMessages: c.maxHistoryMessages ?? 50,
             maxResponseTokens: c.maxResponseTokens ?? 1000,
@@ -177,6 +178,15 @@ function render() {
             label: `${p.name}  (${p.api} / ${p.model})${p.selected ? '  ★' : ''}`,
         }));
     $('#dbridge_profile').html(profOpts);
+
+    // 이미지 전용 프로필 드롭다운 (채팅이 클로드/잼민프록시일 때 이미지/비전용 Gemini 키)
+    const imgProfOpts =
+        '<option value="">(채팅 프로필과 동일)</option>' +
+        optionList(profiles, state.imageProfile, (p) => ({
+            value: p.name,
+            label: `${p.name}  (${p.api} / ${p.model})`,
+        }));
+    $('#dbridge_imageprofile').html(imgProfOpts);
 
     // 언어
     $('#dbridge_lang').html(optionList(LANGS, state.language, (l) => ({ value: l.value, label: l.label })));
@@ -365,6 +375,7 @@ function renderChannelRows() {
 function syncFromDom() {
     state.botMode = $('#dbridge_botmode').val() === 'multi' ? 'multi' : 'single';
     state.connectionProfile = $('#dbridge_profile').val();
+    state.imageProfile = $('#dbridge_imageprofile').val();
     state.language = $('#dbridge_lang').val();
     state.maxHistoryMessages = parseInt($('#dbridge_history').val(), 10) || 50;
     state.maxResponseTokens = parseInt($('#dbridge_tokens').val(), 10) || 1000;
@@ -446,6 +457,7 @@ async function save() {
         const payload = {
             botMode: state.botMode,
             connectionProfile: state.connectionProfile,
+            imageProfile: state.imageProfile,
             language: state.language,
             maxHistoryMessages: state.maxHistoryMessages,
             maxResponseTokens: state.maxResponseTokens,
@@ -529,6 +541,10 @@ const SETTINGS_HTML = `
 
             <label>커넥션 프로필 (AI 백엔드)</label>
             <select id="dbridge_profile" class="text_pole"></select>
+
+            <label>이미지 전용 프로필 <span class="dbridge_hint">(채팅이 클로드/잼민프록시일 때, 이미지 생성·사진읽기용 Gemini 키 프로필)</span></label>
+            <select id="dbridge_imageprofile" class="text_pole"></select>
+            <div class="dbridge_hint">이미지는 Gemini 키가 필요. 채팅 프로필에 Gemini 키 있으면 비워둬도 됨.</div>
 
             <div class="dbridge_grid2">
                 <div>

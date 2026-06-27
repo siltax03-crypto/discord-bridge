@@ -1,12 +1,18 @@
 import STReader from './st-reader.js';
 
 let profile = null;
+let imageProfile = null; // 이미지(비전/생성)용 별도 프로필 — 채팅이 클로드/잼민프록시여서 키가 없을 때
 let config = {};
 
 const AIClient = {
     init(cfg) {
         config = cfg;
         profile = STReader.getConnectionProfile(cfg.connectionProfile);
+        imageProfile = null;
+        if (cfg.imageProfile) {
+            try { imageProfile = STReader.getConnectionProfile(cfg.imageProfile); }
+            catch (e) { console.warn('[AI] 이미지 프로필 로드 실패:', e.message); }
+        }
     },
 
     // 실제 생성에 쓰는, 해석된 프로필 (프리셋 등 일관성 위해 단일 출처)
@@ -18,6 +24,12 @@ const AIClient = {
         const api = profile.api || '';
         const model = profile.model || '';
         const maxTokens = options.maxTokens || config.maxResponseTokens || 1000;
+
+        // "잼민이랑 친해지기" OAuth 프록시: 모델이 antigravity-* 면 로컬 OpenAI호환 프록시로.
+        // (이 표식은 그 프록시에만 있어서, 다른 사람 일반 프로필엔 영향 없음)
+        if (model.startsWith('antigravity')) {
+            return this._sendOAuthProxy(messages, model, maxTokens);
+        }
 
         if (api.includes('vertex') || api.includes('google') || api.includes('makersuite') || model.includes('gemini')) {
             return this._sendGemini(messages, model, maxTokens);
@@ -32,7 +44,8 @@ const AIClient = {
     },
 
     // --- Gemini (API 키 또는 서비스 계정) ---
-    async _sendGemini(messages, model, maxTokens) {
+    // useProfile: 키/리전을 가져올 프로필 (기본=채팅 프로필, 비전은 이미지 프로필로 오버라이드)
+    async _sendGemini(messages, model, maxTokens, useProfile = profile) {
         const systemMessages = messages.filter(m => m.role === 'system');
         const chatMessages = messages.filter(m => m.role !== 'system');
         const systemInstruction = systemMessages.map(m =>
@@ -83,10 +96,10 @@ const AIClient = {
             body.system_instruction = { parts: [{ text: systemInstruction }] };
         }
 
-        // Vertex AI Express 엔드포인트 (API 키 인증)
-        const apiKey = profile.apiKey;
+        // Vertex AI Express 엔드포인트 (API 키 인증) — useProfile 기준(비전은 이미지 프로필)
+        const apiKey = useProfile.apiKey;
         if (!apiKey) throw new Error('Vertex AI API 키가 없습니다');
-        const region = profile['api-url'] || 'us-central1';
+        const region = useProfile['api-url'] || 'us-central1';
         const baseUrl = region === 'global'
             ? 'https://aiplatform.googleapis.com'
             : `https://${region}-aiplatform.googleapis.com`;
@@ -129,6 +142,27 @@ const AIClient = {
         return ''; // 재시도 모두 빈 응답
     },
 
+    // --- "잼민이랑 친해지기" 로컬 OAuth 프록시 (OpenAI 호환). API키 불필요, 프록시가 OAuth 처리 ---
+    // 봇과 ST(=프록시)가 같은 서버일 때 localhost로 접근. URL은 config.oauthProxyUrl로 변경 가능.
+    async _sendOAuthProxy(messages, model, maxTokens) {
+        const base = (config.oauthProxyUrl || 'http://127.0.0.1:18765/v1').replace(/\/+$/, '');
+        const resp = await fetch(`${base}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model,
+                max_tokens: maxTokens,
+                messages: messages.map(m => ({ role: m.role, content: m.content })),
+            }),
+        });
+        if (!resp.ok) {
+            const err = await resp.text();
+            throw new Error(`OAuth 프록시 오류 (${resp.status}): ${err.slice(0, 300)}`);
+        }
+        const data = await resp.json();
+        return data.choices?.[0]?.message?.content || '';
+    },
+
     // --- Claude ---
     async _sendClaude(messages, model, maxTokens) {
         const apiKey = profile.apiKey;
@@ -164,12 +198,16 @@ const AIClient = {
         return data.content?.[0]?.text || '';
     },
 
-    // --- OpenAI ---
-    async _sendOpenAI(messages, model, maxTokens) {
-        const apiKey = profile.apiKey;
+    // --- OpenAI / OpenAI 호환 (NanoGPT·커스텀 프록시 등) ---
+    // base URL을 프로필/설정에서 읽음 → 커스텀 엔드포인트도 지원. 없으면 진짜 OpenAI.
+    async _sendOpenAI(messages, model, maxTokens, useProfile = profile) {
+        const apiKey = useProfile.apiKey;
         if (!apiKey) throw new Error('OpenAI API 키가 없습니다');
 
-        const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        const base = (useProfile['api-url'] || useProfile.custom_url || useProfile.reverse_proxy
+            || config.openaiBaseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+
+        const resp = await fetch(`${base}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -207,6 +245,12 @@ const AIClient = {
             ],
         };
 
+        // 비전: 채팅이 잼민프록시/클로드면 이미지를 못 보내므로, 이미지 프로필(Gemini)이 있으면 그걸로 읽음
+        if (imageProfile) {
+            const maxTokens = options.maxTokens || config.maxResponseTokens || 1000;
+            const vModel = imageProfile.model || 'gemini-2.5-flash';
+            return this._sendGemini(modified, vModel, maxTokens, imageProfile);
+        }
         return this.sendMessage(modified, options);
     },
 };

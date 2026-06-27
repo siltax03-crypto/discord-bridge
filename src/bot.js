@@ -37,6 +37,11 @@ let movieSession = null;
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
+// 유저가 입력 중인 채널: { channelId: 언제까지 타이핑 중으로 볼지(ms) } — 입력 중이면 답을 미룸
+const typingUntil = {};
+// 단톡 배칭: { channelId: {timer, firstQueuedAt, chCfg} }, 생성 잠금
+const groupTimers = {};
+const groupGenerating = {};
 // 채널별 생성 잠금: 한 채널에서 답 생성은 한 번에 하나만 (생성 중 온 메시지가 별도 답으로 새지 않게)
 const generating = {};
 // 멀티봇 그룹챗: 한 유저 메시지를 여러 멤버봇이 보므로, 저장/프록시는 한 번만 (메시지ID 기준)
@@ -91,6 +96,8 @@ const Bot = {
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildMessages,
                 GatewayIntentBits.MessageContent,
+                GatewayIntentBits.GuildMessageTyping,
+                GatewayIntentBits.DirectMessageTyping,
             ],
         });
 
@@ -114,6 +121,11 @@ const Bot = {
             client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
             client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
             client.on(Events.ChannelDelete, (ch) => this._onChannelDelete(ch));
+            // 유저가 입력 중이면 답을 미룬다 (여러 줄 연달아 칠 때 끊지 않게)
+            client.on(Events.TypingStart, (typing) => {
+                if (typing.user?.bot) return;
+                typingUntil[typing.channel.id] = Date.now() + (config.typingGraceMs || 6000);
+            });
         } else {
             // 페르소나 전담봇: 웹훅 단톡(토큰 없는 멤버만 있는 채널)에선 이 봇이 메시지를 받아 그룹 처리
             client.on(Events.MessageCreate, (message) => this._onPersonaMessage(message));
@@ -974,13 +986,16 @@ const Bot = {
             const chCfg = config.channels[message.channelId];
             if (!chCfg) return;
             if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
-            // 단체 채널(group)이면 → 웹훅 단톡 (API 1번 → 인물별 웹훅 분배)
+            // 단체 채널(group)이면 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
             if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
                 const gkey = 'grp:' + message.id;
                 if (intakeDone.has(gkey)) return;
                 intakeDone.add(gkey);
                 setTimeout(() => intakeDone.delete(gkey), 60_000);
-                return this._handleSingleGroup(message, chCfg).catch((e) => console.error('[Group] 처리 오류:', e));
+                await this._groupIntake(message, chCfg).catch((e) => console.error('[Group] intake 오류:', e));
+                if (Away.isAway(message.channelId)) return;
+                this._queueGroupReply(message.channelId, chCfg);
+                return;
             }
             character = this._getCharacter(message.channelId);
             if (!character) { console.error(`[Bot] 캐릭터 없음: 채널 ${message.channelId}`); return; }
@@ -1065,6 +1080,53 @@ const Bot = {
         return null;
     },
 
+    // 단톡 인테이크: 유저 메시지 저장 + 페르소나 프록시 (즉시 — 답 생성은 따로 배칭)
+    async _groupIntake(message, chCfg) {
+        const channelId = message.channelId;
+        const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
+        const userName = message.author?.displayName || message.author?.username || 'User';
+        const personaName = chCfg.persona
+            || (sheetCard && STReader.getConnectedPersonaName(sheetCard))
+            || STReader.getDefaultPersonaName();
+        ChatHistory.addMessage(channelId, 'user', message.content || '(첨부)', personaName || userName);
+        if (personaName) {
+            await this._proxyUserMessage(message, personaName).catch((e) => console.warn('[Group] 페르소나 프록시 실패:', e.message));
+        }
+    },
+
+    // 단톡 배칭: 유저가 입력 중이면 답을 미뤘다가, 멈추면 한 번에 생성
+    _queueGroupReply(channelId, chCfg) {
+        const prev = groupTimers[channelId];
+        if (prev?.timer) clearTimeout(prev.timer);
+        const firstQueuedAt = prev?.firstQueuedAt || Date.now();
+        const t = setTimeout(() => this._flushGroup(channelId), BATCH_WINDOW_MS + this._humanReplyExtra());
+        groupTimers[channelId] = { timer: t, firstQueuedAt, chCfg };
+    },
+
+    async _flushGroup(channelId) {
+        const g = groupTimers[channelId];
+        if (!g) return;
+        const maxWait = config.replyMaxWaitMs || 25000;
+        const stillTyping = (typingUntil[channelId] || 0) > Date.now();
+        const waited = Date.now() - (g.firstQueuedAt || Date.now());
+        if (stillTyping && waited < maxWait) {
+            clearTimeout(g.timer);
+            g.timer = setTimeout(() => this._flushGroup(channelId), 1200);
+            return;
+        }
+        if (groupGenerating[channelId]) {
+            clearTimeout(g.timer);
+            g.timer = setTimeout(() => this._flushGroup(channelId), 1500);
+            return;
+        }
+        const chCfg = g.chCfg;
+        delete groupTimers[channelId];
+        groupGenerating[channelId] = true;
+        try { await this._handleSingleGroup(null, chCfg, { channelId }); }
+        catch (e) { console.error('[Group] 처리 오류:', e); }
+        finally { groupGenerating[channelId] = false; }
+    },
+
     // --- 단일봇 단체 채널: API 1번 호출 → 인물별 웹훅(이름+아바타URL)으로 분배 ---
     // chCfg = { group:true, sheet, persona, members:[{name, avatarUrl}] }
     // message 없으면(선톡): opts.channelId + opts.seedNote 로 등장인물끼리 먼저 수다 시작
@@ -1117,7 +1179,9 @@ const Bot = {
             chatSlang: config.chatSlang !== false,
             seedNote,
             timeGapText: gapText,
-        });
+        }) + this._movieContextNote(channelId)
+            // 유저가 방금 말한 경우(선톡 아님): 무시는 말되 자연스럽게. 하던 얘기 있으면 마저 하고 끼워넣어도 됨
+            + (seedNote ? '' : `\n\n[USER JUST SPOKE]\n- ${userName}(유저)가 방금 말했다. 적어도 한 명은 ${userName}에게 반응해줘 — 다만 억지로 즉답할 필요는 없고, 하던 대화가 있으면 자연스럽게 한 박자 뒤 끼워넣어도 된다(현실 단톡처럼). 유저를 끝까지 투명인간 취급만 하지 마.`);
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
         if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
@@ -1330,6 +1394,7 @@ const Bot = {
             character: character || prev?.character || null,
             imageBase64: imageBase64 || prev?.imageBase64 || null,
             reactTarget: reactTarget || prev?.reactTarget || null,
+            firstQueuedAt: prev?.firstQueuedAt || Date.now(),
             timer: null,
         };
         const wait = BATCH_WINDOW_MS + this._humanReplyExtra();
@@ -1350,6 +1415,15 @@ const Bot = {
     async _flushReply(key) {
         const p = pendingReplies[key];
         if (!p) return;
+        // 유저가 아직 입력 중이면 답을 미룬다 (단, 너무 오래 매달리지 않게 상한)
+        const maxWait = config.replyMaxWaitMs || 25000;
+        const stillTyping = (typingUntil[p.channelId] || 0) > Date.now();
+        const waited = Date.now() - (p.firstQueuedAt || Date.now());
+        if (stillTyping && waited < maxWait) {
+            clearTimeout(p.timer);
+            p.timer = setTimeout(() => this._flushReply(key), 1200);
+            return;
+        }
         if (generating[key]) {
             clearTimeout(p.timer);
             p.timer = setTimeout(() => this._flushReply(key), 1500);
@@ -1434,7 +1508,7 @@ const Bot = {
             showStatus: multi,
             sheetMember,          // 단체시트 속 "내가 연기할 인물" 이름 (없으면 '')
             charName,             // 멤버 표시 이름
-        });
+        }) + this._movieContextNote(channelId);
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: systemPrompt }, ...history];
@@ -1798,31 +1872,40 @@ const Bot = {
             categoryId: category.id, channelId: channel.id,
             mainChannelId: set?.chat || null,
             group: !!members, members: members || null,
-            buffer: [], lastReactAt: Date.now(), client, guildId: guild.id,
+            buffer: [], recentSubs: [], lastReactAt: Date.now(), client, guildId: guild.id,
         };
-        movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 60) * 1000);
+        movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 35) * 1000);
 
         await channel.send(`🎬 **${movie}** 같이 보기 시작! 편하게 봐 — 옆에서 같이 보면서 떠들게.`).catch(() => {});
         console.log(`[Movie] 시작: "${movie}" (${charName}) → #${chName}`);
         return { ok: true, channelId: channel.id };
     },
 
-    // 확장: 자막 큐 수신 → 버퍼
+    // 확장: 자막 큐 수신 → 버퍼(다음 리액션용) + recentSubs(유저가 말 걸 때 맥락용, 안 비움)
     _movieSub({ cues }) {
         if (!movieSession || !Array.isArray(cues)) return;
         for (const c of cues) {
             const text = (c?.text || '').trim();
-            if (text) movieSession.buffer.push(text);
+            if (text) { movieSession.buffer.push(text); movieSession.recentSubs.push(text); }
         }
         if (movieSession.buffer.length > 400) movieSession.buffer = movieSession.buffer.slice(-400);
+        if (movieSession.recentSubs.length > 40) movieSession.recentSubs = movieSession.recentSubs.slice(-40);
+    },
+
+    // 영화 중인 채널이면 "지금 보는 중 + 최근 자막" 맥락 블록 (유저가 말 걸 때도 영상 인지하게)
+    _movieContextNote(channelId) {
+        if (!movieSession || movieSession.channelId !== channelId) return '';
+        const subs = (movieSession.recentSubs || []).slice(-15).join('\n');
+        return `\n\n[NOW WATCHING — 지금 다 같이 "${movieSession.movie}"를 보는 중]\n${subs ? `최근 화면 자막:\n${subs}\n` : ''}- 지금 이 영상을 같이 보고 있다는 걸 전제로 반응/대화해. 유저가 "이거 봤어?" 같은 말을 하면 화면에 나온 그 내용을 말하는 거다. 영상을 안 보는 것처럼 굴지 마.`;
     },
 
     // 주기적으로 모인 자막에 캐릭터가 리액션
     async _movieReact() {
         if (!movieSession) return;
         if (movieSession.group) return this._movieReactGroup();
-        const lines = movieSession.buffer.splice(0); // 모은 거 비우면서 가져옴
-        if (lines.length === 0) return; // 새 자막 없으면 조용히
+        const all = movieSession.buffer.splice(0); // 버퍼 비움
+        if (all.length === 0) return; // 새 자막 없으면 조용히
+        const lines = all.slice(-6); // 밀린 백로그는 버리고 "지금 화면" 최근 것만 → 안 뒤처지게
         movieSession.lastReactAt = Date.now();
 
         const channel = await movieSession.client.channels.fetch(movieSession.channelId).catch(() => null);
@@ -1831,15 +1914,19 @@ const Bot = {
         const langLine = lang === 'en' ? 'Write in English.' : 'Write IN KOREAN (한국어).';
         const persona = STReader.getConnectedPersonaName(movieSession.card) || STReader.getDefaultPersonaName() || 'User';
 
-        const sys = `You are ${movieSession.card.name || movieSession.character}, watching the movie/video "${movieSession.movie}" TOGETHER with ${persona}, side by side. Below are the subtitle lines that JUST played. React like a friend/partner watching together: a short, natural in-character comment or two (surprise, teasing, a quip, a feeling) — NOT a summary, do NOT quote the subtitles. Sometimes stay almost silent (one short line). Keep it casual and brief.
+        const sys = `You are ${movieSession.card.name || movieSession.character}, sitting right next to ${persona} watching "${movieSession.movie}" together. You are NOT a commentator reacting to subtitles — you're a real person hanging out and watching with them. Below are the subtitle lines that just played.
+- Talk WITH ${persona} the way someone actually does while co-watching: sometimes react to what's on screen (laugh, "헐", tease a character, "이 장면 좋아"), but ALSO often just turn to them and chat — ask their opinion ("이거 봤어?", "쟤 왜 저래 ㅋㅋ"), share a feeling, comment on something off-screen ("배 안 고파?", "나 이 배우 좋아"), nudge them.
+- Be spontaneous and varied: 1 short line is fine; sometimes a quick 2-3 line burst; sometimes basically silent. Do NOT comment on every single subtitle, and do NOT summarize or quote the subtitles.
+- It should feel ALIVE — like they're really beside you on the couch, not a bot narrating the plot.
 [Character personality]
 ${(movieSession.card.description || '').slice(0, 1500)}
 - ${langLine}
 - No narration/asterisk actions — just chat like texting next to them.`;
-        const user = `[방금 나온 자막]\n${lines.join('\n').slice(-1800)}`;
+        const user = `[방금 화면에 나온 자막 — 참고만, 인용 금지]\n${lines.join('\n').slice(-1800)}`;
+        const history = ChatHistory.toAPIMessages(movieSession.channelId, 20);
 
         let resp = '';
-        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
+        try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, ...history, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 생성 오류:', e.message); }
         resp = (resp || '').trim();
         if (!resp) return;
         ChatHistory.addMessage(movieSession.channelId, 'assistant', resp, movieSession.card.name || movieSession.character);
@@ -1849,8 +1936,9 @@ ${(movieSession.card.description || '').slice(0, 1500)}
     // 단톡 영화: 등장인물들이 같이 보며 자기들끼리 리액션 (한 번 호출 → 화자별 웹훅 분배)
     async _movieReactGroup() {
         const s = movieSession;
-        const lines = s.buffer.splice(0);
-        if (lines.length === 0) return;
+        const all = s.buffer.splice(0);
+        if (all.length === 0) return;
+        const lines = all.slice(-6); // 밀린 백로그 버리고 최근 것만 → 안 뒤처지게
         s.lastReactAt = Date.now();
         const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
         if (!channel) return;
@@ -1861,7 +1949,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
         });
-        const user = `(다 같이 영화 "${s.movie}"를 보는 중. 방금 나온 자막 장면에 등장인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게. 안 끼는 사람은 빠져도 됨.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
+        const user = `("${s.movie}"를 같이 보는 중. 단, 시트 인물 전원이 보는 게 아니라 — 이 영화를 보고 싶어서 모인 사람들만 방에 있다. 처음에 반응한 인물들 위주로 계속 그 사람들이 보는 거고, 갑자기 전원이 다 끼어들지 않는다. 방금 자막 장면에 그 인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
         let resp = '';
         try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 그룹 생성 오류:', e.message); }
         resp = this._stripGroupTags(s.channelId, (resp || '').trim());

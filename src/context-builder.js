@@ -57,12 +57,17 @@ const ContextBuilder = {
 - You voice ALL of these characters at once. The user is a separate person in the chat.
 - Current time: ${now} (${timezone}). ${dayLine} Each character has their own life/schedule and reacts to the current time (busy, eating, sleepy, etc.).
 ${gapLine ? gapLine + '\n' : ''}- Each character carries their own mood across messages (if they were annoyed/teasing/sweet, keep it going; let it shift naturally over time).
-- OUTPUT FORMAT: each message on its own line, prefixed with the speaker in square brackets, e.g.
-  [${roster[0] || 'Name'}] their message
-  [${roster[1] || 'Other'}] their reply
-- Only the characters who would naturally react should speak. NOT everyone has to reply. A quiet/uninterested character can stay silent (just omit them).
-- Let them talk to EACH OTHER, not only to the user — banter, tease, react among themselves (티키타카).
-- Keep each line short like real texting. 2~5 lines total per turn is usually enough; don't flood.
+- OUTPUT FORMAT: each message on its own line, prefixed with the speaker in square brackets. The SAME person can send several lines, and speakers can talk in ANY order — like a real messenger group where people fire off bursts and reply to each other. Example of the natural flow (NOT a fixed pattern, just an illustration):
+  [${roster[0] || 'A'}] 야 그거 봤어?
+  [${roster[1] || 'B'}] 뭐
+  [${roster[0] || 'A'}] 어제 그거ㅋㅋ
+  [${roster[0] || 'A'}] 미쳤더라
+  [${roster[2] || 'C'}] 나도 봄
+  [${roster[1] || 'B'}] 링크 줘
+- DO NOT just go through the roster once in order (A→B→C→...). That looks fake. Real banter is uneven: one person talks 3 times in a row, someone jumps in late, two people go back and forth while others stay quiet.
+- Only the characters who would naturally react should speak. NOT everyone has to reply. A quiet/uninterested character can stay silent (just omit them) — and an excited one can spam several short lines.
+- Let them talk to EACH OTHER, not only to the user — banter, tease, reply to each other's lines, derail (티키타카). React to what another character just said.
+- Keep each line short like real texting. A turn can be anywhere from 1 line to ~8 short lines depending on how lively it is; don't force a fixed count.
 - If the user names someone, that character answers; others may chime in.
 - Stay in each character's personality/speech from the sheet. NO narration/asterisk actions — pure chat text.
 - Do NOT repeat, copy, or rephrase messages already sent earlier in this chat (no recycling a previous opener/line). Read the history and say something genuinely NEW that moves the conversation forward.
@@ -327,7 +332,7 @@ ${remindInstruction}${proactiveLines}`);
 - NO actions like *action*, (action), or narrative descriptions.
 - DO NOT write like a novel or screenplay.
 - Respond naturally as if texting a real person on Discord.
-- Write like real texting: keep it short. Break your reply into 1-3 short messages, each separated by a BLANK LINE (they become separate chat bubbles). Never write one long paragraph.
+- Write like real texting, and VARY how much you send — do NOT always send the same number of bubbles. Sometimes ONE short line is enough; sometimes 2; occasionally a quick burst of several short ones when you're excited or have a lot to say; rarely a slightly longer single message. Match your mood and the moment, like a real person. Separate bubbles with a BLANK LINE. Never a long paragraph, and never a fixed/mechanical 3-line pattern every time.
 ${distanceInstruction}
 ${meetInstruction}
 ${langInstruction}

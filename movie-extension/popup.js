@@ -41,9 +41,10 @@ $('start').addEventListener('click', async () => {
     if (!info?.hasVideo) { setStatus('⚠️ 재생 중인 영상이 없어요.'); return; }
 
     const group = $('group').checked;
-    setStatus(`🎬 "${info.title}" 시작 중...`);
+    const movie = ($('movie').value || '').trim() || info.title;
+    setStatus(`🎬 "${movie}" 시작 중...`);
     chrome.runtime.sendMessage(
-        { type: 'start', base, token, character, movie: info.title, site: info.site, group, tabId: tab.id },
+        { type: 'start', base, token, character, movie, site: info.site, group, tabId: tab.id },
         (r) => {
             if (r?.ok) setStatus(`🎬 "${info.title}" 같이보기 시작! (디스코드 확인)`);
             else setStatus(`⚠️ 시작 실패: ${r?.error || '알 수 없음'}`);
