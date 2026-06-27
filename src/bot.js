@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType, ChannelType, PermissionFlagsBits } from 'discord.js';
+import { Client, GatewayIntentBits, Events, AttachmentBuilder, SlashCommandBuilder, MessageFlags, ActivityType, ChannelType, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import STReader from './st-reader.js';
 import ContextBuilder from './context-builder.js';
 import AIClient from './ai-client.js';
@@ -258,6 +258,13 @@ const Bot = {
 
     // --- 슬래시 명령어 처리 ---
     async _onInteraction(interaction, client) {
+        // 영화 컨트롤 버튼/모달
+        if (interaction.isButton() && interaction.customId?.startsWith('watch_')) {
+            return this._handleWatchButton(interaction);
+        }
+        if (interaction.isModalSubmit() && interaction.customId === 'watch_sync_modal') {
+            return this._handleWatchSyncModal(interaction);
+        }
         if (!interaction.isChatInputCommand()) return;
         const channelId = interaction.channelId;
         const eph = { flags: MessageFlags.Ephemeral };
@@ -1854,14 +1861,13 @@ const Bot = {
         const client = primaryClient;
         if (!client) return { error: '봇 미연결' };
 
-        // 단톡으로 보기: 기존 단톡 설정(멤버+아바타)을 찾아 재사용
+        // 단톡으로 보기: 그 이름으로 단톡 설정(멤버)이 있으면 자동으로 단톡, 없으면 단일.
+        // (group=true인데 설정이 없으면 에러)
         let members = null;
-        if (group) {
-            for (const c of Object.values(config.channels)) {
-                if (c?.group && Array.isArray(c.members) && c.members.length && (c.sheet === charName || c.character === charName)) { members = c.members; break; }
-            }
-            if (!members) return { error: `"${charName}" 단톡 설정을 ST 확장에서 먼저 만들어주세요 (멤버 목록 필요).` };
+        for (const c of Object.values(config.channels)) {
+            if (c?.group && Array.isArray(c.members) && c.members.length && (c.sheet === charName || c.character === charName)) { members = c.members; break; }
         }
+        if (group && !members) return { error: `"${charName}" 단톡 설정을 ST 확장에서 먼저 만들어주세요 (멤버 목록 필요).` };
 
         const set = Sets.findByCharacter(charName);
         let guild = set ? await client.guilds.fetch(set.guildId).catch(() => null) : null;
@@ -1917,10 +1923,11 @@ const Bot = {
         // 재생 시작 전 대기 상태(일시정지). /watch go 또는 sync 로 시작.
         movieSession.paused = true;
         movieSession.feeder = setInterval(() => this._watchFeed(), 1000);
-        await r.channel.send(
-            `🎬 **${movie}** 같이 볼 준비 완료! (자막 ${cues.length}줄 로드)\n` +
-            `폰에서 **재생을 누르는 순간** \`/watch go\` 를 눌러줘. 어긋나면 \`/watch sync 방금 들은 대사\` 로 맞추면 돼.`,
-        ).catch(() => {});
+        await r.channel.send({
+            content: `🎬 **${movie}** 같이 볼 준비 완료! (자막 ${cues.length}줄)\n` +
+                `폰에서 **재생 누르는 순간 ▶ 재생** 버튼! 어긋나면 🎯 싱크로 맞춰.`,
+            components: [this._watchControls()],
+        }).catch(() => {});
         console.log(`[Watch] srt 시작: "${movie}" (${r.charName}), 자막 ${cues.length}줄`);
         return { ok: true, channelId: r.channel.id };
     },
@@ -2132,6 +2139,49 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         return { ok: true, channelId: s.channelId };
     },
 
+    // 영화 컨트롤 버튼들 (모바일에서 타이핑 없이)
+    _watchControls() {
+        return new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('watch_go').setLabel('▶ 재생').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('watch_pause').setLabel('⏸ 멈춤').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('watch_resume').setLabel('▶ 재개').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('watch_sync').setLabel('🎯 싱크').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('watch_end').setLabel('⏹ 종료').setStyle(ButtonStyle.Danger),
+        );
+    },
+
+    async _handleWatchButton(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const id = interaction.customId;
+        if (id === 'watch_sync') {
+            const modal = new ModalBuilder().setCustomId('watch_sync_modal').setTitle('지금 들린 대사로 맞추기');
+            modal.addComponents(new ActionRowBuilder().addComponents(
+                new TextInputBuilder().setCustomId('line').setLabel('방금 들린 대사 한 줄').setStyle(TextInputStyle.Short).setRequired(true),
+            ));
+            return interaction.showModal(modal);
+        }
+        if (id === 'watch_end') {
+            await interaction.reply({ content: '🎬 종료 처리 중...', ...eph });
+            const r = await this._movieEnd().catch((e) => ({ error: e.message }));
+            return interaction.editReply(r?.error ? `⚠️ ${r.error}` : '🎬 종료하고 리뷰 남겼어요.');
+        }
+        let msg = '';
+        if (id === 'watch_go') { const r = this._watchGo(); msg = r.error ? `⚠️ ${r.error}` : '▶ 재생 시작! 같이 본다 🍿'; }
+        else if (id === 'watch_pause') { this._watchPause(); msg = '⏸ 일시정지'; }
+        else if (id === 'watch_resume') { this._watchResume(); msg = '▶ 다시 재생'; }
+        else msg = '?';
+        return interaction.reply({ content: msg, ...eph });
+    },
+
+    async _handleWatchSyncModal(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const line = interaction.fields.getTextInputValue('line');
+        const r = this._watchSync(line);
+        if (r.error) return interaction.reply({ content: `⚠️ ${r.error}`, ...eph });
+        const mm = Math.floor(r.at / 60000), ss = Math.floor((r.at % 60000) / 1000);
+        return interaction.reply({ content: `🎯 ${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')} 지점으로 맞췄어요.`, ...eph });
+    },
+
     // --- /watch: .srt 자막 동기화 같이보기 (모바일/iOS) ---
     async _handleWatch(interaction, eph) {
         const sub = interaction.options.getSubcommand();
@@ -2164,7 +2214,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             }
 
             const res = await this._watchStart({ character, movie: movieName || '영화', group, srtText }).catch((e) => ({ error: e.message }));
-            return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ 준비 완료 → <#${res.channelId}>\n폰에서 재생 누르면서 \`/watch go\``);
+            return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ 준비 완료 → <#${res.channelId}>\n그 방의 **버튼**으로 ▶재생/🎯싱크 누르면 돼 (폰에서 편함)`);
         }
 
         if (sub === 'go') {
