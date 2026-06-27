@@ -36,6 +36,8 @@ const meetTimers = {};
 const meetInfo = {};
 // 영화 같이보기 세션 (한 번에 하나)
 let movieSession = null;
+// "영화 보자" 버튼이 채널별로 들고 있을 제목: { channelId: title }
+const pendingMovie = {};
 // 채널별 답장 배칭: 연달아 온 메시지를 모아 한 번만 답 (중복답 방지 + 사람 같은 타이밍)
 const pendingReplies = {};
 const BATCH_WINDOW_MS = 3500; // 마지막 메시지 후 이만큼 더 안 오면 답
@@ -264,6 +266,9 @@ const Bot = {
         }
         if (interaction.isModalSubmit() && interaction.customId === 'watch_sync_modal') {
             return this._handleWatchSyncModal(interaction);
+        }
+        if (interaction.isModalSubmit() && interaction.customId === 'watch_open_modal') {
+            return this._handleWatchOpenModal(interaction);
         }
         if (!interaction.isChatInputCommand()) return;
         const channelId = interaction.channelId;
@@ -1013,6 +1018,8 @@ const Bot = {
             const chCfg = config.channels[message.channelId];
             if (!chCfg) return;
             if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
+            // "영화 보자" 류면 같이보기 시작 버튼 띄움 (정상 대화 흐름은 그대로 진행)
+            this._maybeMovieButton(message, chCfg);
             // 단체 채널(group)이면 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
             if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
                 const gkey = 'grp:' + message.id;
@@ -2139,6 +2146,54 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         return { ok: true, channelId: s.channelId };
     },
 
+    // "영화 보자" 의도 감지 (미디어 키워드 + 보는 동사)
+    _isMovieIntent(text) {
+        const t = text || '';
+        const media = /(영화|드라마|넷플|디즈니|쿠팡|왓챠|티빙|유튜브|같이\s*[보봐볼])/.test(t);
+        const verb = /(보자|볼래|볼까|봐요|봐줘|봅시다|보고\s*싶|볼레|같이\s*보|볼\s*까)/.test(t);
+        return media && verb;
+    },
+
+    // 메시지에서 영화 제목 추출 (트리거 단어 제거 후 남는 것)
+    _extractMovieTitle(text) {
+        return (text || '')
+            .replace(/["'「」『』]/g, ' ')
+            .replace(/[?!.~]+/g, ' ')
+            .replace(/(영화|드라마|넷플릭스|넷플|디즈니플러스|디즈니|쿠팡플레이|쿠팡|왓챠|티빙|유튜브)/g, ' ')
+            .replace(/(우리|오늘|이번에|지금|좀|한번|같이|함께|이거|그거|저거|나랑|너랑)/g, ' ')
+            .replace(/(보고\s*싶어요?|보고\s*싶어|보실래요?|봅시다|보자구|보자|볼래요?|볼까요?|볼레|봐요|봐줘|봐)/g, ' ')
+            .replace(/[ㅋㅎㅠㅜ]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    },
+
+    // 채널에서 "영화 보자"면 같이보기 버튼 띄움 (제목도 메시지에서 뽑아 담음)
+    _maybeMovieButton(message, chCfg) {
+        if (chCfg.movie) return;             // 이미 영화방
+        if (movieSession) return;            // 이미 보는 중
+        const text = message.content || '';
+        if (!this._isMovieIntent(text)) return;
+        const title = this._extractMovieTitle(text);
+        pendingMovie[message.channelId] = title || '';
+        const label = (title ? `🎬 "${title}" 같이보기` : '🎬 같이보기 시작').slice(0, 78);
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('watch_open').setLabel(label).setStyle(ButtonStyle.Success),
+        );
+        message.channel.send({
+            content: title ? `**${title}** 같이 볼까? 👇 (누르면 시작)` : '뭐 볼지 정해서 눌러줘 👇',
+            components: [row],
+        }).catch(() => {});
+    },
+
+    // 제목으로 자막 받아서 시작 (버튼/슬래시 공용)
+    async _watchBeginByTitle(character, group, title, lang) {
+        if (!title) return { error: '영화 제목이 비었어요.' };
+        if (!Subtitles.enabled(config)) return { error: 'OpenSubtitles 키가 없어요. `/watch start` 로 .srt 파일을 첨부해주세요.' };
+        const r = await Subtitles.fetchByTitle(config, title, lang === 'en' ? 'en' : 'ko');
+        if (r.error) return { error: `자막 검색 실패: ${r.error} (.srt 직접 첨부도 가능)` };
+        return this._watchStart({ character, movie: r.name || title, group, srtText: r.srtText });
+    },
+
     // 영화 컨트롤 버튼들 (모바일에서 타이핑 없이)
     _watchControls() {
         return new ActionRowBuilder().addComponents(
@@ -2153,6 +2208,28 @@ ${(movieSession.card.description || '').slice(0, 1500)}
     async _handleWatchButton(interaction) {
         const eph = { flags: MessageFlags.Ephemeral };
         const id = interaction.customId;
+        // "영화 보자" 버튼 → 그 채널의 캐릭터/단톡여부 + 들고있던 제목으로 바로 시작
+        if (id === 'watch_open') {
+            const ch = interaction.channelId;
+            const chCfg = config.channels[ch] || {};
+            const character = chCfg.sheet || chCfg.character;
+            if (!character) return interaction.reply({ content: '이 채널에 연결된 캐릭터가 없어요.', ...eph });
+            const group = !!chCfg.group;
+            const title = pendingMovie[ch] || '';
+            const lang = Langs.get(ch, config.language || 'ko');
+            if (!title) {
+                // 제목 못 뽑았으면 모달로 입력
+                const modal = new ModalBuilder().setCustomId('watch_open_modal').setTitle('뭐 볼까?');
+                modal.addComponents(new ActionRowBuilder().addComponents(
+                    new TextInputBuilder().setCustomId('title').setLabel('영화 제목').setStyle(TextInputStyle.Short).setRequired(true),
+                ));
+                return interaction.showModal(modal);
+            }
+            await interaction.reply({ content: `🎬 "${title}" 자막 찾는 중...`, ...eph });
+            const res = await this._watchBeginByTitle(character, group, title, lang).catch((e) => ({ error: e.message }));
+            delete pendingMovie[ch];
+            return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ → <#${res.channelId}> 의 버튼으로 ▶재생!`);
+        }
         if (id === 'watch_sync') {
             const modal = new ModalBuilder().setCustomId('watch_sync_modal').setTitle('지금 들린 대사로 맞추기');
             modal.addComponents(new ActionRowBuilder().addComponents(
@@ -2171,6 +2248,20 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         else if (id === 'watch_resume') { this._watchResume(); msg = '▶ 다시 재생'; }
         else msg = '?';
         return interaction.reply({ content: msg, ...eph });
+    },
+
+    async _handleWatchOpenModal(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const ch = interaction.channelId;
+        const chCfg = config.channels[ch] || {};
+        const character = chCfg.sheet || chCfg.character;
+        if (!character) return interaction.reply({ content: '이 채널에 연결된 캐릭터가 없어요.', ...eph });
+        const group = !!chCfg.group;
+        const title = (interaction.fields.getTextInputValue('title') || '').trim();
+        const lang = Langs.get(ch, config.language || 'ko');
+        await interaction.reply({ content: `🎬 "${title}" 자막 찾는 중...`, ...eph });
+        const res = await this._watchBeginByTitle(character, group, title, lang).catch((e) => ({ error: e.message }));
+        return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ → <#${res.channelId}> 의 버튼으로 ▶재생!`);
     },
 
     async _handleWatchSyncModal(interaction) {
