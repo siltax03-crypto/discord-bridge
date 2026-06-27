@@ -12,6 +12,8 @@ import Anniv from './anniversaries.js';
 import Away from './away.js';
 import Sets from './sets.js';
 import Movie from './movie.js';
+import Srt from './srt.js';
+import Subtitles from './subtitles.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -153,6 +155,20 @@ const Bot = {
                 .addStringOption((o) => o.setName('action').setDescription('end = 강제 종료, status = 상태')
                     .addChoices({ name: '종료(end)', value: 'end' }, { name: '상태(status)', value: 'status' })),
             new SlashCommandBuilder()
+                .setName('watch')
+                .setDescription('자막(.srt)으로 영화 같이보기 — 모바일/넷플 등 어디서든')
+                .addSubcommand((s) => s.setName('start').setDescription('같이보기 시작 (영화방 생성)')
+                    .addStringOption((o) => o.setName('character').setDescription('누구랑 볼지 (캐릭터/시트 이름)').setRequired(true))
+                    .addStringOption((o) => o.setName('title').setDescription('영화 제목 (자막 자동검색용). 자막파일 첨부하면 생략 가능'))
+                    .addAttachmentOption((o) => o.setName('srt').setDescription('자막 .srt 파일 (직접 올릴 때)'))
+                    .addBooleanOption((o) => o.setName('group').setDescription('단톡으로 보기 (그 시트 멤버 전원)')))
+                .addSubcommand((s) => s.setName('go').setDescription('지금 재생 시작! (폰에서 재생 누를 때)'))
+                .addSubcommand((s) => s.setName('sync').setDescription('방금 들은 대사로 위치 맞춤')
+                    .addStringOption((o) => o.setName('line').setDescription('방금 들린 대사 한 줄').setRequired(true)))
+                .addSubcommand((s) => s.setName('pause').setDescription('일시정지'))
+                .addSubcommand((s) => s.setName('resume').setDescription('다시 재생'))
+                .addSubcommand((s) => s.setName('end').setDescription('같이보기 종료 (리뷰 남김)')),
+            new SlashCommandBuilder()
                 .setName('mode')
                 .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
                 .addStringOption((o) =>
@@ -263,6 +279,10 @@ const Bot = {
             }
             // status
             return interaction.reply({ content: movieSession ? `🎬 "${movieSession.movie}" 보는 중 → <#${movieSession.channelId}>` : '진행 중인 영화가 없어요. 브라우저 확장에서 "같이보기 시작"으로 시작하세요.', ...eph });
+        }
+
+        if (cmd === 'watch') {
+            return this._handleWatch(interaction, eph);
         }
 
         // 단일봇만 채널 매핑 검사 (멀티봇은 봇 초대된 채널 어디서나 동작)
@@ -1825,9 +1845,9 @@ const Bot = {
         return s || 'movie';
     },
 
-    // 확장: 같이보기 시작 → {캐릭터}MOVIE 카테고리 + {영화} 채널 생성
-    async _movieStart({ character, movie, site, group }) {
-        const charName = (character || '').trim();
+    // 공통: {캐릭터}MOVIE 카테고리 + {영화} 채널 생성 + 세션/리액션타이머 셋업
+    async _openMovieRoom({ charName, movie, group, site = '', srt = false }) {
+        charName = (charName || '').trim();
         if (!charName) return { error: '캐릭터 미지정' };
         const card = this._loadCharacterByName(charName);
         if (!card) return { error: `캐릭터 카드 없음: ${charName}` };
@@ -1843,7 +1863,6 @@ const Bot = {
             if (!members) return { error: `"${charName}" 단톡 설정을 ST 확장에서 먼저 만들어주세요 (멤버 목록 필요).` };
         }
 
-        // 길드: 세트가 있으면 그 길드, 없으면 첫 길드
         const set = Sets.findByCharacter(charName);
         let guild = set ? await client.guilds.fetch(set.guildId).catch(() => null) : null;
         if (!guild) guild = client.guilds.cache.first();
@@ -1851,11 +1870,10 @@ const Bot = {
         const me = guild.members.me;
         if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) return { error: '봇에 채널 관리 권한 필요' };
 
-        // 진행 중인 세션 있으면 먼저 종료
         if (movieSession) { try { await this._movieEnd({}); } catch { /* 무시 */ } }
 
         const catName = `${charName}MOVIE`;
-        let category = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name === catName)
+        const category = guild.channels.cache.find((c) => c.type === ChannelType.GuildCategory && c.name === catName)
             || await guild.channels.create({ name: catName, type: ChannelType.GuildCategory });
         const chName = this._sanitizeChannelName(movie);
         const channel = await guild.channels.create({ name: chName, type: ChannelType.GuildText, parent: category.id });
@@ -1868,17 +1886,112 @@ const Bot = {
         ChatHistory.clear(channel.id);
 
         movieSession = {
-            character: charName, card, movie, site: site || '',
+            character: charName, card, movie, site,
             categoryId: category.id, channelId: channel.id,
             mainChannelId: set?.chat || null,
             group: !!members, members: members || null,
             buffer: [], recentSubs: [], lastReactAt: Date.now(), client, guildId: guild.id,
+            // .srt 모드용
+            srt, cues: null, cueIdx: 0, startedAt: 0, offsetMs: 0, paused: false, pausedAt: 0, feeder: null,
         };
         movieSession.timer = setInterval(() => this._movieReact().catch((e) => console.warn('[Movie] 리액션 오류:', e.message)), (config.movieReactSec || 35) * 1000);
+        return { ok: true, channel, charName, movie, chName };
+    },
 
-        await channel.send(`🎬 **${movie}** 같이 보기 시작! 편하게 봐 — 옆에서 같이 보면서 떠들게.`).catch(() => {});
-        console.log(`[Movie] 시작: "${movie}" (${charName}) → #${chName}`);
-        return { ok: true, channelId: channel.id };
+    // 확장: 같이보기 시작 → 방 생성 (자막은 확장이 실시간 푸시)
+    async _movieStart({ character, movie, site, group }) {
+        const r = await this._openMovieRoom({ charName: character, movie, group, site });
+        if (r.error) return r;
+        await r.channel.send(`🎬 **${movie}** 같이 보기 시작! 편하게 봐 — 옆에서 같이 보면서 떠들게.`).catch(() => {});
+        console.log(`[Movie] 시작(확장): "${movie}" (${r.charName}) → #${r.chName}`);
+        return { ok: true, channelId: r.channel.id };
+    },
+
+    // .srt 같이보기 시작 (모바일/iOS): 방 생성 + 자막 타임라인 피더
+    async _watchStart({ character, movie, group, srtText }) {
+        const cues = Srt.parse(srtText);
+        if (!cues.length) return { error: '자막을 못 읽었어요(.srt 형식 확인).' };
+        const r = await this._openMovieRoom({ charName: character, movie, group, srt: true });
+        if (r.error) return r;
+        movieSession.cues = cues;
+        // 재생 시작 전 대기 상태(일시정지). /watch go 또는 sync 로 시작.
+        movieSession.paused = true;
+        movieSession.feeder = setInterval(() => this._watchFeed(), 1000);
+        await r.channel.send(
+            `🎬 **${movie}** 같이 볼 준비 완료! (자막 ${cues.length}줄 로드)\n` +
+            `폰에서 **재생을 누르는 순간** \`/watch go\` 를 눌러줘. 어긋나면 \`/watch sync 방금 들은 대사\` 로 맞추면 돼.`,
+        ).catch(() => {});
+        console.log(`[Watch] srt 시작: "${movie}" (${r.charName}), 자막 ${cues.length}줄`);
+        return { ok: true, channelId: r.channel.id };
+    },
+
+    // 현재 영상 시각(ms) = 경과 - 일시정지누적 + offset
+    _watchVideoTime() {
+        const s = movieSession;
+        if (!s || !s.srt) return 0;
+        if (s.paused) return s.offsetMs + (s.pausedAt ? (s.pausedAt - s.startedAt) : 0);
+        return s.offsetMs + (Date.now() - s.startedAt);
+    },
+
+    // 1초마다: 현재 시각까지 도달한 자막 cue를 버퍼에 밀어넣음 (그럼 _movieReact가 반응)
+    _watchFeed() {
+        const s = movieSession;
+        if (!s || !s.srt || s.paused || !s.cues) return;
+        const t = this._watchVideoTime();
+        while (s.cueIdx < s.cues.length && s.cues[s.cueIdx].start <= t) {
+            const text = s.cues[s.cueIdx].text;
+            s.buffer.push(text); s.recentSubs.push(text);
+            s.cueIdx++;
+        }
+        if (s.recentSubs.length > 40) s.recentSubs = s.recentSubs.slice(-40);
+        if (s.buffer.length > 400) s.buffer = s.buffer.slice(-400);
+        // 끝까지 다 봤으면 자동 마무리
+        if (s.cueIdx >= s.cues.length && s.cues.length) {
+            console.log('[Watch] 자막 끝 — 자동 종료');
+            this._movieEnd().catch(() => {});
+        }
+    },
+
+    // 재생 시작(t=0부터) — 폰에서 재생 누를 때
+    _watchGo() {
+        const s = movieSession;
+        if (!s || !s.srt) return { error: '진행 중인 .srt 같이보기가 없어요.' };
+        s.startedAt = Date.now();
+        s.offsetMs = 0;
+        s.cueIdx = 0;
+        s.paused = false;
+        s.pausedAt = 0;
+        return { ok: true };
+    },
+
+    // 들은 대사로 위치 맞춤
+    _watchSync(line) {
+        const s = movieSession;
+        if (!s || !s.srt || !s.cues) return { error: '진행 중인 .srt 같이보기가 없어요.' };
+        const cueMs = Srt.findTimeByText(s.cues, line);
+        if (cueMs == null) return { error: '그 대사를 자막에서 못 찾았어요. 좀 더 길게 적어봐.' };
+        // 지금 시점이 그 대사 시각이 되도록 offset 재설정
+        s.startedAt = Date.now();
+        s.offsetMs = cueMs;
+        s.paused = false;
+        s.pausedAt = 0;
+        // cueIdx를 그 위치로
+        s.cueIdx = s.cues.findIndex((c) => c.start > cueMs);
+        if (s.cueIdx < 0) s.cueIdx = s.cues.length;
+        return { ok: true, at: cueMs };
+    },
+
+    _watchPause() {
+        const s = movieSession;
+        if (!s || !s.srt) return { error: '없음' };
+        if (!s.paused) { s.paused = true; s.pausedAt = Date.now(); }
+        return { ok: true };
+    },
+    _watchResume() {
+        const s = movieSession;
+        if (!s || !s.srt) return { error: '없음' };
+        if (s.paused) { s.startedAt += (Date.now() - (s.pausedAt || Date.now())); s.paused = false; s.pausedAt = 0; }
+        return { ok: true };
     },
 
     // 확장: 자막 큐 수신 → 버퍼(다음 리액션용) + recentSubs(유저가 말 걸 때 맥락용, 안 비움)
@@ -1972,6 +2085,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const s = movieSession;
         movieSession = null; // 재진입 방지
         if (s.timer) clearInterval(s.timer);
+        if (s.feeder) clearInterval(s.feeder);
 
         const channel = await s.client.channels.fetch(s.channelId).catch(() => null);
         const lang = Langs.get(s.channelId, config.language || 'ko');
@@ -2016,6 +2130,60 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         }
         console.log(`[Movie] 종료: "${s.movie}"`);
         return { ok: true, channelId: s.channelId };
+    },
+
+    // --- /watch: .srt 자막 동기화 같이보기 (모바일/iOS) ---
+    async _handleWatch(interaction, eph) {
+        const sub = interaction.options.getSubcommand();
+
+        if (sub === 'start') {
+            const character = interaction.options.getString('character');
+            const title = interaction.options.getString('title') || '';
+            const group = interaction.options.getBoolean('group') || false;
+            const att = interaction.options.getAttachment('srt');
+            await interaction.reply({ content: '🎬 자막 준비 중...', ...eph });
+
+            // 자막 소스: 첨부파일 우선 → 없으면 제목으로 OpenSubtitles 자동검색
+            let srtText = '';
+            let movieName = title || (att ? att.name.replace(/\.(srt|vtt)$/i, '') : '');
+            if (att) {
+                try {
+                    const r = await fetch(att.url);
+                    srtText = await r.text();
+                } catch (e) { return interaction.editReply(`⚠️ 자막 파일 받기 실패: ${e.message}`); }
+            } else if (title) {
+                if (!Subtitles.enabled(config)) {
+                    return interaction.editReply('⚠️ 자막 자동검색이 설정 안 됐어요. `.srt` 파일을 첨부하거나, config에 OpenSubtitles 키를 넣어주세요.');
+                }
+                const lang = (Langs.get(interaction.channelId, config.language || 'ko'));
+                const r = await Subtitles.fetchByTitle(config, title, lang === 'en' ? 'en' : 'ko');
+                if (r.error) return interaction.editReply(`⚠️ 자막 자동검색 실패: ${r.error}\n(.srt 파일을 직접 첨부해도 돼요)`);
+                srtText = r.srtText; movieName = r.name || title;
+            } else {
+                return interaction.editReply('⚠️ 영화 제목(title)을 적거나 .srt 파일을 첨부해주세요.');
+            }
+
+            const res = await this._watchStart({ character, movie: movieName || '영화', group, srtText }).catch((e) => ({ error: e.message }));
+            return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ 준비 완료 → <#${res.channelId}>\n폰에서 재생 누르면서 \`/watch go\``);
+        }
+
+        if (sub === 'go') {
+            const r = this._watchGo();
+            return interaction.reply({ content: r.error ? `⚠️ ${r.error}` : '▶ 재생 시작! 같이 본다 🍿', ...eph });
+        }
+        if (sub === 'sync') {
+            const r = this._watchSync(interaction.options.getString('line'));
+            if (r.error) return interaction.reply({ content: `⚠️ ${r.error}`, ...eph });
+            const mm = Math.floor(r.at / 60000), ss = Math.floor((r.at % 60000) / 1000);
+            return interaction.reply({ content: `🎯 ${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')} 지점으로 맞췄어요.`, ...eph });
+        }
+        if (sub === 'pause') { this._watchPause(); return interaction.reply({ content: '⏸ 일시정지', ...eph }); }
+        if (sub === 'resume') { this._watchResume(); return interaction.reply({ content: '▶ 다시 재생', ...eph }); }
+        if (sub === 'end') {
+            await interaction.reply({ content: '🎬 종료 처리 중...', ...eph });
+            const r = await this._movieEnd().catch((e) => ({ error: e.message }));
+            return interaction.editReply(r?.error ? `⚠️ ${r.error}` : '🎬 종료하고 리뷰 남겼어요.');
+        }
     },
 
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
@@ -2159,6 +2327,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
     async stop() {
         try { Movie.stop(); } catch { /* 무시 */ }
         if (movieSession?.timer) clearInterval(movieSession.timer);
+        if (movieSession?.feeder) clearInterval(movieSession.feeder);
         for (const c of clients) {
             try { c.destroy(); } catch { /* 무시 */ }
         }
