@@ -19,6 +19,12 @@ const AIClient = {
         const model = profile.model || '';
         const maxTokens = options.maxTokens || config.maxResponseTokens || 1000;
 
+        // "잼민이랑 친해지기" OAuth 프록시: 모델이 antigravity-* 면 로컬 OpenAI호환 프록시로.
+        // (이 표식은 그 프록시에만 있어서, 다른 사람 일반 프로필엔 영향 없음)
+        if (model.startsWith('antigravity')) {
+            return this._sendOAuthProxy(messages, model, maxTokens);
+        }
+
         if (api.includes('vertex') || api.includes('google') || api.includes('makersuite') || model.includes('gemini')) {
             return this._sendGemini(messages, model, maxTokens);
         }
@@ -127,6 +133,27 @@ const AIClient = {
         }
 
         return ''; // 재시도 모두 빈 응답
+    },
+
+    // --- "잼민이랑 친해지기" 로컬 OAuth 프록시 (OpenAI 호환). API키 불필요, 프록시가 OAuth 처리 ---
+    // 봇과 ST(=프록시)가 같은 서버일 때 localhost로 접근. URL은 config.oauthProxyUrl로 변경 가능.
+    async _sendOAuthProxy(messages, model, maxTokens) {
+        const base = (config.oauthProxyUrl || 'http://127.0.0.1:18765/v1').replace(/\/+$/, '');
+        const resp = await fetch(`${base}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model,
+                max_tokens: maxTokens,
+                messages: messages.map(m => ({ role: m.role, content: m.content })),
+            }),
+        });
+        if (!resp.ok) {
+            const err = await resp.text();
+            throw new Error(`OAuth 프록시 오류 (${resp.status}): ${err.slice(0, 300)}`);
+        }
+        const data = await resp.json();
+        return data.choices?.[0]?.message?.content || '';
     },
 
     // --- Claude ---
