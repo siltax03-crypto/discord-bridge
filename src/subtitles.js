@@ -27,18 +27,6 @@ const Subtitles = {
         return false;
     },
 
-    // 한 언어로 검색 → 제목 맞는 첫 결과의 file_id (없으면 null)
-    async _search(headers, title, language) {
-        const url = `${API}/subtitles?query=${encodeURIComponent(title)}&languages=${language}`;
-        const r = await fetch(url, { headers });
-        if (!r.ok) return null;
-        const d = await r.json();
-        const items = (d.data || []).filter((it) => this._matches(it, title));
-        const chosen = items[0];
-        if (!chosen) return null;
-        return { fileId: chosen.attributes?.files?.[0]?.file_id, name: chosen.attributes?.release || (chosen.attributes?.feature_details?.title || title), lang: language };
-    },
-
     // 제목으로 자막(.srt 텍스트) 받아오기. 실패 시 null + 이유
     async fetchByTitle(config, title, language = 'ko') {
         const { apiKey, username, password } = creds(config);
@@ -49,12 +37,25 @@ const Subtitles = {
             'User-Agent': 'discord-bridge-watch v1.0',
         };
         try {
-            // 1) 검색 — 제목 일치하는 것만. 요청 언어 없으면 영어로 폴백.
-            let hit = await this._search(headers, title, language);
-            if (!hit && language !== 'en') hit = await this._search(headers, title, 'en');
-            if (!hit?.fileId) return { error: `"${title}" 자막을 못 찾았어요. 제목(특히 영어 원제)이 정확한지 확인해줘.` };
-            const fileId = hit.fileId;
-            const item = { attributes: { release: hit.name } };
+            // 1) 검색 — 언어 필터 없이 제목으로 찾고, 결과 중 제목 일치 + 언어 우선순위로 고름
+            const sUrl = `${API}/subtitles?query=${encodeURIComponent(title)}`;
+            const sr = await fetch(sUrl, { headers });
+            if (!sr.ok) return { error: `검색 실패 (${sr.status})` };
+            const sd = await sr.json();
+            const all = sd.data || [];
+            // 디버그: 뭐가 왔는지
+            const titles = all.slice(0, 6).map((it) => `${it.attributes?.feature_details?.title || '?'}[${it.attributes?.language || '?'}]`);
+            console.log(`[Subtitles] "${title}" 검색결과 ${all.length}개:`, titles.join(', '));
+
+            const matched = all.filter((it) => this._matches(it, title));
+            if (!matched.length) {
+                return { error: `"${title}" 자막을 못 찾았어요. (검색결과: ${titles.slice(0, 3).join(', ') || '없음'}) — 영어 원제로 다시.` };
+            }
+            const byLang = (lang) => matched.find((it) => (it.attributes?.language || '').toLowerCase() === lang);
+            const chosen = byLang(language) || byLang('ko') || byLang('en') || matched[0];
+            const fileId = chosen.attributes?.files?.[0]?.file_id;
+            if (!fileId) return { error: `자막 파일 ID 없음` };
+            const item = { attributes: { release: chosen.attributes?.release || chosen.attributes?.feature_details?.title || title } };
 
             // 2) 다운로드 토큰 (로그인 필요)
             let auth = {};
