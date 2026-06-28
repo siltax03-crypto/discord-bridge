@@ -45,9 +45,9 @@ const Subtitles = {
         const headers = { 'Api-Key': apiKey, 'Content-Type': 'application/json', 'User-Agent': 'discord-bridge-watch v1.0' };
         try {
             // 1) 영화(feature) 검색 → 제목 맞는 것 중 자막 많은 영화
-            const fr = await fetch(`${API}/features?query=${encodeURIComponent(title)}`, { headers });
-            if (!fr.ok) return { error: `영화 검색 실패 (${fr.status})` };
-            const fd = await fr.json();
+            const ftr = await fetch(`${API}/features?query=${encodeURIComponent(title)}`, { headers });
+            if (!ftr.ok) return { error: `영화 검색 실패 (${ftr.status})` };
+            const fd = await ftr.json();
             const feats = (fd.data || []).filter((f) => this._matches(f, title));
             const log = (fd.data || []).slice(0, 6).map((f) => `${f.attributes?.title}(${f.attributes?.year || '?'})`);
             console.log(`[Subtitles] "${title}" 영화검색:`, log.join(', '));
