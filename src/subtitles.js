@@ -51,11 +51,19 @@ const Subtitles = {
             if (!matched.length) {
                 return { error: `"${title}" 자막을 못 찾았어요. (검색결과: ${titles.slice(0, 3).join(', ') || '없음'}) — 영어 원제로 다시.` };
             }
-            const byLang = (lang) => matched.find((it) => (it.attributes?.language || '').toLowerCase() === lang);
-            const chosen = byLang(language) || byLang('ko') || byLang('en') || matched[0];
+            // 다운로드 많은 순으로 (완성도 높은 자막 우선)
+            const sorted = matched.slice().sort((a, b) => (b.attributes?.download_count || 0) - (a.attributes?.download_count || 0));
+            const byLang = (lang) => sorted.find((it) => (it.attributes?.language || '').toLowerCase() === lang);
+            // 한국어 우선 → 영어. 둘 다 없으면 엉뚱한 언어 쓰지 말고 실패.
+            const chosen = byLang(language) || byLang('ko') || byLang('en');
+            if (!chosen) {
+                const langs = [...new Set(matched.map((it) => it.attributes?.language))].join(',');
+                return { error: `"${title}" 한국어/영어 자막이 없어요 (있는 언어: ${langs}). .srt 직접 첨부 추천.` };
+            }
+            console.log(`[Subtitles] "${title}" 선택: ${chosen.attributes?.language} / ${chosen.attributes?.release || ''}`);
             const fileId = chosen.attributes?.files?.[0]?.file_id;
             if (!fileId) return { error: `자막 파일 ID 없음` };
-            const item = { attributes: { release: chosen.attributes?.release || chosen.attributes?.feature_details?.title || title } };
+            const item = { attributes: { release: `${chosen.attributes?.release || chosen.attributes?.feature_details?.title || title} [${chosen.attributes?.language}]` } };
 
             // 2) 다운로드 토큰 (로그인 필요)
             let auth = {};
