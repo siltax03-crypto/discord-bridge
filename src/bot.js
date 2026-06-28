@@ -1018,8 +1018,7 @@ const Bot = {
             const chCfg = config.channels[message.channelId];
             if (!chCfg) return;
             if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
-            // "영화 보자" 류면 같이보기 시작 버튼 띄움 (정상 대화 흐름은 그대로 진행)
-            this._maybeMovieButton(message, chCfg);
+            // (영화 보자 인식은 AI가 [WATCH:제목] 태그로 → _respond에서 버튼 띄움)
             // 단체 채널(group)이면 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
             if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
                 const gkey = 'grp:' + message.id;
@@ -1223,10 +1222,17 @@ const Bot = {
         let response = await AIClient.sendMessage(messages, { maxTokens });
         if (!response) { console.warn('[Group] 빈 응답'); return; }
 
+        // [WATCH: 제목] → 같이보기 버튼 (단톡도)
+        let watchTitle = null;
+        response = response.replace(/\[WATCH:\s*([^\]]+)\]/i, (_, t) => { watchTitle = t.trim(); return ''; }).trim();
         response = this._stripGroupTags(channelId, response);
 
         const lines = this._parseGroupLines(response, roster);
-        if (lines.length === 0) { console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return; }
+        if (lines.length === 0) {
+            if (watchTitle) await this._postWatchButton(channel, channelId, watchTitle);
+            console.warn('[Group] 파싱 실패:', response.slice(0, 120)); return;
+        }
+        if (watchTitle) setTimeout(() => this._postWatchButton(channel, channelId, watchTitle).catch(() => {}), 2000);
 
         ChatHistory.addMessage(channelId, 'assistant', lines.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
 
@@ -1335,7 +1341,7 @@ const Bot = {
 
     // 못 잡은(형식 깨진) 알려진 태그가 본문에 새지 않게 강제 제거하는 안전망
     _stripStrayTags(text) {
-        return (text || '').replace(/\[\s*(?:FOLLOW(?:UP)?|REMIND|AWAY|STATUS|REACT|MEET|SEND_PHOTO)\b[^\]]*\]/gi, '').trim();
+        return (text || '').replace(/\[\s*(?:FOLLOW(?:UP)?|REMIND|AWAY|STATUS|REACT|MEET|SEND_PHOTO|WATCH)\b[^\]]*\]/gi, '').trim();
     },
 
     // 단톡 응답에서 태그 처리(리마인더/팔로업 등록) + 나머지 태그 제거 → [이름] 파싱 전에 호출
@@ -1612,19 +1618,23 @@ const Bot = {
             return '';
         }).trim();
 
+        // [WATCH: 제목] → 같이보기 제안 인식 (영어 원제 포함). 본문에서 제거하고 버튼 띄울 준비.
+        let watchTitle = null;
+        response = response.replace(/\[WATCH:\s*([^\]]+)\]/i, (_, t) => { watchTitle = t.trim(); return ''; }).trim();
+
         // 안전망: 못 잡은 알려진 태그(형식 깨짐)는 본문에 안 새게 강제 제거
         response = this._stripStrayTags(response);
-
-        // (만남 자동감지 폴백 제거: "도착/문 열어줘" 등이 음식배달 등과 구분 안 돼 오발동 → 모델의 [MEET] 태그만 신뢰)
 
         // 태그만 있고 본문이 비었으면: 빈 응답 저장/전송하지 않음 (리마인더는 이미 등록됨)
         if (!response && !photoPrompt) {
             console.warn('[Bot] 응답 본문 없음(태그뿐) — 저장/전송 생략');
+            if (watchTitle) await this._postWatchButton(channel, channelId, watchTitle);
             return true;
         }
 
         ChatHistory.addMessage(channelId, 'assistant', response, charName);
         await this._sendResponse(channel, character, response, photoPrompt);
+        if (watchTitle) await this._postWatchButton(channel, channelId, watchTitle);
         return true;
     },
 
@@ -2167,22 +2177,17 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             .trim();
     },
 
-    // 채널에서 "영화 보자"면 같이보기 버튼 띄움 (제목도 메시지에서 뽑아 담음)
-    _maybeMovieButton(message, chCfg) {
-        if (chCfg.movie) return;             // 이미 영화방
-        if (movieSession) return;            // 이미 보는 중
-        const text = message.content || '';
-        if (!this._isMovieIntent(text)) return;
-        const title = this._extractMovieTitle(text);
-        pendingMovie[message.channelId] = title || '';
-        const label = (title ? `🎬 "${title}" 같이보기` : '🎬 같이보기 시작').slice(0, 78);
+    // AI가 [WATCH: 제목] 태그를 달면 같이보기 버튼을 띄운다 (영어 원제 포함)
+    async _postWatchButton(channel, channelId, title) {
+        if (movieSession) return;                                  // 이미 보는 중
+        const chCfg = config.channels[channelId] || {};
+        if (chCfg.movie) return;                                   // 이미 영화방
+        if (!(chCfg.sheet || chCfg.character)) return;             // 캐릭터 없는 채널
+        pendingMovie[channelId] = (title || '').slice(0, 90);
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('watch_open').setLabel(label).setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('watch_open').setLabel(`🎬 "${(title || '').slice(0, 60)}" 같이보기`.slice(0, 78)).setStyle(ButtonStyle.Success),
         );
-        message.channel.send({
-            content: title ? `**${title}** 같이 볼까? 👇 (누르면 시작)` : '뭐 볼지 정해서 눌러줘 👇',
-            components: [row],
-        }).catch(() => {});
+        await channel.send({ content: '👇 누르면 같이보기 시작', components: [row] }).catch(() => {});
     },
 
     // 제목으로 자막 받아서 시작 (버튼/슬래시 공용). 방 이름은 유저가 친 제목(깔끔), 찾은 자막명은 따로 보여줌.

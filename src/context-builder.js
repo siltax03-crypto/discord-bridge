@@ -72,6 +72,7 @@ ${gapLine ? gapLine + '\n' : ''}- Each character carries their own mood across m
 - Stay in each character's personality/speech from the sheet. NO narration/asterisk actions — pure chat text.
 - Do NOT repeat, copy, or rephrase messages already sent earlier in this chat (no recycling a previous opener/line). Read the history and say something genuinely NEW that moves the conversation forward.
 - If the user asks to be reminded/contacted at a specific time (e.g. "5분 뒤에 연락 줘", "이따 8시에 깨워줘"), append [REMIND: YYYY-MM-DD HH:MM | what to bring up] at the VERY END of the whole output, on its own line OUTSIDE any [name] line. Use 24-hour, a FUTURE time computed from the current time above. Add it only once.
+- If the user proposes watching a SPECIFIC movie/show together, append [WATCH: TITLE] at the VERY END (own line, outside [name] lines) with the official ENGLISH title if known (라푼젤 → [WATCH: Tangled]). Only for a concrete title; once only.
 ${langLine}
 ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
 
@@ -271,6 +272,10 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
         const antiRepeat =
             '- Do NOT reuse sentences, phrases, or sentence patterns from your recent messages. Each reply must be freshly worded and move the conversation forward.';
 
+        // 영화 같이보기: 유저가 특정 작품을 같이 보자고 하면 제목 태그 (영어 원제로!)
+        const watchInstruction =
+            `- If ${userName} proposes watching a SPECIFIC movie / show / video TOGETHER (e.g. "라푼젤 보자", "we should watch Tangled"), reply naturally AND append [WATCH: TITLE] at the very END. Put the work's OFFICIAL title — in ENGLISH if you know it (예: 라푼젤 → [WATCH: Tangled], 기생충 → [WATCH: Parasite]). Only when they actually propose a specific title to watch together; never make the tag your whole message, and don't add it for vague talk about movies.`;
+
         // 채팅 모드: 물리적으로 떨어져 있음 (만나서 하는 행동 금지, 미래/재회 언급은 OK)
         const distanceInstruction =
             `- You and ${userName} are physically far apart, texting from a distance. You are NOT together in person. Do NOT do in-person actions (no kissing/touching/hugging right now). References to the future or to when you meet are fine (e.g. "집에 가면 뽀뽀해줘").`;
@@ -335,6 +340,7 @@ ${remindInstruction}${proactiveLines}`);
 - Write like real texting, and VARY how much you send — do NOT always send the same number of bubbles. Sometimes ONE short line is enough; sometimes 2; occasionally a quick burst of several short ones when you're excited or have a lot to say; rarely a slightly longer single message. Match your mood and the moment, like a real person. Separate bubbles with a BLANK LINE. Never a long paragraph, and never a fixed/mechanical 3-line pattern every time.
 ${distanceInstruction}
 ${meetInstruction}
+${watchInstruction}
 ${langInstruction}
 ${slangInstruction}
 ${antiRepeat}
