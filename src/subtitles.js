@@ -40,7 +40,7 @@ const Subtitles = {
 
     // 제목으로 자막(.srt 텍스트) 받아오기 — 사이트처럼 (영화 찾기 → 그 영화 ID로 자막)
     async fetchByTitle(config, title, language = 'ko') {
-        const { apiKey } = creds(config);
+        const { apiKey, username, password } = creds(config);
         if (!apiKey) return { error: 'OpenSubtitles 미설정' };
         const headers = { 'Api-Key': apiKey, 'Content-Type': 'application/json', 'User-Agent': 'discord-bridge-watch v1.0' };
         try {
