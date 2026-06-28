@@ -1214,7 +1214,7 @@ const Bot = {
             timeGapText: gapText,
         }) + this._movieContextNote(channelId)
             // 유저가 방금 말한 경우(선톡 아님): 유저 말에 "먼저" 답하고, 영상/딴 수다는 그 다음
-            + (seedNote ? '' : `\n\n[USER JUST SPOKE — PRIORITY]\n- ${userName}(유저)가 방금 말을 걸었다. 답의 맨 앞에서 ${userName}의 말에 먼저 반응/대답해라. 영화 장면 얘기나 등장인물끼리 수다는 그 다음이다. 유저 말을 영상 코멘트 뒤로 미루지 마.`);
+            + (seedNote ? '' : `\n\n[USER JUST SPOKE — PRIORITY]\n- ${userName} just said something to you. Lead your reply by reacting/answering ${userName} FIRST. Any movie/scene commentary or among-yourselves banter comes AFTER that. Do NOT push ${userName}'s message behind scene talk.`);
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
         if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
@@ -2033,7 +2033,7 @@ const Bot = {
     _movieContextNote(channelId) {
         if (!movieSession || movieSession.channelId !== channelId) return '';
         const subs = (movieSession.recentSubs || []).slice(-15).join('\n');
-        return `\n\n[NOW WATCHING — 지금 다 같이 "${movieSession.movie}"를 보는 중]\n${subs ? `최근 화면 자막:\n${subs}\n` : ''}- 지금 이 영상을 같이 보고 있다는 걸 전제로 반응/대화해. 유저가 "이거 봤어?" 같은 말을 하면 화면에 나온 그 내용을 말하는 거다. 영상을 안 보는 것처럼 굴지 마.`;
+        return `\n\n[NOW WATCHING — you are all watching "${movieSession.movie}" together right now]\n${subs ? `Recent on-screen subtitles:\n${subs}\n` : ''}- React and talk on the premise that you're watching this video together. If the user says things like "did you see that?", they mean what's on screen. Do NOT act like you're not watching.`;
     },
 
     // 주기적으로 모인 자막에 캐릭터가 리액션
@@ -2062,7 +2062,7 @@ const Bot = {
 ${(movieSession.card.description || '').slice(0, 1500)}
 - ${langLine}
 - No narration/asterisk actions — just chat like texting next to them.`;
-        const user = `[방금 화면에 나온 자막 — 참고만, 인용 금지]\n${lines.join('\n').slice(-1800)}`;
+        const user = `[Subtitles that just played on screen — for reference only, do NOT quote]\n${lines.join('\n').slice(-1800)}`;
         const history = ChatHistory.toAPIMessages(movieSession.channelId, 20);
 
         let resp = '';
@@ -2089,7 +2089,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             timezone: config.timezone || 'Asia/Seoul',
             chatSlang: config.chatSlang !== false,
         });
-        const user = `("${s.movie}"를 같이 보는 중. 단, 시트 인물 전원이 보는 게 아니라 — 이 영화를 보고 싶어서 모인 사람들만 방에 있다. 처음에 반응한 인물들 위주로 계속 그 사람들이 보는 거고, 갑자기 전원이 다 끼어들지 않는다. 방금 자막 장면에 그 인물들이 자연스럽게 리액션/티키타카. 자막 요약/인용 금지, 짧게.)\n[방금 자막]\n${lines.join('\n').slice(-1800)}`;
+        const user = `(You're all watching "${s.movie}" together. NOT every character on the sheet is here — only the ones who wanted to watch this showed up. Keep it to whoever already reacted; don't suddenly make everyone join. React/banter naturally to the scene that just played. No summarizing or quoting the subtitles, keep it short.)\n[Just-played subtitles]\n${lines.join('\n').slice(-1800)}`;
         let resp = '';
         try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: config.movieReactTokens || 1536 }); } catch (e) { console.warn('[Movie] 그룹 생성 오류:', e.message); }
         resp = this._stripGroupTags(s.channelId, (resp || '').trim());
@@ -2124,7 +2124,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             // 단톡: 등장인물 각자 한 줄씩 감상 → 화자별 웹훅
             const roster = s.members.map((m) => m.name).filter(Boolean);
             const sys = ContextBuilder.buildGroup(s.card, { roster, language: lang, timezone: config.timezone || 'Asia/Seoul', chatSlang: config.chatSlang !== false });
-            const user = `(방금 다 같이 "${s.movie}"를 다 봤다. 각자 한 줄씩 짧은 감상 + 별점(10점 만점)을 남겨. 티키타카 OK.)\n[우리가 보면서 나눈 얘기]\n${history}`;
+            const user = `(You all just finished watching "${s.movie}" together. Each character leaves a short one-line impression + a rating out of 10. Banter is OK.)\n[What we talked about while watching]\n${history}`;
             let resp = '';
             try { resp = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: user }], { maxTokens: 2048 }); } catch { /* 무시 */ }
             const parsed = this._parseGroupLines(this._stripGroupTags(s.channelId, (resp || '').trim()), roster);
@@ -2147,8 +2147,8 @@ ${(movieSession.card.description || '').slice(0, 1500)}
                 try { await channel.setName(this._sanitizeChannelName(`📝${s.movie}`)); } catch { /* 무시 */ }
             }
         }
-        // 리뷰 채널은 일반 채널로 유지 (캐릭터랑 계속 대화 가능)
-        if (config.channels[s.channelId]) config.channels[s.channelId].movie = false;
+        // 리뷰 채널: 대화는 되지만(말 걸면 답함) 봇이 먼저 선톡하진 않음
+        if (config.channels[s.channelId]) { config.channels[s.channelId].movie = false; config.channels[s.channelId].noProactive = true; }
 
         // 메인 챗으로 복귀: 기억(요약)으로 남기고 먼저 말 걸기
         if (s.mainChannelId) {
@@ -2332,8 +2332,9 @@ ${(movieSession.card.description || '').slice(0, 1500)}
 
     // --- 선톡: 봇이 먼저 메시지를 보냄 (스케줄러가 호출) ---
     async sendProactive(channelId, note = '', { allowRp = false } = {}) {
-        // 요약 채널은 선톡 안 함
+        // 요약 채널 / 영화 끝난 리뷰 채널은 선톡 안 함
         if (config.channels[channelId]?.summaryOnly) return;
+        if (config.channels[channelId]?.noProactive) return;
         // 롤플 채널은 선톡 절대 금지 — 만남 전환(_startRpScene)으로 장면 열 때만 예외
         if (!allowRp && Sets.findByChannel(channelId)?.role === 'rp') return;
         // 잠수 중이면 선톡/리마인더/재촉 다 생략 (복귀 연락은 Away가 잠수 해제 후 호출하므로 통과됨)
