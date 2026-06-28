@@ -47,10 +47,14 @@ const Subtitles = {
             const titles = all.slice(0, 6).map((it) => `${it.attributes?.feature_details?.title || '?'}[${it.attributes?.language || '?'}]`);
             console.log(`[Subtitles] "${title}" 검색결과 ${all.length}개:`, titles.join(', '));
 
-            const matched = all.filter((it) => this._matches(it, title));
+            let matched = all.filter((it) => this._matches(it, title));
             if (!matched.length) {
                 return { error: `"${title}" 자막을 못 찾았어요. (검색결과: ${titles.slice(0, 3).join(', ') || '없음'}) — 영어 원제로 다시.` };
             }
+            // ★ 실제 파일명(release)에도 제목이 들어간 것 우선 (잘못 등록된 다른 영화 자막 거르기)
+            const qWord = (title || '').toLowerCase().replace(/[^a-z0-9가-힣]/g, '');
+            const strong = matched.filter((it) => (it.attributes?.release || '').toLowerCase().replace(/[^a-z0-9가-힣]/g, '').includes(qWord));
+            if (strong.length) matched = strong;
             // 다운로드 많은 순으로 (완성도 높은 자막 우선)
             const sorted = matched.slice().sort((a, b) => (b.attributes?.download_count || 0) - (a.attributes?.download_count || 0));
             const byLang = (lang) => sorted.find((it) => (it.attributes?.language || '').toLowerCase() === lang);
