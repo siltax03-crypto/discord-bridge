@@ -1213,8 +1213,8 @@ const Bot = {
             seedNote,
             timeGapText: gapText,
         }) + this._movieContextNote(channelId)
-            // 유저가 방금 말한 경우(선톡 아님): 무시는 말되 자연스럽게. 하던 얘기 있으면 마저 하고 끼워넣어도 됨
-            + (seedNote ? '' : `\n\n[USER JUST SPOKE]\n- ${userName}(유저)가 방금 말했다. 적어도 한 명은 ${userName}에게 반응해줘 — 다만 억지로 즉답할 필요는 없고, 하던 대화가 있으면 자연스럽게 한 박자 뒤 끼워넣어도 된다(현실 단톡처럼). 유저를 끝까지 투명인간 취급만 하지 마.`);
+            // 유저가 방금 말한 경우(선톡 아님): 유저 말에 "먼저" 답하고, 영상/딴 수다는 그 다음
+            + (seedNote ? '' : `\n\n[USER JUST SPOKE — PRIORITY]\n- ${userName}(유저)가 방금 말을 걸었다. 답의 맨 앞에서 ${userName}의 말에 먼저 반응/대답해라. 영화 장면 얘기나 등장인물끼리 수다는 그 다음이다. 유저 말을 영상 코멘트 뒤로 미루지 마.`);
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
         if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
@@ -2039,6 +2039,9 @@ const Bot = {
     // 주기적으로 모인 자막에 캐릭터가 리액션
     async _movieReact() {
         if (!movieSession) return;
+        // 유저가 방금 말 걸었으면(답 대기/생성 중) 자막 리액션은 양보 — 유저 답이 먼저
+        const ch = movieSession.channelId;
+        if (groupTimers[ch] || groupGenerating[ch] || pendingReplies[ch] || generating[ch]) return;
         if (movieSession.group) return this._movieReactGroup();
         const all = movieSession.buffer.splice(0); // 버퍼 비움
         if (all.length === 0) return; // 새 자막 없으면 조용히
