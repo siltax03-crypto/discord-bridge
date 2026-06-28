@@ -2160,7 +2160,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             .replace(/["'「」『』]/g, ' ')
             .replace(/[?!.~]+/g, ' ')
             .replace(/(영화|드라마|넷플릭스|넷플|디즈니플러스|디즈니|쿠팡플레이|쿠팡|왓챠|티빙|유튜브)/g, ' ')
-            .replace(/(우리|오늘|이번에|지금|좀|한번|같이|함께|이거|그거|저거|나랑|너랑)/g, ' ')
+            .replace(/(우리|오늘|이번에|지금|좀|한번|같이|함께|이거|그거|저거|나랑|너랑|저기|혹시|시간|괜찮으면요?|괜찮아요?|괜찮|좋으면|어때요?|가능하면|될까요?|해도\s*돼|나중에|이따가?)/g, ' ')
             .replace(/(보고\s*싶어요?|보고\s*싶어|보실래요?|봅시다|보자구|보자|볼래요?|볼까요?|볼레|봐요|봐줘|봐)/g, ' ')
             .replace(/[ㅋㅎㅠㅜ]+/g, ' ')
             .replace(/\s+/g, ' ')
@@ -2185,13 +2185,15 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         }).catch(() => {});
     },
 
-    // 제목으로 자막 받아서 시작 (버튼/슬래시 공용)
+    // 제목으로 자막 받아서 시작 (버튼/슬래시 공용). 방 이름은 유저가 친 제목(깔끔), 찾은 자막명은 따로 보여줌.
     async _watchBeginByTitle(character, group, title, lang) {
         if (!title) return { error: '영화 제목이 비었어요.' };
         if (!Subtitles.enabled(config)) return { error: 'OpenSubtitles 키가 없어요. `/watch start` 로 .srt 파일을 첨부해주세요.' };
         const r = await Subtitles.fetchByTitle(config, title, lang === 'en' ? 'en' : 'ko');
-        if (r.error) return { error: `자막 검색 실패: ${r.error} (.srt 직접 첨부도 가능)` };
-        return this._watchStart({ character, movie: r.name || title, group, srtText: r.srtText });
+        if (r.error) return { error: `자막 검색 실패: ${r.error} (영어 제목으로 다시 / .srt 첨부도 가능)` };
+        const res = await this._watchStart({ character, movie: title, group, srtText: r.srtText });
+        if (res.ok) res.found = r.name;
+        return res;
     },
 
     // 영화 컨트롤 버튼들 (모바일에서 타이핑 없이)
@@ -2212,23 +2214,14 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         if (id === 'watch_open') {
             const ch = interaction.channelId;
             const chCfg = config.channels[ch] || {};
-            const character = chCfg.sheet || chCfg.character;
-            if (!character) return interaction.reply({ content: '이 채널에 연결된 캐릭터가 없어요.', ...eph });
-            const group = !!chCfg.group;
-            const title = pendingMovie[ch] || '';
-            const lang = Langs.get(ch, config.language || 'ko');
-            if (!title) {
-                // 제목 못 뽑았으면 모달로 입력
-                const modal = new ModalBuilder().setCustomId('watch_open_modal').setTitle('뭐 볼까?');
-                modal.addComponents(new ActionRowBuilder().addComponents(
-                    new TextInputBuilder().setCustomId('title').setLabel('영화 제목').setStyle(TextInputStyle.Short).setRequired(true),
-                ));
-                return interaction.showModal(modal);
-            }
-            await interaction.reply({ content: `🎬 "${title}" 자막 찾는 중...`, ...eph });
-            const res = await this._watchBeginByTitle(character, group, title, lang).catch((e) => ({ error: e.message }));
-            delete pendingMovie[ch];
-            return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ → <#${res.channelId}> 의 버튼으로 ▶재생!`);
+            if (!(chCfg.sheet || chCfg.character)) return interaction.reply({ content: '이 채널에 연결된 캐릭터가 없어요.', ...eph });
+            // 제목 입력창(추측값 미리 채움) → 확인/수정하고 시작. 한글 제목이 안 잡히면 영어로.
+            const guess = (pendingMovie[ch] || '').slice(0, 90);
+            const modal = new ModalBuilder().setCustomId('watch_open_modal').setTitle('뭐 볼까?');
+            const input = new TextInputBuilder().setCustomId('title').setLabel('영화 제목 (안 잡히면 영어로! 예: Tangled)').setStyle(TextInputStyle.Short).setRequired(true);
+            if (guess) input.setValue(guess);
+            modal.addComponents(new ActionRowBuilder().addComponents(input));
+            return interaction.showModal(modal);
         }
         if (id === 'watch_sync') {
             const modal = new ModalBuilder().setCustomId('watch_sync_modal').setTitle('지금 들린 대사로 맞추기');
@@ -2259,9 +2252,11 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         const group = !!chCfg.group;
         const title = (interaction.fields.getTextInputValue('title') || '').trim();
         const lang = Langs.get(ch, config.language || 'ko');
+        delete pendingMovie[ch];
         await interaction.reply({ content: `🎬 "${title}" 자막 찾는 중...`, ...eph });
         const res = await this._watchBeginByTitle(character, group, title, lang).catch((e) => ({ error: e.message }));
-        return interaction.editReply(res?.error ? `⚠️ ${res.error}` : `✅ → <#${res.channelId}> 의 버튼으로 ▶재생!`);
+        if (res?.error) return interaction.editReply(`⚠️ ${res.error}`);
+        return interaction.editReply(`✅ "${title}" 시작 → <#${res.channelId}> 의 ▶재생 버튼!\n📄 찾은 자막: \`${(res.found || '').slice(0, 70)}\` — 엉뚱하면 ⏹종료하고 영어 제목으로 다시.`);
     },
 
     async _handleWatchSyncModal(interaction) {
