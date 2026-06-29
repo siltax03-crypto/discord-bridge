@@ -274,7 +274,7 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
 
         // 영화 같이보기: 유저가 특정 작품을 같이 보자고 하면 제목 태그 (영어 원제로!)
         const watchInstruction =
-            `- If ${userName} proposes watching a SPECIFIC movie / show / video TOGETHER (e.g. "라푼젤 보자", "we should watch Tangled"), reply naturally AND append [WATCH: TITLE] at the very END. Put the work's OFFICIAL title — in ENGLISH if you know it (예: 라푼젤 → [WATCH: Tangled], 기생충 → [WATCH: Parasite]). Only when they actually propose a specific title to watch together; never make the tag your whole message, and don't add it for vague talk about movies.`;
+            `- If ${userName} proposes watching a SPECIFIC movie / show / video TOGETHER (e.g. "라푼젤 보자", "we should watch Tangled"), reply naturally AND append [WATCH: TITLE] at the very END. Put the work's OFFICIAL title — in ENGLISH if you know it (예: 라푼젤 → [WATCH: Tangled], 기생충 → [WATCH: Parasite]). If there are multiple versions/remakes, ADD THE YEAR (예: 알라딘 실사판 → [WATCH: Aladdin 2019], 라이온 킹 실사 → [WATCH: The Lion King 2019]). Only when they actually propose a specific title to watch together; never make the tag your whole message, and don't add it for vague talk about movies.`;
 
         // 채팅 모드: 물리적으로 떨어져 있음 (만나서 하는 행동 금지, 미래/재회 언급은 OK)
         const distanceInstruction =

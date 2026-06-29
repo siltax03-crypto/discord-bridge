@@ -44,14 +44,24 @@ const Subtitles = {
         if (!apiKey) return { error: 'OpenSubtitles 미설정' };
         const headers = { 'Api-Key': apiKey, 'Content-Type': 'application/json', 'User-Agent': 'discord-bridge-watch v1.0' };
         try {
-            // 1) 영화(feature) 검색 → 제목 맞는 것 중 자막 많은 영화
-            const ftr = await fetch(`${API}/features?query=${encodeURIComponent(title)}`, { headers });
+            // 제목에서 연도 분리 (예: "Aladdin 2019" → title=Aladdin, year=2019)
+            const ym = (title || '').match(/\b(19|20)\d{2}\b/);
+            const year = ym ? ym[0] : null;
+            const cleanTitle = year ? title.replace(year, '').replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim() : title;
+
+            // 1) 영화(feature) 검색 → 제목 맞는 것. 연도 지정 시 그 연도 우선.
+            const ftr = await fetch(`${API}/features?query=${encodeURIComponent(cleanTitle)}`, { headers });
             if (!ftr.ok) return { error: `영화 검색 실패 (${ftr.status})` };
             const fd = await ftr.json();
-            const feats = (fd.data || []).filter((f) => this._matches(f, title));
-            const log = (fd.data || []).slice(0, 6).map((f) => `${f.attributes?.title}(${f.attributes?.year || '?'})`);
-            console.log(`[Subtitles] "${title}" 영화검색:`, log.join(', '));
+            let feats = (fd.data || []).filter((f) => this._matches(f, cleanTitle));
+            const log = (fd.data || []).slice(0, 8).map((f) => `${f.attributes?.title}(${f.attributes?.year || '?'})`);
+            console.log(`[Subtitles] "${title}" 영화검색(year=${year || '-'}):`, log.join(', '));
             if (!feats.length) return { error: `"${title}" 영화를 못 찾았어요. 영어 원제로 다시 (검색: ${log.slice(0, 3).join(', ') || '없음'})` };
+            if (year) {
+                const byYear = feats.filter((f) => String(f.attributes?.year) === year);
+                if (byYear.length) feats = byYear;
+                else return { error: `"${cleanTitle}" ${year}년 영화를 못 찾았어요. 있는 연도: ${feats.map((f) => f.attributes?.year).filter(Boolean).join(', ')}` };
+            }
             const totalSubs = (f) => Object.values(f.attributes?.subtitles_counts || {}).reduce((a, b) => a + (+b || 0), 0);
             feats.sort((a, b) => totalSubs(b) - totalSubs(a));
             const feat = feats[0];
