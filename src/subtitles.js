@@ -49,12 +49,15 @@ const Subtitles = {
             const year = ym ? ym[0] : null;
             const cleanTitle = year ? title.replace(year, '').replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim() : title;
 
-            // 1) 영화(feature) 검색 → 제목 맞는 것. 연도 지정 시 그 연도 우선.
-            const ftr = await fetch(`${API}/features?query=${encodeURIComponent(cleanTitle)}`, { headers });
+            // 1) 영화(feature) 검색 — type=movie + (연도 있으면) year 파라미터로 정확히
+            let fUrl = `${API}/features?query=${encodeURIComponent(cleanTitle)}&type=movie`;
+            if (year) fUrl += `&year=${year}`;
+            const ftr = await fetch(fUrl, { headers });
             if (!ftr.ok) return { error: `영화 검색 실패 (${ftr.status})` };
             const fd = await ftr.json();
+            const totalSubs = (f) => Object.values(f.attributes?.subtitles_counts || {}).reduce((a, b) => a + (+b || 0), 0);
             let feats = (fd.data || []).filter((f) => this._matches(f, cleanTitle));
-            const log = (fd.data || []).slice(0, 8).map((f) => `${f.attributes?.title}(${f.attributes?.year || '?'})`);
+            const log = (fd.data || []).slice(0, 8).map((f) => `${f.attributes?.title}(${f.attributes?.year || '?'})·${totalSubs(f)}자막`);
             console.log(`[Subtitles] "${title}" 영화검색(year=${year || '-'}):`, log.join(', '));
             if (!feats.length) return { error: `"${title}" 영화를 못 찾았어요. 영어 원제로 다시 (검색: ${log.slice(0, 3).join(', ') || '없음'})` };
             if (year) {
@@ -62,7 +65,7 @@ const Subtitles = {
                 if (byYear.length) feats = byYear;
                 else return { error: `"${cleanTitle}" ${year}년 영화를 못 찾았어요. 있는 연도: ${feats.map((f) => f.attributes?.year).filter(Boolean).join(', ')}` };
             }
-            const totalSubs = (f) => Object.values(f.attributes?.subtitles_counts || {}).reduce((a, b) => a + (+b || 0), 0);
+            // 자막 많은 순 (리뷰영상·짝퉁 항목은 자막 거의 없음 → 밀림)
             feats.sort((a, b) => totalSubs(b) - totalSubs(a));
             const feat = feats[0];
             const idParam = feat.attributes?.tmdb_id ? `tmdb_id=${feat.attributes.tmdb_id}` : `id=${feat.id}`;
