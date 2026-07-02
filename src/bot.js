@@ -155,7 +155,8 @@ const Bot = {
             new SlashCommandBuilder()
                 .setName('npc')
                 .setDescription('이 캐릭터의 NPC 단톡 (갠톡에서 파생된 별도 채널)')
-                .addSubcommand((s) => s.setName('create').setDescription('지금 이 갠톡 캐릭터의 NPC 단톡 채널 새로 만들기'))
+                .addSubcommand((s) => s.setName('create').setDescription('NPC 단톡 채널 새로 만들기 (갠톡에서 실행하면 그 캐릭터 자동)')
+                    .addStringOption((o) => o.setName('character').setDescription('메인 캐릭터 카드 이름 (갠톡이 아닌 곳에서 실행 시 필수)')))
                 .addSubcommand((s) => s.setName('add').setDescription('NPC 추가 (NPC 단톡 채널에서)')
                     .addStringOption((o) => o.setName('name').setDescription('NPC 이름 (예: Captain America)').setRequired(true))
                     .addStringOption((o) => o.setName('avatar').setDescription('아바타 이미지 URL')))
@@ -758,12 +759,15 @@ const Bot = {
         const guild = interaction.guild;
 
         if (sub === 'create') {
-            // 이 채널이 "개별 갠톡"이어야 함 (단톡/NPC/영화/요약 X)
-            const chCfg = config.channels[ch];
-            const charName = chCfg?.character;
-            if (!charName || chCfg.group || chCfg.npcGroup || chCfg.movie || chCfg.summaryOnly) {
-                return interaction.reply({ content: '⚠️ 캐릭터 1:1 갠톡 채널에서 실행하세요. (그 캐릭터의 NPC 단톡이 파생 생성됩니다)', ...eph });
+            // 캐릭터 결정: 옵션 > 이 채널 매핑(개별 갠톡일 때). 멀티봇/미매핑 채널이면 옵션 필수.
+            const chCfg = config.channels[ch] || {};
+            const isIndiv = chCfg.character && !chCfg.group && !chCfg.npcGroup && !chCfg.movie && !chCfg.summaryOnly;
+            const charName = (interaction.options.getString('character') || '').trim() || (isIndiv ? chCfg.character : '');
+            if (!charName) {
+                return interaction.reply({ content: '⚠️ 메인 캐릭터를 못 정했어요. 캐릭터 1:1 갠톡에서 실행하거나 `/npc create character:이름` 으로 카드 이름을 지정하세요.', ...eph });
             }
+            // 이 채널이 그 캐릭터의 갠톡이면 srcChannel로 기록(선택). 아니어도 메모리는 캐릭터명으로 연동됨.
+            const srcChannel = isIndiv && chCfg.character === charName ? ch : null;
             const me = guild?.members.me;
             if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
                 return interaction.reply({ content: '⚠️ 봇에 "채널 관리" 권한이 필요해요.', ...eph });
@@ -777,8 +781,9 @@ const Bot = {
                 config.channels[newCh.id] = { npcGroup: true, character: charName, npcs: [] };
                 channelClients[newCh.id] = interaction.client;
                 Modes.set(newCh.id, 'chat');
-                NpcGroups.add(newCh.id, { character: charName, npcs: [], guildId: guild.id, srcChannel: ch });
-                await newCh.send(`👥 **${charName}의 NPC 단톡**\nNPC를 추가하려면 여기서 \`/npc add name:이름 avatar:URL\`. ${charName}은 여기서도 <#${ch}>의 기억을 그대로 이어가요.`).catch(() => {});
+                NpcGroups.add(newCh.id, { character: charName, npcs: [], guildId: guild.id, srcChannel });
+                const linkNote = srcChannel ? ` ${charName}은 여기서도 <#${srcChannel}>의 기억을 그대로 이어가요.` : ` ${charName}의 갠톡 기억과 자동으로 연동돼요.`;
+                await newCh.send(`👥 **${charName}의 NPC 단톡**\nNPC를 추가하려면 여기서 \`/npc add name:이름 avatar:URL\`.${linkNote}`).catch(() => {});
                 return interaction.editReply(`✅ 생성! → <#${newCh.id}> 에서 \`/npc add\` 로 NPC 넣어줘 (예: 캡틴, 스파이더맨)`);
             } catch (e) {
                 console.error('[NPC] 생성 실패:', e);
