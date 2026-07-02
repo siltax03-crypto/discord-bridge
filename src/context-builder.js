@@ -24,15 +24,16 @@ const ContextBuilder = {
      * 출력 형식을 "[이름] 대사" 줄로 강제 → 봇이 파싱해 각 캐릭터로 분배.
      */
     buildGroup(character, options = {}) {
-        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '', timeGapText = '' } = options;
+        const { roster = [], language = 'ko', timezone = 'Asia/Seoul', chatSlang = true, seedNote = '', timeGapText = '', npcMain = null, npcNames = null } = options;
         const parts = [];
 
-        // 시트 본문(등장인물 전원 정보)
-        if (character.description) parts.push(`[Group Sheet]\n${character.description}`);
+        // 본문: NPC그룹이면 "메인 캐릭터" 카드, 일반 단톡이면 "시트"
+        const cardLabel = npcMain ? `Main character (${npcMain})` : 'Group Sheet';
+        if (character.description) parts.push(`[${cardLabel}]\n${character.description}`);
         if (character.personality) parts.push(`[Personality]\n${character.personality}`);
         if (character.scenario) parts.push(`[Scenario]\n${character.scenario}`);
 
-        // 로어북/월드 (있으면)
+        // 로어북/월드 (있으면) — NPC그룹이면 여기 NPC 정보가 들어있을 수 있음
         try {
             const book = STReader.getCharacterBook(character);
             const worldName = STReader.getCharacterWorldName(character);
@@ -40,6 +41,16 @@ const ContextBuilder = {
             const lore = [...book, ...world].map((e) => e.content).filter(Boolean);
             if (lore.length) parts.push(`[World Info]\n${lore.join('\n---\n')}`);
         } catch { /* skip */ }
+
+        // NPC그룹: 메인 캐릭터의 CHARM 메모리도 주입 (NPC 정보/관계가 여기 있을 수 있음)
+        if (npcMain) {
+            try {
+                const charId = character.avatar?.replace(/\.[^/.]+$/, '') || npcMain;
+                const charm = STReader.getCharmMemory(charId);
+                const block = charm && this._buildCharmInjection(charm);
+                if (block) parts.push(`[Memories of ${npcMain}]\n${block}`);
+            } catch { /* skip */ }
+        }
 
         const clock = this._clock(timezone);
         const now = clock.full;
@@ -52,9 +63,13 @@ const ContextBuilder = {
             ? `- About ${timeGapText} have passed since the last message here. Real time moved on for everyone — don't seamlessly continue as if no time passed; react to the gap (what they were each doing, the changed time of day) and don't just repeat the earlier topic unless someone brings it back.`
             : '';
 
+        const npcLine = npcMain
+            ? `- This is ${npcMain}'s group chat. ${npcMain} is the REAL main character (full personality from the card above). The others (${(npcNames || []).join(', ')}) are NPCs/side characters — they are NOT on a separate sheet, so voice them from the lorebook/memories above about them, or improvise consistently in character. Keep ${npcMain} and the user central; NPCs are supporting cast, they chime in but don't steal focus.\n`
+            : '';
+
         parts.push(`[GROUP CHAT — HIGHEST PRIORITY]
 - This is a Discord group chat. The participants are: ${roster.join(', ')}.
-- You voice ALL of these characters at once. The user is a separate person in the chat.
+${npcLine}- You voice ALL of these characters at once. The user is a separate person in the chat.
 - Current time: ${now} (${timezone}). ${dayLine} Each character has their own life/schedule and reacts to the current time (busy, eating, sleepy, etc.).
 ${gapLine ? gapLine + '\n' : ''}- Each character carries their own mood across messages (if they were annoyed/teasing/sweet, keep it going; let it shift naturally over time).
 - OUTPUT FORMAT: each message on its own line, prefixed with the speaker in square brackets. The SAME person can send several lines, and speakers can talk in ANY order — like a real messenger group where people fire off bursts and reply to each other. Example of the natural flow (NOT a fixed pattern, just an illustration):
