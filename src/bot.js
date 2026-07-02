@@ -2083,6 +2083,46 @@ const Bot = {
         return `\n\n[SHARED MEMORY — this is ALSO you, from ${where}. One continuous life across both rooms]\n${log}\n- The conversation above is the SAME you, just a different room. Remember what was said there.\n- CRITICAL — stay consistent with your CURRENT situation/state. If you said in the other room that you're in a meeting / busy / somewhere, you are STILL in that same situation here — do NOT contradict it (e.g. don't say you're at lunch when you just said you're in a meeting). Lying/contradicting your own stated state breaks immersion.`;
     },
 
+    // NPC그룹 선톡: NPC가 메인 캐릭터의 지금 모습을 몰래 찍어 단톡에 공유
+    async _npcSharePhoto(channelId, chCfg) {
+        const mainCard = this._loadCharacterByName(chCfg.character);
+        if (!mainCard) return;
+        const npcs = (chCfg.npcs || []).filter((n) => n.name);
+        if (!npcs.length) return;
+        const npc = npcs[Math.floor(Math.random() * npcs.length)];
+        const client = channelClients[channelId] || primaryClient;
+        const channel = client && await client.channels.fetch(channelId).catch(() => null);
+        if (!channel) return;
+        const mainName = mainCard.name || chCfg.character;
+        const lang = Langs.get(channelId, config.language || 'ko');
+        const langLine = lang === 'en' ? 'Write the caption in English.' : 'Write the caption IN KOREAN.';
+
+        // 메인의 현재 상태(갠톡/단톡 히스토리) 반영해 "지금 뭐 하는지" 사진 + NPC 캡션
+        const linked = this._npcLinkedNote(channelId);
+        const recent = ChatHistory.getMessages(channelId, 8).map((m) => `${m.role === 'user' ? 'User' : (m.author || mainName)}: ${m.content}`).join('\n');
+        const sys = `${npc.name} secretly snapped a candid photo of ${mainName} right now and is about to share it in the group chat. Output EXACTLY two lines, no preface:\nPHOTO: <one short ENGLISH description of what ${mainName} is doing in the candid photo — MUST be consistent with ${mainName}'s current situation/state below>\nCAPTION: <${npc.name}'s short playful message sharing the pic to the group. ${langLine}>\n[${mainName} recent context]\n${recent}${linked}`;
+        let raw = '';
+        try { raw = await AIClient.sendMessage([{ role: 'system', content: sys }, { role: 'user', content: `(${npc.name} shares the candid photo now)` }], { maxTokens: 1024 }); } catch (e) { console.warn('[NPC] 사진 프롬프트 실패:', e.message); return; }
+        raw = (raw || '').trim();
+        const photoDesc = (raw.match(/PHOTO:\s*(.+)/i)?.[1] || '').trim();
+        const caption = (raw.match(/CAPTION:\s*(.+)/i)?.[1] || raw).trim();
+        if (!photoDesc) return;
+
+        let buffer = null;
+        try { buffer = await ImageGen.generate(`Candid photo of this person: ${photoDesc}`, mainCard); } catch (e) { console.warn('[NPC] 이미지 생성 실패:', e.message); }
+        if (!buffer) return; // 이미지 실패하면 조용히 (선톡 안 함)
+
+        const hook = await this._getNamedWebhook(channel, `grp-${npc.name}`.slice(0, 80), null);
+        const attachment = new AttachmentBuilder(buffer, { name: 'candid.png' });
+        const avatarURL = this._safeAvatarUrl(npc.avatarUrl);
+        try {
+            if (hook) await hook.send({ content: caption, username: npc.name, avatarURL, files: [attachment] });
+            else await channel.send({ content: `**${npc.name}**: ${caption}`, files: [attachment] });
+        } catch (e) { console.warn('[NPC] 사진 전송 실패:', e.message); return; }
+        ChatHistory.addMessage(channelId, 'assistant', `${npc.name}: ${caption} (${mainName} 사진 공유: ${photoDesc})`, mainName);
+        console.log(`[NPC] ${npc.name}가 ${mainName} 사진 공유`);
+    },
+
     // 주기적으로 모인 자막에 캐릭터가 리액션
     async _movieReact() {
         if (!movieSession) return;
@@ -2405,6 +2445,14 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             // 리마인더 등 note가 있으면 그걸 씨앗으로(내용 살림), 없으면 일반 잡담 시작
             const seed = note || "The group chat went quiet. Someone revives it by bringing up something NEW (a fresh thought, what they're doing now, reacting to the time/day) — continue from the earlier conversation, do NOT repeat any message already sent.";
             return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
+        }
+        // NPC그룹: 가끔 NPC가 메인 캐릭터 사진을 몰래 찍어 공유, 아니면 자기들끼리 수다
+        if (grpCfg?.npcGroup && Array.isArray(grpCfg.npcs) && grpCfg.npcs.length >= 1) {
+            if (!note && config.proactive?.photos && grpCfg.npcs.some((n) => n.avatarUrl) && Math.random() < 0.35) {
+                return this._npcSharePhoto(channelId, grpCfg).catch((e) => console.error('[NPC] 사진공유 오류:', e));
+            }
+            const seed = note || "The group is chatting among themselves — the main character talking with the NPCs about their own stuff (work/heroics/daily life). The user is peripheral. Bring up something NEW, don't repeat earlier messages.";
+            return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[NPC] 선톡 오류:', e));
         }
 
         const owner = channelClients[channelId] || primaryClient;
