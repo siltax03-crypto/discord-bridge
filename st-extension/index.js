@@ -321,9 +321,11 @@ function renderChannelRows() {
                 : '';
 
         const isGroup = !!conf.group;
-        const groupCheck = `<label class="dbridge_inline" style="gap:4px"><input type="checkbox" class="dbridge_row_groupchk"${isGroup ? ' checked' : ''} /><span class="dbridge_hint">단체(단톡)</span></label>`;
+        const isNpc = !!conf.npcGroup;
+        const groupCheck = `<label class="dbridge_inline" style="gap:4px"><input type="checkbox" class="dbridge_row_groupchk"${isGroup ? ' checked' : ''} /><span class="dbridge_hint">단체(단톡)</span></label>`
+            + `<label class="dbridge_inline" style="gap:4px"><input type="checkbox" class="dbridge_row_npcchk"${isNpc ? ' checked' : ''} /><span class="dbridge_hint">NPC그룹</span></label>`;
 
-        // 캐릭터 선택부: 단체면 [시트 드롭다운 + 🪄추출], 개별이면 [캐릭터 드롭다운]
+        // 캐릭터 선택부: 단체=[시트], NPC그룹=[메인 캐릭터], 개별=[캐릭터]
         let charField;
         if (isGroup) {
             const sheetOpts = '<option value="">(시트 선택)</option>' +
@@ -331,7 +333,25 @@ function renderChannelRows() {
                 (conf.sheet && !characters.includes(conf.sheet) ? `<option value="${escapeHtml(conf.sheet)}" selected>${escapeHtml(conf.sheet)} (카드없음)</option>` : '');
             charField = `<span>시트</span><select class="text_pole dbridge_row_sheet">${sheetOpts}</select>`;
         } else {
-            charField = `<span>캐릭터</span><select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>`;
+            charField = `<span>${isNpc ? '메인' : '캐릭터'}</span><select class="text_pole dbridge_row_char">${ensureChar}${charOpts}</select>`;
+        }
+
+        // NPC그룹 인물 목록 (이름+아바타URL, 자동추출 없음 — NPC는 수동)
+        let npcBox = '';
+        if (isNpc) {
+            const npcs = Array.isArray(conf.npcs) ? conf.npcs : [];
+            const rows = npcs.map((m, mi) => `
+                <div class="dbridge_npcmem" data-mi="${mi}" style="display:flex;gap:6px;align-items:center;margin:3px 0">
+                    <input type="text" class="text_pole dbridge_npc_name" value="${escapeHtml(m.name || '')}" placeholder="NPC 이름 (예: Captain America)" style="flex:0 0 35%" />
+                    <input type="text" class="text_pole dbridge_npc_avatar" value="${escapeHtml(m.avatarUrl || '')}" placeholder="아바타 URL" style="flex:1" />
+                    <div class="menu_button dbridge_npc_del" title="NPC 삭제" style="flex:0 0 auto">✕</div>
+                </div>`).join('');
+            npcBox = `
+                <div class="dbridge_npcbox" style="width:100%;padding-left:1em">
+                    <div class="dbridge_hint">메인 캐릭터 + NPC들의 단톡. NPC는 메인의 로어북/CHARM을 참고해 연기. 유저는 곁다리로 낌.</div>
+                    ${rows}
+                    <div class="menu_button dbridge_npc_add" title="NPC 추가" style="white-space:nowrap;margin-top:4px">＋ NPC</div>
+                </div>`;
         }
 
         // 단체면 인물 목록(이름+아바타URL) 서브영역
@@ -365,6 +385,7 @@ function renderChannelRows() {
                 ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
                 ${groupBox}
+                ${npcBox}
             </div>
         `);
         $list.append($row);
@@ -425,6 +446,7 @@ function syncFromDom() {
             const chId = $(this).find('.dbridge_row_channel').val();
             const persona = $(this).find('.dbridge_row_persona').val();
             const isGroup = $(this).find('.dbridge_row_groupchk').prop('checked');
+            const isNpc = $(this).find('.dbridge_row_npcchk').prop('checked');
             if (!chId) return;
             if (isGroup) {
                 const sheet = $(this).find('.dbridge_row_sheet').val() || '';
@@ -435,6 +457,18 @@ function syncFromDom() {
                     if (name) members.push(avatarUrl ? { name, avatarUrl } : { name });
                 });
                 const entry = { group: true, sheet, members };
+                if (persona) entry.persona = persona;
+                channels[chId] = entry;
+            } else if (isNpc) {
+                const char = $(this).find('.dbridge_row_char').val();
+                if (!char) return;
+                const npcs = [];
+                $(this).find('.dbridge_npcmem').each(function () {
+                    const name = ($(this).find('.dbridge_npc_name').val() || '').trim();
+                    const avatarUrl = ($(this).find('.dbridge_npc_avatar').val() || '').trim();
+                    if (name) npcs.push(avatarUrl ? { name, avatarUrl } : { name });
+                });
+                const entry = { npcGroup: true, character: char, npcs };
                 if (persona) entry.persona = persona;
                 channels[chId] = entry;
             } else {
@@ -731,6 +765,32 @@ jQuery(async () => {
             const mem = (c.members && c.members.length) ? c.members : [{ name: '', avatarUrl: '' }];
             state.channels[chId] = { group: true, sheet: c.sheet || '', members: mem, persona: c.persona };
         } else { state.channels[chId] = { character: c.character || (characters[0] || ''), persona: c.persona }; }
+        renderChannelRows();
+    });
+    // NPC그룹 토글
+    $('#dbridge_channel_list').on('change', '.dbridge_row_npcchk', function () {
+        syncFromDom();
+        const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
+        const c = state.channels[chId] || {};
+        if ($(this).prop('checked')) {
+            const npcs = (c.npcs && c.npcs.length) ? c.npcs : [{ name: '', avatarUrl: '' }];
+            state.channels[chId] = { npcGroup: true, character: c.character || (characters[0] || ''), npcs, persona: c.persona };
+        } else { state.channels[chId] = { character: c.character || (characters[0] || ''), persona: c.persona }; }
+        renderChannelRows();
+    });
+    $('#dbridge_channel_list').on('click', '.dbridge_npc_add', function () {
+        syncFromDom();
+        const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
+        const c = state.channels[chId]; if (!c) return;
+        c.npcs = c.npcs || []; c.npcs.push({ name: '', avatarUrl: '' });
+        renderChannelRows();
+    });
+    $('#dbridge_channel_list').on('click', '.dbridge_npc_del', function () {
+        syncFromDom();
+        const chId = $(this).closest('.dbridge_row').find('.dbridge_row_channel').val();
+        const mi = +$(this).closest('.dbridge_npcmem').data('mi');
+        const c = state.channels[chId]; if (!c?.npcs) return;
+        c.npcs.splice(mi, 1);
         renderChannelRows();
     });
     // 인물 추가/삭제
