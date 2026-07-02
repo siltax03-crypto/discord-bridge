@@ -833,8 +833,9 @@ const Bot = {
     },
 
     // 단톡 한 인물의 대사를 웹훅(이름+아바타)으로 전송. 실패하면 아바타 빼고 재시도, 그래도 안 되면 일반 메시지로 폴백.
-    async _groupSendVia(channel, name, parts, avatarUrl) {
-        const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), null);
+    // avatarUrl(원격) 또는 avatarPath(로컬 파일, 메인 캐릭터 얼굴)로 캐릭터처럼 전송
+    async _groupSendVia(channel, name, parts, avatarUrl, avatarPath = null) {
+        const hook = await this._getNamedWebhook(channel, `grp-${name}`.slice(0, 80), avatarPath || null);
         const avatarURL = this._safeAvatarUrl(avatarUrl);
         for (const part of parts) {
             if (hook) {
@@ -1019,8 +1020,9 @@ const Bot = {
             if (!chCfg) return;
             if (chCfg.summaryOnly) return; // 요약 채널: 봇이 대화하지 않음
             // (영화 보자 인식은 AI가 [WATCH:제목] 태그로 → _respond에서 버튼 띄움)
-            // 단체 채널(group)이면 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
-            if (chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1) {
+            // 단체 채널(group) / NPC그룹 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
+            if ((chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1)
+                || (chCfg.npcGroup && Array.isArray(chCfg.npcs))) {
                 const gkey = 'grp:' + message.id;
                 if (intakeDone.has(gkey)) return;
                 intakeDone.add(gkey);
@@ -1175,13 +1177,20 @@ const Bot = {
         const seedNote = opts.seedNote || null;
         const userName = message ? (message.author?.displayName || message.author?.username || 'User') : 'User';
 
-        // 시트 카드 로드 (단체 시트 본문)
+        // 시트 카드 로드: 단톡=시트, NPC그룹=메인 캐릭터 카드
         const sheetCard = this._loadCharacterByName(chCfg.sheet || chCfg.character);
-        if (!sheetCard) { console.error('[Group] 시트 카드 로드 실패:', chCfg.sheet); return; }
+        if (!sheetCard) { console.error('[Group] 카드 로드 실패:', chCfg.sheet || chCfg.character); return; }
+
+        // NPC그룹: 멤버 = [메인 캐릭터, ...NPC들]. 일반 단톡: chCfg.members.
+        const isNpc = !!chCfg.npcGroup;
+        const mainName = sheetCard.name || chCfg.character;
+        const members = isNpc
+            ? [{ name: mainName, main: true }, ...((chCfg.npcs || []).map((n) => ({ name: n.name, avatarUrl: n.avatarUrl })))]
+            : chCfg.members;
 
         // 유저 메시지 저장 + 페르소나 프록시 (선톡이면 유저 메시지 없음 → 생략)
         if (message) {
-            // 우선순위: 단톡 행 수동 지정 → 시트 카드에 ST 연결된 페르소나 → ST 기본 페르소나
+            // 우선순위: 단톡 행 수동 지정 → 카드에 ST 연결된 페르소나 → ST 기본 페르소나
             const personaName = chCfg.persona
                 || STReader.getConnectedPersonaName(sheetCard)
                 || STReader.getDefaultPersonaName();
@@ -1197,7 +1206,7 @@ const Bot = {
         }
         if (Away.isAway(channelId)) return;
 
-        const roster = chCfg.members.map((m) => m.name).filter(Boolean);
+        const roster = members.map((m) => m.name).filter(Boolean);
         const mode = Modes.get(channelId);
         const maxTokens = (mode === 'rp' ? (config.rpResponseTokens || 8192) : (config.maxResponseTokens || 1000)) + 1024;
 
@@ -1212,7 +1221,10 @@ const Bot = {
             chatSlang: config.chatSlang !== false,
             seedNote,
             timeGapText: gapText,
+            npcMain: isNpc ? mainName : null,
+            npcNames: isNpc ? (chCfg.npcs || []).map((n) => n.name) : null,
         }) + this._movieContextNote(channelId)
+            + this._npcLinkedNote(channelId)   // 갠톡↔NPC단톡 기억 공유
             // 유저가 방금 말한 경우(선톡 아님): 유저 말에 "먼저" 답하고, 영상/딴 수다는 그 다음
             + (seedNote ? '' : `\n\n[USER JUST SPOKE — PRIORITY]\n- ${userName} just said something to you. Lead your reply by reacting/answering ${userName} FIRST. Any movie/scene commentary or among-yourselves banter comes AFTER that. Do NOT push ${userName}'s message behind scene talk.`);
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -1234,17 +1246,18 @@ const Bot = {
         }
         if (watchTitle) setTimeout(() => this._postWatchButton(channel, channelId, watchTitle).catch(() => {}), 2000);
 
-        ChatHistory.addMessage(channelId, 'assistant', lines.map((l) => `${l.name}: ${l.text}`).join('\n'), '단톡');
+        ChatHistory.addMessage(channelId, 'assistant', lines.map((l) => `${l.name}: ${l.text}`).join('\n'), isNpc ? mainName : '단톡');
 
-        // 인물별 웹훅으로 순차 전송 (이름 + 아바타URL)
+        // 인물별 웹훅으로 순차 전송. 메인 캐릭터는 카드 얼굴(로컬), NPC는 아바타URL.
+        const mainAvatarPath = isNpc ? STReader.getCharacterAvatarPath(sheetCard) : null;
         for (const { name, text } of lines) {
-            const mem = chCfg.members.find((m) => m.name === name)
-                || chCfg.members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
+            const mem = members.find((m) => m.name === name)
+                || members.find((m) => (m.name || '').toLowerCase() === name.toLowerCase());
             if (!mem) continue;
             const parts = text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
             await channel.sendTyping().catch(() => {});
             await delay(700 + Math.min(text.length * 18, 2200));
-            await this._groupSendVia(channel, name, parts, mem.avatarUrl);
+            await this._groupSendVia(channel, name, parts, mem.avatarUrl, mem.main ? mainAvatarPath : null);
         }
     },
 
@@ -1548,7 +1561,7 @@ const Bot = {
             showStatus: multi,
             sheetMember,          // 단체시트 속 "내가 연기할 인물" 이름 (없으면 '')
             charName,             // 멤버 표시 이름
-        }) + this._movieContextNote(channelId);
+        }) + this._movieContextNote(channelId) + this._npcLinkedNote(channelId);
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: systemPrompt }, ...history];
@@ -2034,6 +2047,37 @@ const Bot = {
         if (!movieSession || movieSession.channelId !== channelId) return '';
         const subs = (movieSession.recentSubs || []).slice(-15).join('\n');
         return `\n\n[NOW WATCHING — you are all watching "${movieSession.movie}" together right now]\n${subs ? `Recent on-screen subtitles:\n${subs}\n` : ''}- React and talk on the premise that you're watching this video together. If the user says things like "did you see that?", they mean what's on screen. Do NOT act like you're not watching.`;
+    },
+
+    // predicate에 맞는 채널 id 찾기 (excludeId 제외)
+    _findChannel(predicate, excludeId) {
+        for (const [id, c] of Object.entries(config.channels || {})) {
+            if (id === excludeId) continue;
+            try { if (predicate(c)) return id; } catch { /* skip */ }
+        }
+        return null;
+    },
+
+    // 갠톡 ↔ NPC단톡 기억 공유: 같은 메인 캐릭터의 반대편 채널 최근 대화를 주입
+    _npcLinkedNote(channelId) {
+        const chCfg = config.channels[channelId];
+        const mainName = chCfg?.character;
+        if (!mainName) return '';
+        let siblingId = null; let where = '';
+        if (chCfg.npcGroup) {
+            // NPC단톡 → 메인의 1:1 갠톡
+            siblingId = this._findChannel((c) => c.character === mainName && !c.group && !c.npcGroup && !c.movie && !c.summaryOnly, channelId);
+            where = 'your private 1:1 chat with the user';
+        } else if (!chCfg.group && !chCfg.summaryOnly && !chCfg.movie) {
+            // 개별 갠톡 → 메인의 NPC단톡
+            siblingId = this._findChannel((c) => c.npcGroup && c.character === mainName, channelId);
+            where = 'the group chat with your friends (NPCs)';
+        }
+        if (!siblingId) return '';
+        const msgs = ChatHistory.getMessages(siblingId, 12);
+        if (!msgs.length) return '';
+        const log = msgs.map((m) => `${m.role === 'user' ? 'User' : (m.author || mainName)}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n');
+        return `\n\n[SHARED MEMORY — this is ALSO you, from ${where}. Remember and stay consistent with it]\n${log}\n- The conversation above is the SAME you (just a different room). Remember what the user said/did there. NEVER act confused like "why did you answer there and not here" — it's all you, one continuous memory.`;
     },
 
     // 주기적으로 모인 자막에 캐릭터가 리액션
