@@ -759,15 +759,18 @@ const Bot = {
         const guild = interaction.guild;
 
         if (sub === 'create') {
-            // 캐릭터 결정: 옵션 > 이 채널 매핑(개별 갠톡일 때). 멀티봇/미매핑 채널이면 옵션 필수.
+            // 메인 캐릭터: 옵션 > 이 채널에 매핑된 캐릭터. npcGroup 플래그가 켜져 있어도 character만 있으면 인정.
             const chCfg = config.channels[ch] || {};
-            const isIndiv = chCfg.character && !chCfg.group && !chCfg.npcGroup && !chCfg.movie && !chCfg.summaryOnly;
-            const charName = (interaction.options.getString('character') || '').trim() || (isIndiv ? chCfg.character : '');
+            const charName = (interaction.options.getString('character') || '').trim() || chCfg.character || '';
             if (!charName) {
-                return interaction.reply({ content: '⚠️ 메인 캐릭터를 못 정했어요. 캐릭터 1:1 갠톡에서 실행하거나 `/npc create character:이름` 으로 카드 이름을 지정하세요.', ...eph });
+                return interaction.reply({ content: '⚠️ 메인 캐릭터를 못 정했어요. 캐릭터가 매핑된 채널에서 실행하거나 `/npc create character:카드이름` 으로 지정하세요.', ...eph });
             }
-            // 이 채널이 그 캐릭터의 갠톡이면 srcChannel로 기록(선택). 아니어도 메모리는 캐릭터명으로 연동됨.
-            const srcChannel = isIndiv && chCfg.character === charName ? ch : null;
+            // 확장에서 이 채널에 적어둔 NPC 로스터를 새 단톡으로 그대로 복사
+            const roster = (Array.isArray(chCfg.npcs) ? chCfg.npcs : [])
+                .filter((n) => n && n.name)
+                .map((n) => (n.avatarUrl ? { name: n.name, avatarUrl: n.avatarUrl } : { name: n.name }));
+            // 이 채널이 그 캐릭터의 채널이면 연동 소스로 기록하고, 1:1로 되돌린다(이 세션 한정).
+            const srcChannel = chCfg.character === charName ? ch : null;
             const me = guild?.members.me;
             if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
                 return interaction.reply({ content: '⚠️ 봇에 "채널 관리" 권한이 필요해요.', ...eph });
@@ -778,13 +781,17 @@ const Bot = {
                 const parent = interaction.channel?.parentId || null;
                 const chName = this._sanitizeChannelName(`${charName}-npc단톡`);
                 const newCh = await guild.channels.create({ name: chName, type: ChannelType.GuildText, parent });
-                config.channels[newCh.id] = { npcGroup: true, character: charName, npcs: [] };
+                config.channels[newCh.id] = { npcGroup: true, character: charName, npcs: roster };
                 channelClients[newCh.id] = interaction.client;
                 Modes.set(newCh.id, 'chat');
-                NpcGroups.add(newCh.id, { character: charName, npcs: [], guildId: guild.id, srcChannel });
-                const linkNote = srcChannel ? ` ${charName}은 여기서도 <#${srcChannel}>의 기억을 그대로 이어가요.` : ` ${charName}의 갠톡 기억과 자동으로 연동돼요.`;
-                await newCh.send(`👥 **${charName}의 NPC 단톡**\nNPC를 추가하려면 여기서 \`/npc add name:이름 avatar:URL\`.${linkNote}`).catch(() => {});
-                return interaction.editReply(`✅ 생성! → <#${newCh.id}> 에서 \`/npc add\` 로 NPC 넣어줘 (예: 캡틴, 스파이더맨)`);
+                NpcGroups.add(newCh.id, { character: charName, npcs: roster, guildId: guild.id, srcChannel });
+                // 파생 소스 채널은 이제 순수 1:1 갠톡으로 (여기서 대화가 단톡처럼 새지 않게)
+                if (srcChannel) config.channels[srcChannel] = { character: charName };
+                const rosterMsg = roster.length ? ` NPC ${roster.map((n) => n.name).join(', ')} 자동 등록됨.` : ' `/npc add`로 NPC를 넣어줘.';
+                const linkNote = srcChannel ? ` ${charName}은 여기서도 <#${srcChannel}>의 기억을 이어가요.` : ` ${charName}의 갠톡 기억과 자동으로 연동돼요.`;
+                await newCh.send(`👥 **${charName}의 NPC 단톡**${rosterMsg}${linkNote}`).catch(() => {});
+                const persistTip = srcChannel ? `\n⚠️ 확장 설정에서 <#${srcChannel}> 의 **NPC그룹 체크는 꺼줘** (안 그러면 봇 재시작 시 그 채널도 단톡처럼 동작해).` : '';
+                return interaction.editReply(`✅ 생성! → <#${newCh.id}>${roster.length ? ` (NPC ${roster.length}명 등록됨)` : ' — `/npc add`로 NPC 추가'}${persistTip}`);
             } catch (e) {
                 console.error('[NPC] 생성 실패:', e);
                 return interaction.editReply(`⚠️ 실패: ${e.message}`);
