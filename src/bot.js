@@ -1225,8 +1225,11 @@ const Bot = {
             npcNames: isNpc ? (chCfg.npcs || []).map((n) => n.name) : null,
         }) + this._movieContextNote(channelId)
             + this._npcLinkedNote(channelId)   // 갠톡↔NPC단톡 기억 공유
-            // 유저가 방금 말한 경우(선톡 아님): 유저 말에 "먼저" 답하고, 영상/딴 수다는 그 다음
-            + (seedNote ? '' : `\n\n[USER JUST SPOKE — PRIORITY]\n- ${userName} just said something to you. Lead your reply by reacting/answering ${userName} FIRST. Any movie/scene commentary or among-yourselves banter comes AFTER that. Do NOT push ${userName}'s message behind scene talk.`);
+            + (seedNote ? '' : (isNpc
+                // NPC그룹: 유저는 중심이 아니라 "껴 있는" 참가자. 캐릭터들끼리의 대화가 메인.
+                ? `\n\n[USER IS IN THE GROUP — not the center]\n- ${userName} just said something in this group. ${userName} is a peripheral member here, NOT the star — the characters have their OWN dynamic among themselves (${mainName} chatting with the NPCs about their own stuff).\n- NPCs may react to ${userName} casually. ${mainName}, who has a PRIVATE 1:1 relationship with ${userName}, reacts specially — can be surprised, tease, or ask why ${userName} is talking here in the group when they usually talk privately ("여기서 왜 그래 ㅋㅋ 우리 따로 얘기하잖아").\n- Do NOT make everything revolve around ${userName}. Keep the group's own conversation going.`
+                // 일반 단톡/영화: 유저 말에 먼저 반응
+                : `\n\n[USER JUST SPOKE — PRIORITY]\n- ${userName} just said something to you. Lead your reply by reacting/answering ${userName} FIRST. Any movie/scene commentary or among-yourselves banter comes AFTER that. Do NOT push ${userName}'s message behind scene talk.`));
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
         const messages = [{ role: 'system', content: sys }, ...history];
         if (seedNote) messages.push({ role: 'user', content: `(Situation: ${seedNote} The characters should naturally start chatting among themselves first.)` });
@@ -2077,7 +2080,7 @@ const Bot = {
         const msgs = ChatHistory.getMessages(siblingId, 12);
         if (!msgs.length) return '';
         const log = msgs.map((m) => `${m.role === 'user' ? 'User' : (m.author || mainName)}: ${typeof m.content === 'string' ? m.content : ''}`).join('\n');
-        return `\n\n[SHARED MEMORY — this is ALSO you, from ${where}. Remember and stay consistent with it]\n${log}\n- The conversation above is the SAME you (just a different room). Remember what the user said/did there. NEVER act confused like "why did you answer there and not here" — it's all you, one continuous memory.`;
+        return `\n\n[SHARED MEMORY — this is ALSO you, from ${where}. One continuous life across both rooms]\n${log}\n- The conversation above is the SAME you, just a different room. Remember what was said there.\n- CRITICAL — stay consistent with your CURRENT situation/state. If you said in the other room that you're in a meeting / busy / somewhere, you are STILL in that same situation here — do NOT contradict it (e.g. don't say you're at lunch when you just said you're in a meeting). Lying/contradicting your own stated state breaks immersion.`;
     },
 
     // 주기적으로 모인 자막에 캐릭터가 리액션
