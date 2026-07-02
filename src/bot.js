@@ -817,22 +817,20 @@ const Bot = {
                 channelClients[newCh.id] = interaction.client;
                 Modes.set(newCh.id, 'chat');
                 NpcGroups.add(newCh.id, { character: charName, npcs: roster, guildId: guild.id, srcChannel });
-                // 파생 소스 채널은 이제 순수 1:1 갠톡으로 (여기서 대화가 단톡처럼 새지 않게)
-                if (srcChannel) config.channels[srcChannel] = { character: charName };
+                // 소스 채널(#ado)은 NPC그룹 체크가 켜져 있어도 npcgroups.json에 없으므로 계속 1:1로 동작함 → 그대로 둔다.
                 const rosterMsg = roster.length ? ` NPC ${roster.map((n) => n.name).join(', ')} 자동 등록됨.` : ' `/npc add`로 NPC를 넣어줘.';
-                const linkNote = srcChannel ? ` ${charName}은 여기서도 <#${srcChannel}>의 기억을 이어가요.` : ` ${charName}의 갠톡 기억과 자동으로 연동돼요.`;
+                const linkNote = srcChannel ? ` ${charName}은 여기서도 <#${srcChannel}>(1:1)의 기억을 이어가요.` : ` ${charName}의 갠톡 기억과 자동으로 연동돼요.`;
                 await newCh.send(`👥 **${charName}의 NPC 단톡**${rosterMsg}${linkNote}`).catch(() => {});
-                const persistTip = srcChannel ? `\n⚠️ 확장 설정에서 <#${srcChannel}> 의 **NPC그룹 체크는 꺼줘** (안 그러면 봇 재시작 시 그 채널도 단톡처럼 동작해).` : '';
-                return interaction.editReply(`✅ 생성! → <#${newCh.id}>${roster.length ? ` (NPC ${roster.length}명 등록됨)` : ' — `/npc add`로 NPC 추가'}${persistTip}`);
+                return interaction.editReply(`✅ 생성! → <#${newCh.id}>${roster.length ? ` (NPC ${roster.length}명 등록됨)` : ' — `/npc add`로 NPC 추가'}\n<#${ch}> 는 그대로 1:1로 유지돼. NPC 로스터는 확장에서 계속 관리하면 되고, 다시 \`/npc create\` 하면 반영돼.`);
             } catch (e) {
                 console.error('[NPC] 생성 실패:', e);
                 return interaction.editReply(`⚠️ 실패: ${e.message}`);
             }
         }
 
-        // add/remove/list/delete — NPC 단톡 채널에서
-        const g = NpcGroups.get(ch) || (config.channels[ch]?.npcGroup ? { character: config.channels[ch].character, npcs: config.channels[ch].npcs || [] } : null);
-        if (!g) return interaction.reply({ content: '⚠️ NPC 단톡 채널에서 실행하세요. (갠톡에서 `/npc create` 로 먼저 만들기)', ...eph });
+        // add/remove/list/delete — /npc create로 만든 실제 NPC 단톡 채널에서만
+        const g = NpcGroups.get(ch);
+        if (!g) return interaction.reply({ content: '⚠️ `/npc create`로 만든 NPC 단톡 채널에서 실행하세요. (1:1 채널의 NPC 로스터는 확장 설정에서 관리)', ...eph });
 
         if (sub === 'add') {
             const name = interaction.options.getString('name').trim();
@@ -1122,7 +1120,7 @@ const Bot = {
             // (영화 보자 인식은 AI가 [WATCH:제목] 태그로 → _respond에서 버튼 띄움)
             // 단체 채널(group) / NPC그룹 → 인테이크(저장/프록시) 즉시 + 생성은 타이핑 끝날 때까지 배칭
             if ((chCfg.group && Array.isArray(chCfg.members) && chCfg.members.length >= 1)
-                || (chCfg.npcGroup && Array.isArray(chCfg.npcs))) {
+                || (chCfg.npcGroup && this._isNpcGroup(message.channelId))) {
                 const gkey = 'grp:' + message.id;
                 if (intakeDone.has(gkey)) return;
                 intakeDone.add(gkey);
@@ -2152,11 +2150,17 @@ const Bot = {
         return `\n\n[NOW WATCHING — you are all watching "${movieSession.movie}" together right now]\n${subs ? `Recent on-screen subtitles:\n${subs}\n` : ''}- React and talk on the premise that you're watching this video together. If the user says things like "did you see that?", they mean what's on screen. Do NOT act like you're not watching.`;
     },
 
+    // 진짜 NPC 단톡인지: 봇이 /npc create로 파생 생성해 npcgroups.json에 등록된 채널만 해당.
+    // (확장에서 NPC그룹 체크+로스터만 입력해둔 1:1 소스 채널은 여기 해당 안 됨 → 1:1로 동작)
+    _isNpcGroup(channelId) {
+        return !!NpcGroups.get(channelId);
+    },
+
     // predicate에 맞는 채널 id 찾기 (excludeId 제외)
     _findChannel(predicate, excludeId) {
         for (const [id, c] of Object.entries(config.channels || {})) {
             if (id === excludeId) continue;
-            try { if (predicate(c)) return id; } catch { /* skip */ }
+            try { if (predicate(c, id)) return id; } catch { /* skip */ }
         }
         return null;
     },
@@ -2167,13 +2171,13 @@ const Bot = {
         const mainName = chCfg?.character;
         if (!mainName) return '';
         let siblingId = null; let where = '';
-        if (chCfg.npcGroup) {
-            // NPC단톡 → 메인의 1:1 갠톡
-            siblingId = this._findChannel((c) => c.character === mainName && !c.group && !c.npcGroup && !c.movie && !c.summaryOnly, channelId);
+        if (this._isNpcGroup(channelId)) {
+            // NPC단톡 → 메인의 1:1 갠톡 (파생 단톡이 아닌, 같은 캐릭터의 채널)
+            siblingId = this._findChannel((c, id) => c.character === mainName && !this._isNpcGroup(id) && !c.group && !c.movie && !c.summaryOnly, channelId);
             where = 'your private 1:1 chat with the user';
         } else if (!chCfg.group && !chCfg.summaryOnly && !chCfg.movie) {
-            // 개별 갠톡 → 메인의 NPC단톡
-            siblingId = this._findChannel((c) => c.npcGroup && c.character === mainName, channelId);
+            // 개별 갠톡 → 메인의 NPC단톡 (실제 파생된 단톡)
+            siblingId = this._findChannel((c, id) => this._isNpcGroup(id) && c.character === mainName, channelId);
             where = 'the group chat with your friends (NPCs)';
         }
         if (!siblingId) return '';
@@ -2547,7 +2551,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             return this._handleSingleGroup(null, grpCfg, { channelId, seedNote: seed }).catch((e) => console.error('[Group] 선톡 오류:', e));
         }
         // NPC그룹: 가끔 NPC가 메인 캐릭터 사진을 몰래 찍어 공유, 아니면 자기들끼리 수다
-        if (grpCfg?.npcGroup && Array.isArray(grpCfg.npcs) && grpCfg.npcs.length >= 1) {
+        if (grpCfg?.npcGroup && this._isNpcGroup(channelId) && Array.isArray(grpCfg.npcs) && grpCfg.npcs.length >= 1) {
             if (!note && config.proactive?.photos && grpCfg.npcs.some((n) => n.avatarUrl) && Math.random() < 0.35) {
                 return this._npcSharePhoto(channelId, grpCfg).catch((e) => console.error('[NPC] 사진공유 오류:', e));
             }
