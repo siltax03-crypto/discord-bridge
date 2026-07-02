@@ -14,6 +14,7 @@ import Sets from './sets.js';
 import Movie from './movie.js';
 import Srt from './srt.js';
 import Subtitles from './subtitles.js';
+import NpcGroups from './npc-groups.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -57,6 +58,10 @@ const Bot = {
 
         // /setup 으로 만든 세트(데이터 파일)를 채널 매핑에 병합 (config.json은 플러그인 소유라 안 건드림)
         this._mergeSets();
+        // /npc 로 만든 NPC그룹 채널 병합
+        for (const [id, g] of NpcGroups.entries()) {
+            config.channels[id] = { npcGroup: true, character: g.character, npcs: g.npcs || [] };
+        }
 
         // 영화 같이보기 수신 서버 (localhost, ST 플러그인이 프록시)
         if (cfg.movieEnabled !== false) {
@@ -151,6 +156,17 @@ const Bot = {
             new SlashCommandBuilder()
                 .setName('unsetup')
                 .setDescription('세트 해제: 롤플/요약 채널 삭제, 챗 채널은 일반 채널로 유지'),
+            new SlashCommandBuilder()
+                .setName('npc')
+                .setDescription('이 캐릭터의 NPC 단톡 (갠톡에서 파생된 별도 채널)')
+                .addSubcommand((s) => s.setName('create').setDescription('지금 이 갠톡 캐릭터의 NPC 단톡 채널 새로 만들기'))
+                .addSubcommand((s) => s.setName('add').setDescription('NPC 추가 (NPC 단톡 채널에서)')
+                    .addStringOption((o) => o.setName('name').setDescription('NPC 이름 (예: Captain America)').setRequired(true))
+                    .addStringOption((o) => o.setName('avatar').setDescription('아바타 이미지 URL')))
+                .addSubcommand((s) => s.setName('remove').setDescription('NPC 삭제')
+                    .addStringOption((o) => o.setName('name').setDescription('삭제할 NPC 이름').setRequired(true)))
+                .addSubcommand((s) => s.setName('list').setDescription('NPC 목록'))
+                .addSubcommand((s) => s.setName('delete').setDescription('이 NPC 단톡 채널 해제/삭제')),
             new SlashCommandBuilder()
                 .setName('movie')
                 .setDescription('영화 같이보기 (보통은 브라우저 확장으로 시작/종료)')
@@ -281,6 +297,9 @@ const Bot = {
         }
         if (cmd === 'unsetup') {
             return this._handleUnsetup(interaction);
+        }
+        if (cmd === 'npc') {
+            return this._handleNpc(interaction);
         }
         if (cmd === 'movie') {
             const action = interaction.options.getString('action') || 'status';
@@ -760,6 +779,75 @@ const Bot = {
         } catch (e) {
             console.error('[Unsetup] 실패:', e);
             return interaction.editReply(`⚠️ 해제 실패: ${e.message}`);
+        }
+    },
+
+    // --- /npc: 갠톡에서 파생된 NPC 단톡 채널 생성/관리 ---
+    async _handleNpc(interaction) {
+        const eph = { flags: MessageFlags.Ephemeral };
+        const sub = interaction.options.getSubcommand();
+        const ch = interaction.channelId;
+        const guild = interaction.guild;
+
+        if (sub === 'create') {
+            // 이 채널이 "개별 갠톡"이어야 함 (단톡/NPC/영화/요약 X)
+            const chCfg = config.channels[ch];
+            const charName = chCfg?.character;
+            if (!charName || chCfg.group || chCfg.npcGroup || chCfg.movie || chCfg.summaryOnly) {
+                return interaction.reply({ content: '⚠️ 캐릭터 1:1 갠톡 채널에서 실행하세요. (그 캐릭터의 NPC 단톡이 파생 생성됩니다)', ...eph });
+            }
+            const me = guild?.members.me;
+            if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+                return interaction.reply({ content: '⚠️ 봇에 "채널 관리" 권한이 필요해요.', ...eph });
+            }
+            await interaction.reply({ content: `🔧 "${charName}" NPC 단톡 만드는 중...`, ...eph });
+            try {
+                // 이 채널이 속한 카테고리에 만들기 (없으면 카테고리 없이)
+                const parent = interaction.channel?.parentId || null;
+                const chName = this._sanitizeChannelName(`${charName}-npc단톡`);
+                const newCh = await guild.channels.create({ name: chName, type: ChannelType.GuildText, parent });
+                config.channels[newCh.id] = { npcGroup: true, character: charName, npcs: [] };
+                channelClients[newCh.id] = interaction.client;
+                Modes.set(newCh.id, 'chat');
+                NpcGroups.add(newCh.id, { character: charName, npcs: [], guildId: guild.id, srcChannel: ch });
+                await newCh.send(`👥 **${charName}의 NPC 단톡**\nNPC를 추가하려면 여기서 \`/npc add name:이름 avatar:URL\`. ${charName}은 여기서도 <#${ch}>의 기억을 그대로 이어가요.`).catch(() => {});
+                return interaction.editReply(`✅ 생성! → <#${newCh.id}> 에서 \`/npc add\` 로 NPC 넣어줘 (예: 캡틴, 스파이더맨)`);
+            } catch (e) {
+                console.error('[NPC] 생성 실패:', e);
+                return interaction.editReply(`⚠️ 실패: ${e.message}`);
+            }
+        }
+
+        // add/remove/list/delete — NPC 단톡 채널에서
+        const g = NpcGroups.get(ch) || (config.channels[ch]?.npcGroup ? { character: config.channels[ch].character, npcs: config.channels[ch].npcs || [] } : null);
+        if (!g) return interaction.reply({ content: '⚠️ NPC 단톡 채널에서 실행하세요. (갠톡에서 `/npc create` 로 먼저 만들기)', ...eph });
+
+        if (sub === 'add') {
+            const name = interaction.options.getString('name').trim();
+            const avatar = (interaction.options.getString('avatar') || '').trim();
+            const npcs = (g.npcs || []).filter((n) => n.name.toLowerCase() !== name.toLowerCase());
+            npcs.push(avatar ? { name, avatarUrl: avatar } : { name });
+            NpcGroups.setNpcs(ch, npcs);
+            if (config.channels[ch]) config.channels[ch].npcs = npcs;
+            return interaction.reply({ content: `➕ NPC "${name}" 추가${avatar ? ' (아바타 O)' : ' (아바타 없음 — 얼굴은 기본)'}. 현재: ${npcs.map((n) => n.name).join(', ')}`, ...eph });
+        }
+        if (sub === 'remove') {
+            const name = interaction.options.getString('name').trim();
+            const npcs = (g.npcs || []).filter((n) => n.name.toLowerCase() !== name.toLowerCase());
+            NpcGroups.setNpcs(ch, npcs);
+            if (config.channels[ch]) config.channels[ch].npcs = npcs;
+            return interaction.reply({ content: `🗑 "${name}" 제거. 남은 NPC: ${npcs.map((n) => n.name).join(', ') || '(없음)'}`, ...eph });
+        }
+        if (sub === 'list') {
+            const npcs = g.npcs || [];
+            return interaction.reply({ content: `👥 **${g.character}의 NPC 단톡**\nNPC: ${npcs.map((n) => `${n.name}${n.avatarUrl ? '🖼' : ''}`).join(', ') || '(아직 없음 — /npc add)'}`, ...eph });
+        }
+        if (sub === 'delete') {
+            NpcGroups.remove(ch);
+            delete config.channels[ch];
+            await interaction.reply({ content: '🗑 이 NPC 단톡을 해제했어요. (채널은 직접 지워도 됨)', ...eph });
+            try { const cc = await interaction.client.channels.fetch(ch).catch(() => null); if (cc) await cc.delete('npc delete'); } catch { /* 무시 */ }
+            return;
         }
     },
 
