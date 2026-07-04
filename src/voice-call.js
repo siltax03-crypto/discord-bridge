@@ -23,6 +23,7 @@ const VoiceCall = {
             adapterCreator: voiceChannel.guild.voiceAdapterCreator,
             selfDeaf: false,
             selfMute: false,
+            debug: true,
         });
         connection.on('stateChange', (o, n) => console.log(`[Call] 연결 상태: ${o.status} → ${n.status}`));
         connection.on('error', (e) => console.warn('[Call] 연결 오류:', e.message));
