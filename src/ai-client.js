@@ -32,7 +32,8 @@ const AIClient = {
         }
 
         if (api.includes('vertex') || api.includes('google') || api.includes('makersuite') || model.includes('gemini')) {
-            return this._sendGemini(messages, model, maxTokens);
+            // 통화 등 지연이 중요한 경로: geminiModel로 빠른 모델 강제 + noThinking으로 사고토큰 차단
+            return this._sendGemini(messages, options.geminiModel || model, maxTokens, profile, { noThinking: options.noThinking });
         }
         if (api.includes('claude') || model.includes('claude')) {
             return this._sendClaude(messages, model, maxTokens);
@@ -45,7 +46,7 @@ const AIClient = {
 
     // --- Gemini (API 키 또는 서비스 계정) ---
     // useProfile: 키/리전을 가져올 프로필 (기본=채팅 프로필, 비전은 이미지 프로필로 오버라이드)
-    async _sendGemini(messages, model, maxTokens, useProfile = profile) {
+    async _sendGemini(messages, model, maxTokens, useProfile = profile, opts = {}) {
         const systemMessages = messages.filter(m => m.role === 'system');
         const chatMessages = messages.filter(m => m.role !== 'system');
         const systemInstruction = systemMessages.map(m =>
@@ -97,6 +98,10 @@ const AIClient = {
         };
         if (systemInstruction) {
             body.system_instruction = { parts: [{ text: systemInstruction }] };
+        }
+        // 통화 등 저지연 경로: 사고토큰 끄기 (2.5 계열만 지원, pro는 최소 128)
+        if (opts.noThinking && modelName.includes('2.5')) {
+            body.generationConfig.thinkingConfig = { thinkingBudget: modelName.includes('pro') ? 128 : 0 };
         }
 
         // Vertex AI Express 엔드포인트 (API 키 인증) — useProfile 기준(비전은 이미지 프로필)
@@ -262,7 +267,7 @@ const AIClient = {
         const p = imageProfile
             || (((profile?.api || '').includes('google') || (profile?.api || '').includes('vertex') || (profile?.api || '').includes('makersuite') || (profile?.model || '').includes('gemini')) ? profile : null);
         if (!p?.apiKey) throw new Error('통화 STT에는 Gemini 키가 필요해요 (이미지 프로필 또는 Gemini 채팅 프로필)');
-        const sttModel = (p === imageProfile ? (imageProfile.model || 'gemini-2.5-flash') : (p.model || 'gemini-2.5-flash'));
+        const sttModel = config.callSttModel || 'gemini-2.5-flash'; // 받아쓰기는 무조건 빠른 모델
         const messages = [{
             role: 'user',
             content: [
@@ -270,7 +275,7 @@ const AIClient = {
                 { type: 'text', text: 'Transcribe the speech in this audio EXACTLY as spoken. It is most likely Korean, possibly mixed with English. Output ONLY the raw transcript text — no quotes, no labels, no commentary. If there is no clear human speech (silence, breathing, noise), output exactly: [no speech]' },
             ],
         }];
-        return this._sendGemini(messages, sttModel, 1536, p); // thinking 모델 사고토큰 여유분 포함
+        return this._sendGemini(messages, sttModel, 1024, p, { noThinking: true });
     },
 };
 

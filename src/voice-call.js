@@ -55,7 +55,7 @@ const VoiceCall = {
             try { s.player.stop(true); } catch { /* 무시 */ }
             if (s.recording) return;
             s.recording = true;
-            const opus = receiver.subscribe(uid, { end: { behavior: EndBehaviorType.AfterSilence, duration: 900 } });
+            const opus = receiver.subscribe(uid, { end: { behavior: EndBehaviorType.AfterSilence, duration: 750 } });
             const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
             const chunks = [];
             opus.pipe(decoder);

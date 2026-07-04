@@ -22,6 +22,7 @@
   "oauthProxyUrl": "http://127.0.0.1:18765/v1",
   "callVoice": "ko-KR-InJoonNeural",
   "callResponseTokens": 2048,
+  "callModel": "gemini-2.5-flash",
   "openSub": { "apiKey": "", "username": "", "password": "" },
   "proactive": {
     "enabled": false,

@@ -999,8 +999,13 @@ const Bot = {
             if (greeting) {
                 messages.push({ role: 'user', content: '(The user just called you on the phone and you picked up. Greet them first — short and natural, matching your current mood/situation and time of day.)' });
             }
-            // thinking 모델이 사고 토큰으로 예산을 태우므로 여유 있게 (짧게 말하는 건 프롬프트가 시킴)
-            let resp = await AIClient.sendMessage(messages, { maxTokens: config.callResponseTokens || 2048 });
+            // 통화는 지연이 생명: 기본 flash + thinking 끔 (config.callModel로 변경 가능, 'profile'이면 채팅 모델 그대로)
+            const callModel = config.callModel === 'profile' ? undefined : (config.callModel || 'gemini-2.5-flash');
+            let resp = await AIClient.sendMessage(messages, {
+                maxTokens: config.callResponseTokens || 2048,
+                geminiModel: callModel,
+                noThinking: true,
+            });
             resp = this._cleanForSpeech(resp);
             if (!resp) return;
             ChatHistory.addMessage(channelId, 'assistant', `📞 ${resp}`, character.name);
