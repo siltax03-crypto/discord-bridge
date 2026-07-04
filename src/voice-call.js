@@ -24,8 +24,14 @@ const VoiceCall = {
             selfDeaf: false,
             selfMute: false,
         });
-        try { await entersState(connection, VoiceConnectionStatus.Ready, 15_000); }
-        catch (e) { try { connection.destroy(); } catch { /* 무시 */ } throw new Error(`음성채널 연결 실패: ${e.message}`); }
+        connection.on('stateChange', (o, n) => console.log(`[Call] 연결 상태: ${o.status} → ${n.status}`));
+        connection.on('error', (e) => console.warn('[Call] 연결 오류:', e.message));
+        try { await entersState(connection, VoiceConnectionStatus.Ready, 20_000); }
+        catch (e) {
+            const st = connection.state?.status;
+            try { connection.destroy(); } catch { /* 무시 */ }
+            throw new Error(`음성채널 연결 실패 (상태: ${st}): ${e.message}`);
+        }
 
         const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
         connection.subscribe(player);
