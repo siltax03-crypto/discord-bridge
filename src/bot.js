@@ -897,11 +897,28 @@ const Bot = {
         const character = this._getCharacter(channelId);
         if (!character) return interaction.reply({ content: '⚠️ 이 채널에 연결된 캐릭터가 없어요.', ...eph });
         if (VoiceCall.active(channelId)) return interaction.reply({ content: '이미 통화 중이에요. `/call end`로 먼저 끊어요.', ...eph });
-        const vc = interaction.member?.voice?.channel;
-        if (!vc) return interaction.reply({ content: '⚠️ 먼저 이 서버의 음성채널에 들어간 다음 `/call start` 하세요.', ...eph });
         const me = interaction.guild.members.me;
+        let vc = interaction.member?.voice?.channel;
+        let createdVc = false;
+        if (!vc) {
+            // 유저가 음성채널에 없으면 통화용 음성채널 자동 생성 (끊으면 자동 삭제)
+            if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+                return interaction.reply({ content: '⚠️ 음성채널에 먼저 들어가거나, 봇에 "채널 관리" 권한(통화 채널 자동 생성용)을 주세요.', ...eph });
+            }
+            try {
+                vc = await interaction.guild.channels.create({
+                    name: this._sanitizeChannelName(`📞${character.name}`),
+                    type: ChannelType.GuildVoice,
+                    parent: interaction.channel?.parentId || null,
+                });
+                createdVc = true;
+            } catch (e) {
+                return interaction.reply({ content: `⚠️ 통화 채널 생성 실패: ${e.message}`, ...eph });
+            }
+        }
         const perms = vc.permissionsFor(me);
         if (!perms?.has(PermissionFlagsBits.Connect) || !perms.has(PermissionFlagsBits.Speak)) {
+            if (createdVc) vc.delete().catch(() => {});
             return interaction.reply({ content: '⚠️ 봇에 그 음성채널의 "연결"과 "말하기" 권한이 필요해요.', ...eph });
         }
         const lang = Langs.get(channelId, config.language || 'ko');
@@ -910,22 +927,37 @@ const Bot = {
         const userName = interaction.member?.displayName || interaction.user.username;
 
         await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name})`, ...eph });
+        let session;
         try {
-            await VoiceCall.start({
+            session = await VoiceCall.start({
                 voiceChannel: vc,
                 textChannel: interaction.channel,
                 channelId,
                 userId: interaction.user.id,
                 voiceName,
+                character,
+                userName,
                 onUtterance: (wav) => this._onCallUtterance(channelId, character, userName, wav),
-                onEnd: (reason) => interaction.channel.send(`📞 통화 종료${reason ? ` — ${reason}` : ''}`).catch(() => {}),
+                onEnd: (reason) => {
+                    interaction.channel.send(`📞 통화 종료${reason ? ` — ${reason}` : ''}`).catch(() => {});
+                    if (createdVc) vc.delete('통화 종료').catch(() => {});
+                },
             });
         } catch (e) {
             console.error('[Call] 시작 실패:', e);
+            if (createdVc) vc.delete().catch(() => {});
             return interaction.editReply(`⚠️ 연결 실패: ${e.message}`);
+        }
+        if (createdVc) {
+            // 유저가 아직 밖 — 들어오면(_onVoiceState) 캐릭터가 받음. 3분 내 안 들어오면 취소.
+            session.joinTimer = setTimeout(() => {
+                if (VoiceCall.active(channelId) && !session.greeted) VoiceCall.end(channelId, '안 받아서 끊음');
+            }, 180_000);
+            return interaction.editReply(`📞 전화 왔어요! <#${vc.id}> 들어오면 ${character.name}이(가) 받아요. (3분 내)`);
         }
         await interaction.editReply('📞 연결됐어요! 그냥 말하면 돼요. 끊을 땐 `/call end` 또는 음성채널에서 나가기.');
         // 캐릭터가 먼저 전화 받는 인사
+        session.greeted = true;
         this._callGenerate(channelId, character, userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
     },
 
@@ -1009,10 +1041,19 @@ const Bot = {
             .trim();
     },
 
-    // 통화 상대가 음성채널을 나가면 자동 종료
+    // 통화 상대 음성채널 출입: 들어오면 캐릭터가 받고(자동생성 채널), 나가면 자동 종료
     _onVoiceState(oldState, newState) {
         for (const s of VoiceCall.allSessions()) {
-            if (newState.id === s.userId && oldState.channelId === s.voiceChannel.id && newState.channelId !== s.voiceChannel.id) {
+            if (newState.id !== s.userId) continue;
+            // 유저가 통화 채널에 들어옴 → 첫 인사 (전화 받기)
+            if (!s.greeted && newState.channelId === s.voiceChannel.id) {
+                s.greeted = true;
+                if (s.joinTimer) { clearTimeout(s.joinTimer); s.joinTimer = null; }
+                this._callGenerate(s.channelId, s.character, s.userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
+                continue;
+            }
+            // 통화 중이던 유저가 나감 → 종료
+            if (s.greeted && oldState.channelId === s.voiceChannel.id && newState.channelId !== s.voiceChannel.id) {
                 VoiceCall.end(s.channelId, '상대가 음성채널을 나갔어요');
             }
         }

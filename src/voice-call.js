@@ -15,7 +15,7 @@ const VoiceCall = {
 
     // 통화 시작: 음성채널 접속 + 유저 발화 수신 루프
     // onUtterance(wavBuffer): 한 번의 발화(침묵으로 끊김)가 끝날 때마다 호출 (STT/응답은 호출측)
-    async start({ voiceChannel, textChannel, channelId, userId, voiceName, onUtterance, onEnd }) {
+    async start({ voiceChannel, textChannel, channelId, userId, voiceName, onUtterance, onEnd, character = null, userName = '' }) {
         if (sessions[channelId]) throw new Error('이미 통화 중이에요');
         const connection = joinVoiceChannel({
             channelId: voiceChannel.id,
@@ -32,7 +32,9 @@ const VoiceCall = {
 
         const s = sessions[channelId] = {
             connection, player, voiceChannel, textChannel, channelId, userId, voiceName,
-            onUtterance, onEnd, recording: false, generating: false, pendingText: false,
+            onUtterance, onEnd, character, userName,
+            recording: false, generating: false, pendingText: false,
+            greeted: false, joinTimer: null,
             speakQueue: Promise.resolve(), ended: false,
         };
 
@@ -117,6 +119,7 @@ const VoiceCall = {
         const s = sessions[channelId];
         if (!s) return false;
         s.ended = true;
+        if (s.joinTimer) { clearTimeout(s.joinTimer); s.joinTimer = null; }
         try { s.player.stop(true); } catch { /* 무시 */ }
         try { s.connection.destroy(); } catch { /* 무시 */ }
         delete sessions[channelId];
