@@ -970,7 +970,6 @@ const Bot = {
         catch (e) { console.warn('[Call] STT 오류:', e.message); return; }
         text = (text || '').trim();
         if (!text || /^\[?\s*no speech\s*\]?\.?$/i.test(text)) return;
-        s.textChannel.send(`> 🎙 ${text}`).catch(() => {});
         ChatHistory.addMessage(channelId, 'user', `📞 ${text}`);
         if (s.generating) { s.pendingText = true; return; } // 생성 중이면 끝나고 몰아서 답함
         await this._callGenerate(channelId, character, userName, false);
@@ -1005,7 +1004,6 @@ const Bot = {
             resp = this._cleanForSpeech(resp);
             if (!resp) return;
             ChatHistory.addMessage(channelId, 'assistant', `📞 ${resp}`, character.name);
-            s.textChannel.send(`📞 ${resp}`).catch(() => {});
             await VoiceCall.speak(channelId, resp);
         } finally {
             s.generating = false;

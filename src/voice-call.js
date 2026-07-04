@@ -5,6 +5,7 @@ import {
     EndBehaviorType, AudioPlayerStatus, VoiceConnectionStatus, entersState, NoSubscriberBehavior,
 } from '@discordjs/voice';
 import prism from 'prism-media';
+import { Readable } from 'stream';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 const sessions = {}; // { textChannelId: session }
@@ -113,7 +114,15 @@ const VoiceCall = {
         await tts.setMetadata(s.voiceName, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
         const r = await tts.toStream(text);
         const stream = r?.audioStream || r; // msedge-tts 버전에 따라 {audioStream} 또는 Readable
-        const resource = createAudioResource(stream, { inputType: StreamType.WebmOpus });
+        // MS 서버가 실시간보다 느리게 흘려주면 재생이 음절 단위로 끊기고 중간에 멈춤 → 전부 받아서 한 번에 재생
+        const buf = await new Promise((resolve, reject) => {
+            const chunks = [];
+            stream.on('data', (c) => chunks.push(c));
+            stream.once('end', () => resolve(Buffer.concat(chunks)));
+            stream.once('error', reject);
+        });
+        if (s.ended || !buf.length) return;
+        const resource = createAudioResource(Readable.from(buf), { inputType: StreamType.WebmOpus });
         s.player.play(resource);
         await entersState(s.player, AudioPlayerStatus.Playing, 10_000).catch(() => {});
         await new Promise((resolve) => {
