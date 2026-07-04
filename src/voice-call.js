@@ -26,6 +26,7 @@ const VoiceCall = {
         });
         connection.on('stateChange', (o, n) => console.log(`[Call] 연결 상태: ${o.status} → ${n.status}`));
         connection.on('error', (e) => console.warn('[Call] 연결 오류:', e.message));
+        connection.on('debug', (m) => console.log('[Call:debug]', String(m).slice(0, 300)));
         try { await entersState(connection, VoiceConnectionStatus.Ready, 20_000); }
         catch (e) {
             const st = connection.state?.status;
