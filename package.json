@@ -13,7 +13,7 @@
     "prism-media": "^1.3.5",
     "opusscript": "^0.0.8",
     "libsodium-wrappers": "^0.7.13",
-    "msedge-tts": "^1.3.4"
+    "msedge-tts": "^2.0.6"
   },
   "optionalDependencies": {
     "@discordjs/opus": "^0.10.0"

@@ -270,7 +270,7 @@ const AIClient = {
                 { type: 'text', text: 'Transcribe the speech in this audio EXACTLY as spoken. It is most likely Korean, possibly mixed with English. Output ONLY the raw transcript text — no quotes, no labels, no commentary. If there is no clear human speech (silence, breathing, noise), output exactly: [no speech]' },
             ],
         }];
-        return this._sendGemini(messages, sttModel, 512, p);
+        return this._sendGemini(messages, sttModel, 1536, p); // thinking 모델 사고토큰 여유분 포함
     },
 };
 

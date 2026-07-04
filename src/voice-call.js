@@ -102,7 +102,7 @@ const VoiceCall = {
     async speak(channelId, text) {
         const s = sessions[channelId];
         if (!s || s.ended || !text) return;
-        s.speakQueue = s.speakQueue.then(() => this._speakNow(s, text)).catch((e) => console.warn('[Call] TTS 오류:', e.message));
+        s.speakQueue = s.speakQueue.then(() => this._speakNow(s, text)).catch((e) => console.warn('[Call] TTS 오류:', e?.message || e, e?.stack?.split('\n')[1] || ''));
         return s.speakQueue;
     },
 
