@@ -64,6 +64,9 @@ const AIClient = {
                             return { inline_data: { mime_type: match[1], data: match[2] } };
                         }
                     }
+                    if (c.type === 'audio') {
+                        return { inline_data: { mime_type: c.mime || 'audio/wav', data: c.data } };
+                    }
                     return { text: '' };
                 }),
         }));
@@ -252,6 +255,22 @@ const AIClient = {
             return this._sendGemini(modified, vModel, maxTokens, imageProfile);
         }
         return this.sendMessage(modified, options);
+    },
+
+    // 통화 STT: WAV(base64) → 텍스트. Gemini 멀티모달 사용 (이미지 프로필 우선, 없으면 채팅 프로필이 Gemini일 때)
+    async transcribeAudio(base64Wav, mimeType = 'audio/wav') {
+        const p = imageProfile
+            || (((profile?.api || '').includes('google') || (profile?.api || '').includes('vertex') || (profile?.api || '').includes('makersuite') || (profile?.model || '').includes('gemini')) ? profile : null);
+        if (!p?.apiKey) throw new Error('통화 STT에는 Gemini 키가 필요해요 (이미지 프로필 또는 Gemini 채팅 프로필)');
+        const sttModel = (p === imageProfile ? (imageProfile.model || 'gemini-2.5-flash') : (p.model || 'gemini-2.5-flash'));
+        const messages = [{
+            role: 'user',
+            content: [
+                { type: 'audio', mime: mimeType, data: base64Wav },
+                { type: 'text', text: 'Transcribe the speech in this audio EXACTLY as spoken. It is most likely Korean, possibly mixed with English. Output ONLY the raw transcript text — no quotes, no labels, no commentary. If there is no clear human speech (silence, breathing, noise), output exactly: [no speech]' },
+            ],
+        }];
+        return this._sendGemini(messages, sttModel, 512, p);
     },
 };
 

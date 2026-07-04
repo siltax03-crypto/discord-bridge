@@ -20,6 +20,8 @@
   "movieToken": "여기에_아무_긴_랜덤_문자열_확장과_동일하게",
   "movieReactSec": 35,
   "oauthProxyUrl": "http://127.0.0.1:18765/v1",
+  "callVoice": "ko-KR-InJoonNeural",
+  "callResponseTokens": 512,
   "openSub": { "apiKey": "", "username": "", "password": "" },
   "proactive": {
     "enabled": false,

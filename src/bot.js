@@ -15,6 +15,7 @@ import Movie from './movie.js';
 import Srt from './srt.js';
 import Subtitles from './subtitles.js';
 import NpcGroups from './npc-groups.js';
+import VoiceCall from './voice-call.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -107,6 +108,7 @@ const Bot = {
                 GatewayIntentBits.MessageContent,
                 GatewayIntentBits.GuildMessageTyping,
                 GatewayIntentBits.DirectMessageTyping,
+                GatewayIntentBits.GuildVoiceStates,
             ],
         });
 
@@ -130,6 +132,7 @@ const Bot = {
             client.on(Events.MessageDelete, (message) => this._onMessageDelete(message, client));
             client.on(Events.InteractionCreate, (interaction) => this._onInteraction(interaction, client));
             client.on(Events.ChannelDelete, (ch) => this._onChannelDelete(ch));
+            client.on(Events.VoiceStateUpdate, (o, n) => this._onVoiceState(o, n));
             // 유저가 입력 중이면 답을 미룬다 (여러 줄 연달아 칠 때 끊지 않게)
             client.on(Events.TypingStart, (typing) => {
                 if (typing.user?.bot) return;
@@ -168,6 +171,20 @@ const Bot = {
                     .addStringOption((o) => o.setName('name').setDescription('삭제할 NPC 이름').setRequired(true)))
                 .addSubcommand((s) => s.setName('list').setDescription('NPC 목록'))
                 .addSubcommand((s) => s.setName('delete').setDescription('이 NPC 단톡 채널 해제/삭제')),
+            new SlashCommandBuilder()
+                .setName('call')
+                .setDescription('캐릭터와 음성 통화 (먼저 음성채널에 들어간 뒤 갠톡 채널에서 실행)')
+                .addSubcommand((s) => s.setName('start').setDescription('통화 시작')
+                    .addStringOption((o) => o.setName('voice').setDescription('목소리 (기본: 한국어 남성)')
+                        .addChoices(
+                            { name: '🇰🇷 남성 (InJoon)', value: 'ko-KR-InJoonNeural' },
+                            { name: '🇰🇷 남성 멀티링구얼 (Hyunsu)', value: 'ko-KR-HyunsuMultilingualNeural' },
+                            { name: '🇰🇷 여성 (SunHi)', value: 'ko-KR-SunHiNeural' },
+                            { name: '🇬🇧 남성 브리티시 (Ryan)', value: 'en-GB-RyanNeural' },
+                            { name: '🇺🇸 남성 (Guy)', value: 'en-US-GuyNeural' },
+                            { name: '🇺🇸 여성 (Jenny)', value: 'en-US-JennyNeural' },
+                        )))
+                .addSubcommand((s) => s.setName('end').setDescription('통화 끊기')),
             new SlashCommandBuilder()
                 .setName('movie')
                 .setDescription('영화 같이보기 (보통은 브라우저 확장으로 시작/종료)')
@@ -324,6 +341,10 @@ const Bot = {
 
         if (cmd === 'mode') {
             return this._handleModeSwitch(interaction, channelId, eph);
+        }
+
+        if (cmd === 'call') {
+            return this._handleCall(interaction, channelId, eph);
         }
 
         if (cmd === 'nsfw') {
@@ -858,6 +879,142 @@ const Bot = {
             await interaction.reply({ content: '🗑 이 NPC 단톡을 해제했어요. (채널은 직접 지워도 됨)', ...eph });
             try { const cc = await interaction.client.channels.fetch(ch).catch(() => null); if (cc) await cc.delete('npc delete'); } catch { /* 무시 */ }
             return;
+        }
+    },
+
+    // --- /call: 음성채널에서 캐릭터와 통화 (무료 스택: Gemini STT + edge-tts) ---
+    async _handleCall(interaction, channelId, eph) {
+        const sub = interaction.options.getSubcommand();
+        if (sub === 'end') {
+            const ok = VoiceCall.end(channelId, '사용자가 끊음');
+            return interaction.reply({ content: ok ? '📞 통화를 끊었어요.' : '진행 중인 통화가 없어요.', ...eph });
+        }
+        // start
+        const chCfg = config.channels[channelId] || {};
+        if (chCfg.group || chCfg.npcGroup || chCfg.summaryOnly || chCfg.movie) {
+            return interaction.reply({ content: '⚠️ 통화는 캐릭터 1:1 채널에서만 돼요.', ...eph });
+        }
+        const character = this._getCharacter(channelId);
+        if (!character) return interaction.reply({ content: '⚠️ 이 채널에 연결된 캐릭터가 없어요.', ...eph });
+        if (VoiceCall.active(channelId)) return interaction.reply({ content: '이미 통화 중이에요. `/call end`로 먼저 끊어요.', ...eph });
+        const vc = interaction.member?.voice?.channel;
+        if (!vc) return interaction.reply({ content: '⚠️ 먼저 이 서버의 음성채널에 들어간 다음 `/call start` 하세요.', ...eph });
+        const me = interaction.guild.members.me;
+        const perms = vc.permissionsFor(me);
+        if (!perms?.has(PermissionFlagsBits.Connect) || !perms.has(PermissionFlagsBits.Speak)) {
+            return interaction.reply({ content: '⚠️ 봇에 그 음성채널의 "연결"과 "말하기" 권한이 필요해요.', ...eph });
+        }
+        const lang = Langs.get(channelId, config.language || 'ko');
+        const voiceName = interaction.options.getString('voice') || chCfg.callVoice || config.callVoice
+            || (lang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
+        const userName = interaction.member?.displayName || interaction.user.username;
+
+        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name})`, ...eph });
+        try {
+            await VoiceCall.start({
+                voiceChannel: vc,
+                textChannel: interaction.channel,
+                channelId,
+                userId: interaction.user.id,
+                voiceName,
+                onUtterance: (wav) => this._onCallUtterance(channelId, character, userName, wav),
+                onEnd: (reason) => interaction.channel.send(`📞 통화 종료${reason ? ` — ${reason}` : ''}`).catch(() => {}),
+            });
+        } catch (e) {
+            console.error('[Call] 시작 실패:', e);
+            return interaction.editReply(`⚠️ 연결 실패: ${e.message}`);
+        }
+        await interaction.editReply('📞 연결됐어요! 그냥 말하면 돼요. 끊을 땐 `/call end` 또는 음성채널에서 나가기.');
+        // 캐릭터가 먼저 전화 받는 인사
+        this._callGenerate(channelId, character, userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
+    },
+
+    // 통화 중 유저 발화 1회분: STT → 히스토리 저장 → 응답 생성
+    async _onCallUtterance(channelId, character, userName, wavBuffer) {
+        const s = VoiceCall.active(channelId);
+        if (!s) return;
+        let text = '';
+        try { text = await AIClient.transcribeAudio(wavBuffer.toString('base64')); }
+        catch (e) { console.warn('[Call] STT 오류:', e.message); return; }
+        text = (text || '').trim();
+        if (!text || /^\[?\s*no speech\s*\]?\.?$/i.test(text)) return;
+        s.textChannel.send(`> 🎙 ${text}`).catch(() => {});
+        ChatHistory.addMessage(channelId, 'user', `📞 ${text}`);
+        if (s.generating) { s.pendingText = true; return; } // 생성 중이면 끝나고 몰아서 답함
+        await this._callGenerate(channelId, character, userName, false);
+    },
+
+    // 통화 응답 생성 → 텍스트 채널 기록 + TTS 재생. greeting=true면 전화 받는 첫 인사.
+    async _callGenerate(channelId, character, userName, greeting = false) {
+        const s = VoiceCall.active(channelId);
+        if (!s) return;
+        s.generating = true;
+        try {
+            const personaName = this._getPersonaName(channelId);
+            const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
+            const effUserName = personaName || userName;
+            const sys = ContextBuilder.build(character, {
+                userName: effUserName,
+                language: Langs.get(channelId, config.language || 'ko'),
+                mode: 'chat',
+                chatSlang: config.chatSlang !== false,
+                timezone: config.timezone || 'Asia/Seoul',
+                notes: Notes.list(channelId),
+                annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+                personaText,
+            }) + this._npcLinkedNote(channelId) + this._callNote(effUserName);
+            const history = ChatHistory.toAPIMessages(channelId, 24);
+            const messages = [{ role: 'system', content: sys }, ...history];
+            if (greeting) {
+                messages.push({ role: 'user', content: '(The user just called you on the phone and you picked up. Greet them first — short and natural, matching your current mood/situation and time of day.)' });
+            }
+            let resp = await AIClient.sendMessage(messages, { maxTokens: config.callResponseTokens || 512 });
+            resp = this._cleanForSpeech(resp);
+            if (!resp) return;
+            ChatHistory.addMessage(channelId, 'assistant', `📞 ${resp}`, character.name);
+            s.textChannel.send(`📞 ${resp}`).catch(() => {});
+            await VoiceCall.speak(channelId, resp);
+        } finally {
+            s.generating = false;
+            // 생성 중 유저가 더 말했으면 이어서 한 번 더
+            if (s.pendingText && VoiceCall.active(channelId)) {
+                s.pendingText = false;
+                this._callGenerate(channelId, character, userName, false).catch((e) => console.warn('[Call] 후속 생성 오류:', e.message));
+            }
+        }
+    },
+
+    // 통화 모드 지시 (영어 프롬프트, 출력 언어는 ContextBuilder의 langInstruction이 처리)
+    _callNote(userName) {
+        return `\n\n[VOICE CALL — you are on a LIVE phone call with ${userName} right now]
+- This is spoken conversation. Output ONLY the words you actually say out loud.
+- NO *actions*, NO emojis, NO markdown, NO [tags], NO narration, NO stage directions. Voice only.
+- Talk like a real phone call: short and reactive (usually 1-3 sentences). Do not monologue.
+- Natural spoken fillers are good. Laugh in words ("하하"), never typed laughter like "ㅋㅋ".
+- If what they said seems cut off or unclear, react like a real person would on the phone (ask them to repeat, etc.).`;
+    },
+
+    // TTS로 읽을 수 있게 정리: 태그/마크다운/행동지문/이모지 제거
+    _cleanForSpeech(text) {
+        if (!text) return '';
+        return text
+            .replace(/\[[^\]]*\]/g, ' ')            // [태그]
+            .replace(/\*[^*]*\*/g, ' ')             // *행동지문*
+            .replace(/```[\s\S]*?```/g, ' ')        // 코드블록
+            .replace(/[`_~#>|]/g, ' ')              // 마크다운 기호
+            .replace(/https?:\/\/\S+/g, ' ')        // URL
+            .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, ' ') // 이모지
+            .replace(/ㅋ{2,}|ㅎ{2,}/g, ' 하하 ')     // 타이핑 웃음 → 말 웃음
+            .replace(/\s+/g, ' ')
+            .trim();
+    },
+
+    // 통화 상대가 음성채널을 나가면 자동 종료
+    _onVoiceState(oldState, newState) {
+        for (const s of VoiceCall.allSessions()) {
+            if (newState.id === s.userId && oldState.channelId === s.voiceChannel.id && newState.channelId !== s.voiceChannel.id) {
+                VoiceCall.end(s.channelId, '상대가 음성채널을 나갔어요');
+            }
         }
     },
 

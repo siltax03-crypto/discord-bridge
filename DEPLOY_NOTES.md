@@ -30,3 +30,16 @@
 - `replyMaxWaitMs` (기본 25000) — 타이핑 대기 최대
 - `movieReactSec` (기본 35) — 영화 리액션 간격
 - `movieReactTokens` (기본 1536) — 영화 리액션 토큰
+
+## 4. NPC 단톡 (`/npc`)
+- 확장에서 채널에 "NPC그룹" 체크 + NPC 로스터 입력 → 그 채널은 **1:1 유지**.
+- 그 채널에서 `/npc create` → 로스터를 복사한 **파생 단톡 채널** 자동 생성 (npcgroups.json에 봇이 저장).
+- 갠톡↔NPC단톡 기억/상태 공유, NPC 선톡(가끔 메인 몰카 사진), `/npc add/remove/list/delete`.
+
+## 5. 음성 통화 (`/call`) — 무료 스택
+- 디코 **음성채널**에서 캐릭터와 실시간 통화. 유저가 음성채널 들어가서 갠톡 채널에서 `/call start`.
+- STT: **Gemini**(이미지 프로필 또는 Gemini 채팅 프로필 키 재활용) / TTS: **edge-tts**(무료, MS Edge 보이스).
+- 말 끊고 들어가기(barge-in), 통화 내용 갠톡 히스토리 저장(📞 prefix) + 텍스트 채널에 자막 표시.
+- 유저가 음성채널 나가면 자동 종료. `/call end`로도 끊기.
+- ⚠️ **이번엔 서버에서 `npm install` 필요** (@discordjs/voice, msedge-tts 등 신규 의존성).
+- 신규 config 키: `callVoice` (기본 ko-KR-InJoonNeural), `callResponseTokens` (기본 512), 채널별 `channels[id].callVoice`.
