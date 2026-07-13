@@ -552,6 +552,29 @@ const SETTINGS_HTML = `
                 </div>
             </div>
 
+            <details class="dbridge_changelog">
+                <summary>📋 업데이트 내역</summary>
+                <div class="dbridge_changelog_body">
+                    <b>2026-07-05 — NPC 단톡</b>
+                    <ul>
+                        <li>채널 매핑에서 <b>"NPC그룹" 체크 + NPC 이름/아바타 입력</b> (그 채널은 1:1 그대로 유지됨)</li>
+                        <li>그 갠톡 채널에서 <code>/npc create</code> → NPC들이 들어간 <b>파생 단톡 채널 자동 생성</b></li>
+                        <li>갠톡↔NPC단톡 <b>기억·상태 공유</b> (갠톡에서 회의중이면 단톡에서도 회의중)</li>
+                        <li>유저는 단톡의 곁다리 — 메인은 "네가 왜 여기서 말해?" 식으로 특별 반응</li>
+                        <li>가끔 NPC가 메인 캐릭터 몰카를 선톡으로 공유 (선톡 사진 켜져 있을 때)</li>
+                        <li><code>/npc add·remove·list·delete</code> 로 파생 단톡에서 NPC 관리</li>
+                    </ul>
+                    <b>이전 업데이트</b>
+                    <ul>
+                        <li>영화 같이보기 (크롬 확장 + <code>/movie</code>) — 넷플/디즈니/유튜브/쿠팡 자막 실시간 반응</li>
+                        <li>이미지 전용 프로필 분리, OpenAI 호환 커스텀 URL, 잼민 프록시 라우팅</li>
+                        <li>사람답게: 타이핑 감지 배칭(입력 중엔 기다림), 단톡 자유 티키타카, 갠톡 줄수 가변</li>
+                        <li>세트: <code>/setup</code>(챗·롤플·요약 채널), <code>/mode</code> 이동+요약, [MEET] 자동 롤플 개장</li>
+                        <li><code>/purge</code>·<code>/nuke</code>·수동삭제 히스토리 동기화, <code>/anniv</code> 기념일, <code>/lang</code> 채널별 언어</li>
+                    </ul>
+                </div>
+            </details>
+
             <select id="dbridge_botmode" class="text_pole" style="display:none">
                 <option value="single">단일봇</option>
                 <option value="multi">멀티봇</option>
