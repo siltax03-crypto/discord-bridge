@@ -90,6 +90,8 @@ async function loadAll() {
             chatSlang: c.chatSlang !== false,
             movieToken: c.movieToken || '',
             openSub: c.openSub || {},
+            liveKeySaved: !!c.liveApiKey,
+            liveVoice: c.liveVoice || 'Charon',
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -203,6 +205,11 @@ function render() {
     // 영화 같이보기 토큰
     $('#dbridge_movietoken').val(state.movieToken || '');
     $('#dbridge_opensub').val(state.openSub?.apiKey || '');
+
+    // Gemini Live (통화)
+    $('#dbridge_livekey').val('')
+        .attr('placeholder', state.liveKeySaved ? '•••••••• (저장됨, 비우면 유지)' : 'AI Studio API 키 (aistudio.google.com/apikey)');
+    $('#dbridge_livevoice').val(state.liveVoice || 'Charon');
 
     // 선톡
     const p = state.proactive;
@@ -505,8 +512,11 @@ async function save() {
             members: state.members,
             movieToken: ($('#dbridge_movietoken').val() || '').trim(),
             openSub: { ...(state.openSub || {}), apiKey: ($('#dbridge_opensub').val() || '').trim() },
+            liveVoice: $('#dbridge_livevoice').val() || 'Charon',
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
+        const liveKey = ($('#dbridge_livekey').val() || '').trim();
+        if (liveKey) payload.liveApiKey = liveKey;
         const mainTok = ($('#dbridge_token').val() || '').trim();
         if (mainTok) payload.discordToken = mainTok;
         const pbTok = ($('#dbridge_personabot').val() || '').trim();
@@ -516,6 +526,7 @@ async function save() {
         // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
         if (payload.discordToken) state.tokenSaved = true;
         if (payload.personaBotToken) state.personaBotSaved = true;
+        if (payload.liveApiKey) state.liveKeySaved = true;
         for (const c of Object.values(state.channels)) {
             if (c.token) { c.tokenSaved = true; delete c.token; }
         }
@@ -701,6 +712,28 @@ const SETTINGS_HTML = `
             <input type="text" id="dbridge_opensub" class="text_pole" autocomplete="off" placeholder="opensubtitles.com API Key (anonymous면 키만)" />
             <div class="dbridge_hint">opensubtitles.com → 가입 → Consumers → "Allow anonymous downloads" 켜고 키 발급. 비우면 .srt 파일 직접 첨부로만 가능. 변경 후 봇 재시작.</div>
 
+            <label>📞 Gemini Live API 키 <span class="dbridge_hint">(실시간 음성통화 — 있으면 /call이 Live 모드로)</span></label>
+            <div class="dbridge_inline">
+                <input type="password" id="dbridge_livekey" class="text_pole" autocomplete="off" />
+                <div class="menu_button" id="dbridge_livekey_eye"><i class="fa-solid fa-eye"></i></div>
+            </div>
+            <div class="dbridge_grid2">
+                <div>
+                    <label>Live 목소리</label>
+                    <select id="dbridge_livevoice" class="text_pole">
+                        <option value="Charon">Charon (남성 저음)</option>
+                        <option value="Fenrir">Fenrir (남성 강함)</option>
+                        <option value="Orus">Orus (남성)</option>
+                        <option value="Puck">Puck (남성 밝음)</option>
+                        <option value="Kore">Kore (여성)</option>
+                        <option value="Aoede">Aoede (여성 밝음)</option>
+                        <option value="Leda">Leda (여성 젊음)</option>
+                        <option value="Zephyr">Zephyr (여성 차분)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="dbridge_hint"><b>aistudio.google.com/apikey</b>에서 무료 키 발급 (결제등록 불필요). 키가 없으면 /call은 STT+TTS 모드(느림)로 동작. 변경 후 봇 재시작.</div>
+
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
             <div class="dbridge_hint">⚠ 토큰/채널 변경 후 봇을 재시작해야 적용됩니다 (pm2 restart discord-bridge).</div>
@@ -769,6 +802,10 @@ jQuery(async () => {
     });
     $('#dbridge_token_eye').on('click', () => {
         const $t = $('#dbridge_token');
+        $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
+    });
+    $('#dbridge_livekey_eye').on('click', () => {
+        const $t = $('#dbridge_livekey');
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
     });
     // 영화 토큰 랜덤 생성

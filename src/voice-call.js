@@ -5,7 +5,7 @@ import {
     EndBehaviorType, AudioPlayerStatus, VoiceConnectionStatus, entersState, NoSubscriberBehavior,
 } from '@discordjs/voice';
 import prism from 'prism-media';
-import { Readable } from 'stream';
+import { Readable, PassThrough } from 'stream';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 
 const sessions = {}; // { textChannelId: session }
@@ -16,7 +16,8 @@ const VoiceCall = {
 
     // 통화 시작: 음성채널 접속 + 유저 발화 수신 루프
     // onUtterance(wavBuffer): 한 번의 발화(침묵으로 끊김)가 끝날 때마다 호출 (STT/응답은 호출측)
-    async start({ voiceChannel, textChannel, channelId, userId, voiceName, onUtterance, onEnd, character = null, userName = '' }) {
+    // live: { onUserSpeakStart, onUserAudioChunk(pcm16kMonoBuf), onUserSpeakEnd } — Gemini Live 모드(발화 실시간 전달)
+    async start({ voiceChannel, textChannel, channelId, userId, voiceName, onUtterance, onEnd, character = null, userName = '', live = null }) {
         if (sessions[channelId]) throw new Error('이미 통화 중이에요');
         const connection = joinVoiceChannel({
             channelId: voiceChannel.id,
@@ -41,29 +42,46 @@ const VoiceCall = {
 
         const s = sessions[channelId] = {
             connection, player, voiceChannel, textChannel, channelId, userId, voiceName,
-            onUtterance, onEnd, character, userName,
+            onUtterance, onEnd, character, userName, live,
             recording: false, generating: false, pendingText: false,
-            greeted: false, joinTimer: null,
+            greeted: false, joinTimer: null, liveClient: null, pcmPT: null,
             speakQueue: Promise.resolve(), ended: false,
         };
 
-        // 유저 발화 수신: 말 시작 → 침묵 900ms까지 녹음 → WAV 콜백
+        // 유저 발화 수신: 말 시작 → 침묵까지 녹음
+        // (일반 모드: 발화 전체를 WAV로 콜백 / Live 모드: 프레임을 실시간 전달 + 시작/끝 신호)
         const receiver = connection.receiver;
         receiver.speaking.on('start', (uid) => {
             if (s.ended || uid !== userId) return;
             // 유저가 말 시작하면 봇 음성 즉시 멈춤 (말 끊고 들어가기)
             try { s.player.stop(true); } catch { /* 무시 */ }
+            if (s.live) this.stopPlayback(channelId);
             if (s.recording) return;
             s.recording = true;
-            const opus = receiver.subscribe(uid, { end: { behavior: EndBehaviorType.AfterSilence, duration: 750 } });
+            if (s.live) { try { s.live.onUserSpeakStart?.(); } catch { /* 무시 */ } }
+            const silenceMs = s.live ? 300 : 750; // Live는 서버가 문맥을 아니 빨리 끊어도 됨
+            const opus = receiver.subscribe(uid, { end: { behavior: EndBehaviorType.AfterSilence, duration: silenceMs } });
             const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
             const chunks = [];
             opus.pipe(decoder);
-            decoder.on('data', (c) => chunks.push(c));
+            decoder.on('data', (c) => {
+                if (!s.live) { chunks.push(c); return; }
+                // Live: ~100ms 단위로 묶어 즉시 전송
+                chunks.push(c);
+                if (chunks.length >= 5) {
+                    const pcm = Buffer.concat(chunks.splice(0));
+                    try { s.live.onUserAudioChunk?.(this._down48to16(pcm)); } catch { /* 무시 */ }
+                }
+            });
             const finish = () => {
                 if (!s.recording) return;
                 s.recording = false;
                 const pcm = Buffer.concat(chunks);
+                if (s.live) {
+                    if (pcm.length) { try { s.live.onUserAudioChunk?.(this._down48to16(pcm)); } catch { /* 무시 */ } }
+                    try { s.live.onUserSpeakEnd?.(); } catch { /* 무시 */ }
+                    return;
+                }
                 // 0.35초 미만(숨소리/노이즈)은 버림 — 48kHz 스테레오 16bit = 초당 192,000바이트
                 if (pcm.length < 192_000 * 0.35) return;
                 const wav = this._pcmToWav16k(pcm);
@@ -97,6 +115,65 @@ const VoiceCall = {
         h.writeUInt32LE(16000, 24); h.writeUInt32LE(16000 * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
         h.write('data', 36); h.writeUInt32LE(out.length, 40);
         return Buffer.concat([h, out]);
+    },
+
+    // 48kHz 스테레오 → 16kHz 모노 raw PCM (헤더 없음, Live 입력용)
+    _down48to16(stereo48k) {
+        const samples = Math.floor(stereo48k.length / 4);
+        const outN = Math.floor(samples / 3);
+        const out = Buffer.alloc(outN * 2);
+        for (let i = 0; i < outN; i++) {
+            const si = i * 3 * 4;
+            const l = stereo48k.readInt16LE(si);
+            const r = stereo48k.readInt16LE(si + 2);
+            out.writeInt16LE(Math.max(-32768, Math.min(32767, (l + r) >> 1)), i * 2);
+        }
+        return out;
+    },
+
+    // 24kHz 모노 → 48kHz 스테레오 (샘플 2배 복제 + L/R 복사, 디코 Raw 재생용)
+    _up24to48stereo(mono24k) {
+        const n = Math.floor(mono24k.length / 2);
+        const out = Buffer.alloc(n * 8); // 샘플당 2프레임 × (L+R) × 2바이트
+        for (let i = 0; i < n; i++) {
+            const v = mono24k.readInt16LE(i * 2);
+            const o = i * 8;
+            out.writeInt16LE(v, o); out.writeInt16LE(v, o + 2);
+            out.writeInt16LE(v, o + 4); out.writeInt16LE(v, o + 6);
+        }
+        return out;
+    },
+
+    // --- Live 모드 재생: 모델 오디오 청크(PCM 24k mono)를 도착하는 대로 스트림에 밀어넣음 ---
+    playPcm24(channelId, pcm24kBuf) {
+        const s = sessions[channelId];
+        if (!s || s.ended || !pcm24kBuf?.length) return;
+        const up = this._up24to48stereo(pcm24kBuf);
+        // 재생 스트림이 없거나 플레이어가 쉬고 있으면 새로 시작
+        if (!s.pcmPT || s.player.state.status === AudioPlayerStatus.Idle) {
+            try { s.pcmPT?.end(); } catch { /* 무시 */ }
+            s.pcmPT = new PassThrough({ highWaterMark: 1 << 22 });
+            const resource = createAudioResource(s.pcmPT, { inputType: StreamType.Raw });
+            s.player.play(resource);
+        }
+        try { s.pcmPT.write(up); } catch { /* 무시 */ }
+    },
+
+    // 모델 턴 종료 → 스트림 마감 (쓴 데이터는 끝까지 재생됨)
+    endTurnAudio(channelId) {
+        const s = sessions[channelId];
+        if (!s?.pcmPT) return;
+        try { s.pcmPT.end(); } catch { /* 무시 */ }
+        s.pcmPT = null;
+    },
+
+    // 즉시 중단 (유저 끼어들기/인터럽트)
+    stopPlayback(channelId) {
+        const s = sessions[channelId];
+        if (!s) return;
+        try { s.pcmPT?.end(); } catch { /* 무시 */ }
+        s.pcmPT = null;
+        try { s.player.stop(true); } catch { /* 무시 */ }
     },
 
     // 텍스트를 edge-tts로 합성해 재생 (순서 보장 큐)
@@ -137,6 +214,8 @@ const VoiceCall = {
         if (!s) return false;
         s.ended = true;
         if (s.joinTimer) { clearTimeout(s.joinTimer); s.joinTimer = null; }
+        try { s.pcmPT?.end(); } catch { /* 무시 */ }
+        try { s.liveClient?.close(); } catch { /* 무시 */ }
         try { s.player.stop(true); } catch { /* 무시 */ }
         try { s.connection.destroy(); } catch { /* 무시 */ }
         delete sessions[channelId];

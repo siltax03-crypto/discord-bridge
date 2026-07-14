@@ -16,6 +16,7 @@ import Srt from './srt.js';
 import Subtitles from './subtitles.js';
 import NpcGroups from './npc-groups.js';
 import VoiceCall from './voice-call.js';
+import GeminiLive from './voice-live.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -926,7 +927,17 @@ const Bot = {
             || (lang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
         const userName = interaction.member?.displayName || interaction.user.username;
 
-        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name})`, ...eph });
+        const useLive = !!config.liveApiKey; // AI Studio 키가 있으면 Gemini Live(실시간)로
+        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${useLive ? ' · Live' : ''})`, ...eph });
+
+        // Live 모드: 음성↔음성 실시간. 캐릭터 컨텍스트는 시스템 프롬프트로 주입.
+        let liveClient = null;
+        const liveHooks = useLive ? {
+            onUserSpeakStart: () => liveClient?.activityStart(),
+            onUserAudioChunk: (pcm) => liveClient?.sendAudio(pcm),
+            onUserSpeakEnd: () => liveClient?.activityEnd(),
+        } : null;
+
         let session;
         try {
             session = await VoiceCall.start({
@@ -937,17 +948,28 @@ const Bot = {
                 voiceName,
                 character,
                 userName,
+                live: liveHooks,
                 onUtterance: (wav) => this._onCallUtterance(channelId, character, userName, wav),
                 onEnd: (reason) => {
                     interaction.channel.send(`📞 통화 종료${reason ? ` — ${reason}` : ''}`).catch(() => {});
                     if (createdVc) vc.delete('통화 종료').catch(() => {});
                 },
             });
+            if (useLive) {
+                liveClient = await this._startLiveClient(channelId, character, userName);
+                session.liveClient = liveClient;
+            }
         } catch (e) {
             console.error('[Call] 시작 실패:', e);
+            VoiceCall.end(channelId, '');
             if (createdVc) vc.delete().catch(() => {});
             return interaction.editReply(`⚠️ 연결 실패: ${e.message}`);
         }
+        const greet = () => {
+            if (useLive) liveClient?.sendText('(The user just called you on the phone and you picked up. Greet them first — short and natural, matching your current mood/situation and time of day.)');
+            else this._callGenerate(channelId, character, userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
+        };
+        session.greet = greet;
         if (createdVc) {
             // 유저가 아직 밖 — 들어오면(_onVoiceState) 캐릭터가 받음. 3분 내 안 들어오면 취소.
             session.joinTimer = setTimeout(() => {
@@ -955,10 +977,57 @@ const Bot = {
             }, 180_000);
             return interaction.editReply(`📞 전화 왔어요! <#${vc.id}> 들어오면 ${character.name}이(가) 받아요. (3분 내)`);
         }
-        await interaction.editReply('📞 연결됐어요! 그냥 말하면 돼요. 끊을 땐 `/call end` 또는 음성채널에서 나가기.');
+        await interaction.editReply(`📞 연결됐어요!${useLive ? ' (Live — 실시간)' : ''} 그냥 말하면 돼요. 끊을 땐 \`/call end\` 또는 음성채널에서 나가기.`);
         // 캐릭터가 먼저 전화 받는 인사
         session.greeted = true;
-        this._callGenerate(channelId, character, userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
+        greet();
+    },
+
+    // Gemini Live 클라이언트 생성 + 오디오/자막 배선
+    async _startLiveClient(channelId, character, userName) {
+        const personaName = this._getPersonaName(channelId);
+        const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
+        const effUserName = personaName || userName;
+        const sys = ContextBuilder.build(character, {
+            userName: effUserName,
+            language: Langs.get(channelId, config.language || 'ko'),
+            mode: 'chat',
+            chatSlang: config.chatSlang !== false,
+            timezone: config.timezone || 'Asia/Seoul',
+            notes: Notes.list(channelId),
+            annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+            personaText,
+        }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
+            + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.';
+
+        // 직전 대화 꼬리도 얹어줌 (통화가 채팅 맥락을 이어가게)
+        const recent = ChatHistory.getMessages(channelId, 12)
+            .map((m) => `${m.role === 'user' ? effUserName : (m.author || character.name)}: ${typeof m.content === 'string' ? m.content : ''}`)
+            .join('\n');
+        const sysFull = recent ? `${sys}\n\n[RECENT CHAT — right before this call]\n${recent}` : sys;
+
+        let userBuf = '';
+        let modelBuf = '';
+        const live = new GeminiLive({
+            apiKey: config.liveApiKey,
+            model: config.liveModel || 'gemini-2.5-flash-native-audio-preview-09-2025',
+            voiceName: config.liveVoice || 'Charon',
+            systemInstruction: sysFull,
+            onAudio: (pcm) => VoiceCall.playPcm24(channelId, pcm),
+            onInterrupted: () => VoiceCall.stopPlayback(channelId),
+            onTurnComplete: () => {
+                VoiceCall.endTurnAudio(channelId);
+                // 통화 내용을 갠톡 기억으로 (자막 누적분 저장)
+                if (userBuf.trim()) ChatHistory.addMessage(channelId, 'user', `📞 ${userBuf.trim()}`);
+                if (modelBuf.trim()) ChatHistory.addMessage(channelId, 'assistant', `📞 ${modelBuf.trim()}`, character.name);
+                userBuf = ''; modelBuf = '';
+            },
+            onUserText: (t) => { userBuf += t; },
+            onModelText: (t) => { modelBuf += t; },
+            onClose: () => VoiceCall.end(channelId, 'Live 연결 종료'),
+        });
+        await live.connect();
+        return live;
     },
 
     // 통화 중 유저 발화 1회분: STT → 히스토리 저장 → 응답 생성
@@ -1053,7 +1122,8 @@ const Bot = {
             if (!s.greeted && newState.channelId === s.voiceChannel.id) {
                 s.greeted = true;
                 if (s.joinTimer) { clearTimeout(s.joinTimer); s.joinTimer = null; }
-                this._callGenerate(s.channelId, s.character, s.userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
+                if (s.greet) s.greet();
+                else this._callGenerate(s.channelId, s.character, s.userName, true).catch((e) => console.warn('[Call] 인사 생성 오류:', e.message));
                 continue;
             }
             // 통화 중이던 유저가 나감 → 종료
