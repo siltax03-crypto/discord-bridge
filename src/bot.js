@@ -999,7 +999,9 @@ const Bot = {
             personaText,
         }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
             + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.'
-            + (config.liveStyle ? `\n- VOICE ACTING — deliver every line in this manner: ${config.liveStyle}` : '');
+            + (config.liveStyle
+                ? `\n- VOICE ACTING — deliver every line in this manner: ${config.liveStyle}`
+                : '\n- VOICE ACTING: derive your vocal delivery entirely from your character sheet and the CURRENT situation/mood — tone, pace, energy, accent, laughs, sighs, verbal tics. Sound like the character actually talking on the phone right now (sleepy at 3am, hyped, annoyed, teasing — whatever fits the moment), never like a narrator reading lines.');
 
         // 직전 대화 꼬리도 얹어줌 (통화가 채팅 맥락을 이어가게)
         const recent = ChatHistory.getMessages(channelId, 12)

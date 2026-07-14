@@ -35,8 +35,12 @@ def _download_model():
 
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .apt_install("ffmpeg", "libsndfile1")
-    .pip_install("rvc-python", "fastapi[standard]", "soundfile", "scipy", "numpy", "requests")
+    # build-essential/git: rvc-python 의존성(fairseq 등)이 C 확장을 소스 빌드함
+    .apt_install("ffmpeg", "libsndfile1", "build-essential", "g++", "git")
+    # torch를 먼저 깔아야 fairseq 빌드가 붙고, numpy 2.x는 구 라이브러리들과 충돌
+    .pip_install("numpy<2", "torch==2.1.2", "torchaudio==2.1.2")
+    # fastapi/soundfile/scipy는 rvc-python이 자기 버전으로 데려옴 — 따로 요구하면 버전 충돌(ResolutionImpossible)
+    .pip_install("rvc-python", "requests")
     .run_function(_download_model)
 )
 
