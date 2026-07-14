@@ -985,7 +985,9 @@ const Bot = {
     },
 
     // Live 인증 결정: Vertex 기본 (이미지 전용 프로필 > Gemini 채팅 프로필), 없으면 AI Studio 키. 다 없으면 null.
+    // livePrefer='studio' + liveApiKey 있으면 AI Studio 우선 — 네이티브 오디오(자연스러운 한국어)는 AI Studio에만 있음.
     _liveAuth() {
+        if (config.livePrefer === 'studio' && config.liveApiKey) return { vertex: false, apiKey: config.liveApiKey };
         const isGem = (p) => !!p?.apiKey && (/vertex|google|makersuite/.test(p.api || '') || (p.model || '').includes('gemini'));
         const imgP = AIClient.getImageProfile();
         const chatP = AIClient.getProfile();
@@ -1005,9 +1007,8 @@ const Bot = {
         const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
         // 목소리: 채널별(channels[id].rvcVoice) > 전역(config.rvcVoice) > 서버 기본
         const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
-        // 통화 언어: RVC 목소리는 영어 학습 모델이라 영어로 말해야 억양이 자연스러움 →
-        // RVC 통화는 기본 영어 응답 (유저는 한국어로 말해도 알아들음). callLanguage로 강제 가능.
-        const callLang = config.callLanguage || (rvcBase ? 'en' : Langs.get(channelId, config.language || 'ko'));
+        // 통화 언어: 채널 언어 기본. RVC(영어 모델) 억양을 살리고 싶을 때만 callLanguage='en'으로.
+        const callLang = config.callLanguage || Langs.get(channelId, config.language || 'ko');
 
         const sys = ContextBuilder.build(character, {
             userName: effUserName,
