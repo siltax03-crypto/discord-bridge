@@ -90,7 +90,6 @@ async function loadAll() {
             chatSlang: c.chatSlang !== false,
             movieToken: c.movieToken || '',
             openSub: c.openSub || {},
-            liveVoice: c.liveVoice || 'Charon',
             liveStyle: c.liveStyle || '',
             rvcUrl: c.rvcUrl || '',
             proactive: {
@@ -207,8 +206,7 @@ function render() {
     $('#dbridge_movietoken').val(state.movieToken || '');
     $('#dbridge_opensub').val(state.openSub?.apiKey || '');
 
-    // Gemini Live (통화)
-    $('#dbridge_livevoice').val(state.liveVoice || 'Charon');
+    // 통화 (Live/RVC)
     $('#dbridge_livestyle').val(state.liveStyle || '');
     $('#dbridge_rvcurl').val(state.rvcUrl || '');
 
@@ -521,7 +519,6 @@ async function save() {
             members: state.members,
             movieToken: ($('#dbridge_movietoken').val() || '').trim(),
             openSub: { ...(state.openSub || {}), apiKey: ($('#dbridge_opensub').val() || '').trim() },
-            liveVoice: $('#dbridge_livevoice').val() || 'Charon',
             liveStyle: ($('#dbridge_livestyle').val() || '').trim(),
             rvcUrl: ($('#dbridge_rvcurl').val() || '').trim(),
         };
@@ -533,6 +530,11 @@ async function save() {
 
         await apiPost('/config', payload);
         // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
+        // (입력칸에서 직접 읽는 값들은 state에 되돌려놔야 render()가 방금 친 값을 지우지 않음)
+        state.movieToken = payload.movieToken;
+        state.openSub = payload.openSub;
+        state.liveStyle = payload.liveStyle;
+        state.rvcUrl = payload.rvcUrl;
         if (payload.discordToken) state.tokenSaved = true;
         if (payload.personaBotToken) state.personaBotSaved = true;
         for (const c of Object.values(state.channels)) {
@@ -720,48 +722,6 @@ const SETTINGS_HTML = `
             <input type="text" id="dbridge_opensub" class="text_pole" autocomplete="off" placeholder="opensubtitles.com API Key (anonymous면 키만)" />
             <div class="dbridge_hint">opensubtitles.com → 가입 → Consumers → "Allow anonymous downloads" 켜고 키 발급. 비우면 .srt 파일 직접 첨부로만 가능. 변경 후 봇 재시작.</div>
 
-            <label>📞 통화 (Gemini Live) <span class="dbridge_hint">— 이미지/채팅 프로필의 Vertex 키로 자동 연결 (별도 키 불필요)</span></label>
-            <div class="dbridge_grid2">
-                <div>
-                    <label>Live 목소리</label>
-                    <select id="dbridge_livevoice" class="text_pole">
-                        <optgroup label="남성">
-                            <option value="Charon">Charon (저음 차분)</option>
-                            <option value="Algenib">Algenib (거친 갈라짐)</option>
-                            <option value="Fenrir">Fenrir (격정적)</option>
-                            <option value="Orus">Orus (단단함)</option>
-                            <option value="Alnilam">Alnilam (묵직함)</option>
-                            <option value="Enceladus">Enceladus (숨섞인 저음)</option>
-                            <option value="Iapetus">Iapetus (명료)</option>
-                            <option value="Algieba">Algieba (부드러움)</option>
-                            <option value="Umbriel">Umbriel (느긋함)</option>
-                            <option value="Schedar">Schedar (고른 톤)</option>
-                            <option value="Achird">Achird (친근)</option>
-                            <option value="Zubenelgenubi">Zubenelgenubi (캐주얼)</option>
-                            <option value="Sadachbia">Sadachbia (활기)</option>
-                            <option value="Sadaltager">Sadaltager (지적)</option>
-                            <option value="Rasalgethi">Rasalgethi (아나운서)</option>
-                            <option value="Puck">Puck (밝고 가벼움)</option>
-                        </optgroup>
-                        <optgroup label="여성">
-                            <option value="Kore">Kore (또렷)</option>
-                            <option value="Zephyr">Zephyr (밝음)</option>
-                            <option value="Aoede">Aoede (경쾌)</option>
-                            <option value="Leda">Leda (젊음)</option>
-                            <option value="Callirrhoe">Callirrhoe (느긋)</option>
-                            <option value="Autonoe">Autonoe (밝음)</option>
-                            <option value="Despina">Despina (부드러움)</option>
-                            <option value="Erinome">Erinome (명료)</option>
-                            <option value="Laomedeia">Laomedeia (활기)</option>
-                            <option value="Achernar">Achernar (여림)</option>
-                            <option value="Gacrux">Gacrux (성숙)</option>
-                            <option value="Vindemiatrix">Vindemiatrix (온화)</option>
-                            <option value="Pulcherrima">Pulcherrima (당참)</option>
-                            <option value="Sulafat">Sulafat (따뜻함)</option>
-                        </optgroup>
-                    </select>
-                </div>
-            </div>
             <label>목소리 연기 지시 <span class="dbridge_hint">(톤·말투를 프롬프트로 연기시킴 — 체감 차이 큼)</span></label>
             <input type="text" id="dbridge_livestyle" class="text_pole" autocomplete="off" placeholder="예: 낮고 허스키하게, 나른하고 빈정대는 톤으로, 살짝 웃음기 섞어서" />
             <div class="dbridge_hint"><b>aistudio.google.com/apikey</b>에서 무료 키 발급 (결제등록 불필요). 키가 없으면 /call은 STT+TTS 모드(느림)로 동작. 변경 후 봇 재시작.</div>
