@@ -95,11 +95,28 @@ class RVCServer:
         self.rvc = RVCInference(device="cuda:0", models_dir="/models")
         self.current = DEFAULT_VOICE if DEFAULT_VOICE in self.available else self.available[0]
         self.rvc.load_model(self.current)
+        self._tune()
+        print(f"RVC 준비 완료: {self.available} (기본 {self.current})")
+
+    def _tune(self):
         try:
             self.rvc.set_params(f0method="rmvpe", index_rate=0.75, protect=0.33)
         except Exception as e:  # 라이브러리 버전에 따라 파라미터명이 다를 수 있음
             print("set_params 생략:", e)
-        print(f"RVC 준비 완료: {self.available} (기본 {self.current})")
+
+    # rvc-python은 init 시점에 models_dir을 스캔해 이름을 등록 — 런타임에 추가된 목소리는
+    # 못 찾으므로(Model file X not found) 실패 시 재초기화 후 다시 로드
+    def _load_voice(self, name):
+        from rvc_python.infer import RVCInference
+
+        try:
+            self.rvc.load_model(name)
+        except Exception:
+            print(f"[{name}] 재스캔 로드 (RVCInference 재초기화)")
+            self.rvc = RVCInference(device="cuda:0", models_dir="/models")
+            self.rvc.load_model(name)
+        self._tune()
+        self.current = name
 
     @modal.asgi_app()
     def api(self):
@@ -169,8 +186,7 @@ class RVCServer:
                 if want not in self.available:
                     return Response(status_code=404, content=f"unknown voice: {want}".encode())
                 try:
-                    self.rvc.load_model(want)
-                    self.current = want
+                    self._load_voice(want)
                 except Exception as e:
                     import traceback
 
