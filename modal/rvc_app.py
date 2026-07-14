@@ -40,7 +40,8 @@ image = (
     # torch를 먼저 깔아야 fairseq 빌드가 붙고, numpy 2.x는 구 라이브러리들과 충돌
     .pip_install("numpy<2", "torch==2.1.2", "torchaudio==2.1.2")
     # fastapi/soundfile/scipy는 rvc-python이 자기 버전으로 데려옴 — 따로 요구하면 버전 충돌(ResolutionImpossible)
-    .pip_install("rvc-python", "requests")
+    # rvc-python 의존성 트리는 최신 pip 엄격 검사에 안 풀림 → 구식(관대한) 리졸버로 설치
+    .pip_install("rvc-python", "requests", extra_options="--use-deprecated=legacy-resolver")
     .run_function(_download_model)
 )
 
