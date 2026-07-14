@@ -1000,9 +1000,18 @@ const Bot = {
         const personaName = this._getPersonaName(channelId);
         const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
         const effUserName = personaName || userName;
+
+        // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
+        const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
+        // 목소리: 채널별(channels[id].rvcVoice) > 전역(config.rvcVoice) > 서버 기본
+        const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
+        // 통화 언어: RVC 목소리는 영어 학습 모델이라 영어로 말해야 억양이 자연스러움 →
+        // RVC 통화는 기본 영어 응답 (유저는 한국어로 말해도 알아들음). callLanguage로 강제 가능.
+        const callLang = config.callLanguage || (rvcBase ? 'en' : Langs.get(channelId, config.language || 'ko'));
+
         const sys = ContextBuilder.build(character, {
             userName: effUserName,
-            language: Langs.get(channelId, config.language || 'ko'),
+            language: callLang,
             mode: 'chat',
             chatSlang: config.chatSlang !== false,
             timezone: config.timezone || 'Asia/Seoul',
@@ -1011,6 +1020,7 @@ const Bot = {
             personaText,
         }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
             + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.'
+            + (callLang === 'en' ? `\n- ${effUserName} may speak Korean — you understand Korean perfectly, but YOU always speak English (natural spoken English, not textbook).` : '')
             + (config.liveStyle
                 ? `\n- VOICE ACTING — deliver every line in this manner: ${config.liveStyle}`
                 : '\n- VOICE ACTING: derive your vocal delivery entirely from your character sheet and the CURRENT situation/mood — tone, pace, energy, accent, laughs, sighs, verbal tics. Sound like the character actually talking on the phone right now (sleepy at 3am, hyped, annoyed, teasing — whatever fits the moment), never like a narrator reading lines.');
@@ -1023,11 +1033,6 @@ const Bot = {
 
         let userBuf = '';
         let modelBuf = '';
-
-        // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
-        const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
-        // 목소리: 채널별(channels[id].rvcVoice) > 전역(config.rvcVoice) > 서버 기본
-        const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
         let segBuf = []; let segBytes = 0; let playChain = Promise.resolve();
         const SEG_BYTES = 24000 * 2 * 2; // 24kHz 16bit mono 2초
         const flushSeg = () => {
