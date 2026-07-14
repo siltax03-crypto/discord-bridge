@@ -61,6 +61,9 @@ class RVCServer:
     # 목소리 등록: src 폴더에서 .pth/.index를 찾아 rvc-python이 기대하는 /models/<name>/ 구조로 링크
     def _register(self, name, src):
         pth = sorted(glob.glob(f"{src}/**/*.pth", recursive=True))
+        # 학습용 체크포인트(G_*/D_*)가 섞인 zip이면 추론용 모델을 우선
+        infer_pth = [f for f in pth if not os.path.basename(f).startswith(("G_", "D_"))]
+        pth = infer_pth or pth
         if not pth:
             print(f"⚠ [{name}] .pth 없음: {src}")
             return False

@@ -4,6 +4,26 @@
 // vertex:true면 Vertex(aiplatform) 엔드포인트 — 무료 AI Studio와 달리 대화가 구글 학습에 안 쓰임.
 import WebSocket from 'ws';
 
+// Vertex Live는 모델을 projects/<번호>/locations/global/... 전체 경로로 요구하는데,
+// 익스프레스 키는 프로젝트 번호를 노출 안 함 → 지역 호스트에 더미 setup을 보내면
+// 거절 사유에 자기 프로젝트 번호가 찍혀 나옴. 그걸 파싱해 캐시.
+const vertexProjectCache = {};
+function discoverVertexProject(apiKey) {
+    if (vertexProjectCache[apiKey]) return Promise.resolve(vertexProjectCache[apiKey]);
+    return new Promise((resolve, reject) => {
+        const ws = new WebSocket(`wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent?key=${apiKey}`);
+        const t = setTimeout(() => { try { ws.close(); } catch { /* 무시 */ } reject(new Error('Vertex 프로젝트 탐지 타임아웃')); }, 10_000);
+        ws.on('open', () => ws.send(JSON.stringify({ setup: { model: 'publishers/google/models/_probe_' } })));
+        ws.on('close', (code, reason) => {
+            clearTimeout(t);
+            const m = String(reason).match(/projects\/(\d+)\//);
+            if (m) { vertexProjectCache[apiKey] = m[1]; resolve(m[1]); }
+            else reject(new Error(`Vertex 프로젝트 탐지 실패 (${code}): ${String(reason).slice(0, 150)}`));
+        });
+        ws.on('error', () => { /* close에서 처리 */ });
+    });
+}
+
 class GeminiLive {
     // opts: { apiKey, model, voiceName, systemInstruction, vertex, onAudio(pcm24kBuf), onInterrupted(), onTurnComplete(),
     //         onUserText(t), onModelText(t), onError(msg), onClose() }
@@ -14,7 +34,11 @@ class GeminiLive {
         this.closed = false;
     }
 
-    connect() {
+    async connect() {
+        // Vertex: 전체 리소스 경로 필요 (projects/<번호>/locations/global/…)
+        const modelPath = this.o.vertex
+            ? `projects/${await discoverVertexProject(this.o.apiKey)}/locations/global/publishers/google/models/${this.o.model}`
+            : `models/${this.o.model}`;
         return new Promise((resolve, reject) => {
             const url = this.o.vertex
                 ? `wss://aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent?key=${this.o.apiKey}`
@@ -26,7 +50,7 @@ class GeminiLive {
             ws.on('open', () => {
                 ws.send(JSON.stringify({
                     setup: {
-                        model: this.o.vertex ? `publishers/google/models/${this.o.model}` : `models/${this.o.model}`,
+                        model: modelPath,
                         generationConfig: {
                             responseModalities: ['AUDIO'],
                             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.o.voiceName || 'Charon' } } },
