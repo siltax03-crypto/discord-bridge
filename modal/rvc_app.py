@@ -168,8 +168,14 @@ class RVCServer:
             if want != self.current:
                 if want not in self.available:
                     return Response(status_code=404, content=f"unknown voice: {want}".encode())
-                self.rvc.load_model(want)
-                self.current = want
+                try:
+                    self.rvc.load_model(want)
+                    self.current = want
+                except Exception as e:
+                    import traceback
+
+                    traceback.print_exc()
+                    return Response(status_code=500, content=f"모델 로드 실패({want}): {e}".encode())
             # 입력 WAV → 임시 파일 → RVC 변환 → 24k mono s16 raw PCM으로 응답
             in_path, out_path = "/tmp/in.wav", "/tmp/out.wav"
             with open(in_path, "wb") as f:
