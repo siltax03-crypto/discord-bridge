@@ -13,11 +13,10 @@ import os
 
 import modal
 
-# 목소리 모델들 — 추가하려면 줄 하나 넣고 `modal deploy modal/rvc_app.py` 다시 (이름: zip URL)
-# 봇에서 /convert?voice=이름 으로 선택. 지정 없으면 DEFAULT_VOICE.
+# 기본 목소리(이미지에 미리 구움). 추가 목소리는 재배포 없이 POST /add_voice {name, url} 로 —
+# 볼륨(rvc-voices)에 저장돼 영구 유지. ST 확장 "＋ 목소리" 버튼이 이걸 호출한다.
 MODELS = {
     "deadpool": "https://huggingface.co/Cauthess/Deadpool_Marvel/resolve/main/Deadpool%20-%20Marvel%20Saga.zip",
-    # "ghost": "https://…(고스트 RVC zip URL)…",
 }
 DEFAULT_VOICE = "deadpool"
 # 봇 config.rvcToken과 동일하게 설정하면 남이 URL 알아도 못 씀 (빈값 = 인증 생략)
@@ -54,45 +53,63 @@ image = (
 )
 
 
-@app.cls(image=image, gpu="T4", scaledown_window=420, timeout=300)
+voices_vol = modal.Volume.from_name("rvc-voices", create_if_missing=True)
+
+
+@app.cls(image=image, gpu="T4", scaledown_window=420, timeout=300, volumes={"/voices": voices_vol})
 class RVCServer:
+    # 목소리 등록: src 폴더에서 .pth/.index를 찾아 rvc-python이 기대하는 /models/<name>/ 구조로 링크
+    def _register(self, name, src):
+        pth = sorted(glob.glob(f"{src}/**/*.pth", recursive=True))
+        if not pth:
+            print(f"⚠ [{name}] .pth 없음: {src}")
+            return False
+        idx = sorted(glob.glob(f"{src}/**/*.index", recursive=True))
+        os.makedirs(f"/models/{name}", exist_ok=True)
+        for target, ext in [(pth[0], "pth")] + ([(idx[0], "index")] if idx else []):
+            link = f"/models/{name}/{name}.{ext}"
+            if not os.path.lexists(link):
+                os.symlink(target, link)
+        if name not in self.available:
+            self.available.append(name)
+        return True
+
+    def _scan_volume(self):
+        for d in sorted(glob.glob("/voices/*")):
+            if os.path.isdir(d):
+                self._register(os.path.basename(d), d)
+
     @modal.enter()
     def setup(self):
         from rvc_python.infer import RVCInference
 
-        # rvc-python은 models_dir/모델명/파일 구조를 기대 → 목소리별 심볼릭 구성
-        available = []
-        for name in MODELS:
-            pth = sorted(glob.glob(f"/model/{name}/**/*.pth", recursive=True))
-            idx = sorted(glob.glob(f"/model/{name}/**/*.index", recursive=True))
-            if not pth:
-                print(f"⚠ [{name}] .pth 없음 — zip 내용 확인")
-                continue
-            os.makedirs(f"/models/{name}", exist_ok=True)
-            os.symlink(pth[0], f"/models/{name}/{name}.pth")
-            if idx:
-                os.symlink(idx[0], f"/models/{name}/{name}.index")
-            available.append(name)
-        if not available:
+        self.available = []
+        for name in MODELS:  # 이미지에 구운 기본 목소리
+            self._register(name, f"/model/{name}")
+        self._scan_volume()  # 볼륨(런타임 추가) 목소리
+        if not self.available:
             raise RuntimeError("사용 가능한 모델이 없음")
         self.rvc = RVCInference(device="cuda:0", models_dir="/models")
-        self.current = DEFAULT_VOICE if DEFAULT_VOICE in available else available[0]
-        self.available = available
+        self.current = DEFAULT_VOICE if DEFAULT_VOICE in self.available else self.available[0]
         self.rvc.load_model(self.current)
         try:
             self.rvc.set_params(f0method="rmvpe", index_rate=0.75, protect=0.33)
         except Exception as e:  # 라이브러리 버전에 따라 파라미터명이 다를 수 있음
             print("set_params 생략:", e)
-        print(f"RVC 준비 완료: {available} (기본 {self.current})")
+        print(f"RVC 준비 완료: {self.available} (기본 {self.current})")
 
     @modal.asgi_app()
     def api(self):
         import numpy as np
+        import requests as rq
         import soundfile as sf
         from fastapi import FastAPI, Request, Response
+        from fastapi.middleware.cors import CORSMiddleware
         from scipy.signal import resample_poly
 
         web = FastAPI()
+        # ST 확장(브라우저)에서 직접 호출 가능하게
+        web.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
         def _auth_ok(req: Request) -> bool:
             return not AUTH_TOKEN or req.headers.get("x-auth") == AUTH_TOKEN
@@ -103,6 +120,32 @@ class RVCServer:
                 return Response(status_code=401)
             return {"ok": True, "voices": self.available, "current": self.current}
 
+        # 목소리 추가: {name, url(zip)} → 볼륨에 영구 저장 + 즉시 사용. 재배포 불필요.
+        @web.post("/add_voice")
+        async def add_voice(request: Request):
+            if not _auth_ok(request):
+                return Response(status_code=401)
+            import re
+            import zipfile
+
+            data = await request.json()
+            name = re.sub(r"[^a-z0-9_-]", "", str(data.get("name", "")).lower())
+            url = str(data.get("url", "")).strip()
+            if not name or not url:
+                return Response(status_code=400, content=b"name/url required")
+            dest = f"/voices/{name}"
+            try:
+                r = rq.get(url, timeout=600)
+                r.raise_for_status()
+                os.makedirs(dest, exist_ok=True)
+                zipfile.ZipFile(io.BytesIO(r.content)).extractall(dest)
+                voices_vol.commit()
+            except Exception as e:
+                return Response(status_code=500, content=f"다운로드/압축해제 실패: {e}".encode())
+            if not self._register(name, dest):
+                return Response(status_code=422, content=b".pth not found in zip")
+            return {"ok": True, "voices": self.available}
+
         @web.post("/convert")
         async def convert(request: Request, pitch: int = 0, voice: str = ""):
             if not _auth_ok(request):
@@ -112,6 +155,13 @@ class RVCServer:
                 return Response(status_code=400)
             # 목소리 전환 (요청마다 지정 가능 — 로드된 모델 캐시로 전환 빠름)
             want = voice or DEFAULT_VOICE
+            if want not in self.available:
+                # 다른 컨테이너에서 추가된 목소리일 수 있음 → 볼륨 새로고침 후 재확인
+                try:
+                    voices_vol.reload()
+                except Exception:
+                    pass
+                self._scan_volume()
             if want != self.current:
                 if want not in self.available:
                     return Response(status_code=404, content=f"unknown voice: {want}".encode())

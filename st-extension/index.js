@@ -388,6 +388,11 @@ function renderChannelRows() {
                 </div>`;
         }
 
+        // 통화(1:1) 채널만: RVC 목소리 지정 (비우면 기본 목소리/프리셋)
+        const voiceField = (!isGroup && !isNpc)
+            ? `<span>📞목소리</span><input type="text" class="text_pole dbridge_row_rvc" list="dbridge_rvc_list" value="${escapeHtml(conf.rvcVoice || '')}" placeholder="(기본)" style="max-width:100px" />`
+            : '';
+
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
@@ -395,6 +400,7 @@ function renderChannelRows() {
                 ${charField}
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
+                ${voiceField}
                 ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
                 ${groupBox}
@@ -489,6 +495,8 @@ function syncFromDom() {
                 if (!char) return;
                 const entry = { character: char };
                 if (persona) entry.persona = persona;
+                const rvcVoice = ($(this).find('.dbridge_row_rvc').val() || '').trim();
+                if (rvcVoice) entry.rvcVoice = rvcVoice;
                 channels[chId] = entry;
             }
         });
@@ -770,7 +778,14 @@ const SETTINGS_HTML = `
 
             <label>🎭 RVC 변환 서버 URL <span class="dbridge_hint">(통화 목소리를 학습된 목소리로 — 예: 데드풀)</span></label>
             <input type="text" id="dbridge_rvcurl" class="text_pole" autocomplete="off" placeholder="https://…-rvcserver-api.modal.run (비우면 Live 프리셋 목소리)" />
-            <div class="dbridge_hint">modal.com 무료 크레딧으로 구동. <code>modal deploy modal/rvc_app.py</code> 하고 나온 URL 붙여넣기. 변경 후 봇 재시작.</div>
+            <div class="dbridge_inline" style="margin-top:4px">
+                <input type="text" id="dbridge_rvc_vname" class="text_pole" autocomplete="off" placeholder="이름 (예: ghost)" style="max-width:110px" />
+                <input type="text" id="dbridge_rvc_vurl" class="text_pole" autocomplete="off" placeholder="RVC 모델 zip URL (voice-models.com 등에서 복사)" />
+                <div class="menu_button" id="dbridge_rvc_vadd" style="width:auto;white-space:nowrap">＋ 목소리</div>
+                <div class="menu_button" id="dbridge_rvc_vrefresh" title="목소리 목록 새로고침" style="width:auto;white-space:nowrap">🔄</div>
+            </div>
+            <div class="dbridge_hint" id="dbridge_rvc_voicelist">목소리 추가는 재배포 없이 바로 반영. 채널 행의 "📞목소리" 칸에 이름을 넣으면 그 캐릭터가 그 목소리로 전화해요.</div>
+            <datalist id="dbridge_rvc_list"></datalist>
 
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
@@ -845,6 +860,47 @@ jQuery(async () => {
     $('#dbridge_livekey_eye').on('click', () => {
         const $t = $('#dbridge_livekey');
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
+    });
+    // RVC 목소리 목록/추가 (Modal 서버에 직접 — 재배포 불필요)
+    async function rvcVoiceList() {
+        const base = ($('#dbridge_rvcurl').val() || '').trim().replace(/\/+$/, '');
+        if (!base) { $('#dbridge_rvc_voicelist').text('먼저 RVC 서버 URL을 입력하세요.'); return; }
+        $('#dbridge_rvc_voicelist').text('목소리 목록 불러오는 중... (서버가 자고 있으면 ~30초)');
+        try {
+            const r = await fetch(`${base}/warm`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const d = await r.json();
+            const vs = d.voices || [];
+            $('#dbridge_rvc_voicelist').text(`목소리: ${vs.join(', ') || '(없음)'} — 채널 행 "📞목소리" 칸에 이름 입력`);
+            $('#dbridge_rvc_list').html(vs.map((v) => `<option value="${escapeHtml(v)}">`).join(''));
+        } catch (e) {
+            $('#dbridge_rvc_voicelist').text(`목소리 목록 실패: ${e.message}`);
+        }
+    }
+    $('#dbridge_rvc_vrefresh').on('click', rvcVoiceList);
+    $('#dbridge_rvc_vadd').on('click', async () => {
+        const base = ($('#dbridge_rvcurl').val() || '').trim().replace(/\/+$/, '');
+        const name = ($('#dbridge_rvc_vname').val() || '').trim();
+        const url = ($('#dbridge_rvc_vurl').val() || '').trim();
+        if (!base || !name || !url) { toastr.warning('RVC 서버 URL, 이름, 모델 zip URL이 모두 필요해요.'); return; }
+        const $b = $('#dbridge_rvc_vadd').text('받는 중...');
+        try {
+            const r = await fetch(`${base}/add_voice`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, url }),
+            });
+            if (!r.ok) throw new Error((await r.text().catch(() => '')) || `HTTP ${r.status}`);
+            const d = await r.json();
+            toastr.success(`목소리 "${name}" 추가됨! 채널 행 📞목소리에 "${name}" 넣고 저장하면 끝.`, 'RVC');
+            $('#dbridge_rvc_vname').val('');
+            $('#dbridge_rvc_vurl').val('');
+            rvcVoiceList();
+        } catch (e) {
+            toastr.error(String(e.message || e).slice(0, 200), '목소리 추가 실패');
+        } finally {
+            $b.text('＋ 목소리');
+        }
     });
     // 영화 토큰 랜덤 생성
     $('#dbridge_movietoken_gen').on('click', () => {
