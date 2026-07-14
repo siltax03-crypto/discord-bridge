@@ -26,6 +26,10 @@
   "liveApiKey": "",
   "liveModel": "gemini-2.5-flash-native-audio-preview-09-2025",
   "liveVoice": "Charon",
+  "liveStyle": "",
+  "rvcUrl": "",
+  "rvcToken": "",
+  "rvcPitch": 0,
   "openSub": { "apiKey": "", "username": "", "password": "" },
   "proactive": {
     "enabled": false,

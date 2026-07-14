@@ -92,6 +92,8 @@ async function loadAll() {
             openSub: c.openSub || {},
             liveKeySaved: !!c.liveApiKey,
             liveVoice: c.liveVoice || 'Charon',
+            liveStyle: c.liveStyle || '',
+            rvcUrl: c.rvcUrl || '',
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -210,6 +212,8 @@ function render() {
     $('#dbridge_livekey').val('')
         .attr('placeholder', state.liveKeySaved ? '•••••••• (저장됨, 비우면 유지)' : 'AI Studio API 키 (aistudio.google.com/apikey)');
     $('#dbridge_livevoice').val(state.liveVoice || 'Charon');
+    $('#dbridge_livestyle').val(state.liveStyle || '');
+    $('#dbridge_rvcurl').val(state.rvcUrl || '');
 
     // 선톡
     const p = state.proactive;
@@ -513,6 +517,8 @@ async function save() {
             movieToken: ($('#dbridge_movietoken').val() || '').trim(),
             openSub: { ...(state.openSub || {}), apiKey: ($('#dbridge_opensub').val() || '').trim() },
             liveVoice: $('#dbridge_livevoice').val() || 'Charon',
+            liveStyle: ($('#dbridge_livestyle').val() || '').trim(),
+            rvcUrl: ($('#dbridge_rvcurl').val() || '').trim(),
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const liveKey = ($('#dbridge_livekey').val() || '').trim();
@@ -721,18 +727,50 @@ const SETTINGS_HTML = `
                 <div>
                     <label>Live 목소리</label>
                     <select id="dbridge_livevoice" class="text_pole">
-                        <option value="Charon">Charon (남성 저음)</option>
-                        <option value="Fenrir">Fenrir (남성 강함)</option>
-                        <option value="Orus">Orus (남성)</option>
-                        <option value="Puck">Puck (남성 밝음)</option>
-                        <option value="Kore">Kore (여성)</option>
-                        <option value="Aoede">Aoede (여성 밝음)</option>
-                        <option value="Leda">Leda (여성 젊음)</option>
-                        <option value="Zephyr">Zephyr (여성 차분)</option>
+                        <optgroup label="남성">
+                            <option value="Charon">Charon (저음 차분)</option>
+                            <option value="Algenib">Algenib (거친 갈라짐)</option>
+                            <option value="Fenrir">Fenrir (격정적)</option>
+                            <option value="Orus">Orus (단단함)</option>
+                            <option value="Alnilam">Alnilam (묵직함)</option>
+                            <option value="Enceladus">Enceladus (숨섞인 저음)</option>
+                            <option value="Iapetus">Iapetus (명료)</option>
+                            <option value="Algieba">Algieba (부드러움)</option>
+                            <option value="Umbriel">Umbriel (느긋함)</option>
+                            <option value="Schedar">Schedar (고른 톤)</option>
+                            <option value="Achird">Achird (친근)</option>
+                            <option value="Zubenelgenubi">Zubenelgenubi (캐주얼)</option>
+                            <option value="Sadachbia">Sadachbia (활기)</option>
+                            <option value="Sadaltager">Sadaltager (지적)</option>
+                            <option value="Rasalgethi">Rasalgethi (아나운서)</option>
+                            <option value="Puck">Puck (밝고 가벼움)</option>
+                        </optgroup>
+                        <optgroup label="여성">
+                            <option value="Kore">Kore (또렷)</option>
+                            <option value="Zephyr">Zephyr (밝음)</option>
+                            <option value="Aoede">Aoede (경쾌)</option>
+                            <option value="Leda">Leda (젊음)</option>
+                            <option value="Callirrhoe">Callirrhoe (느긋)</option>
+                            <option value="Autonoe">Autonoe (밝음)</option>
+                            <option value="Despina">Despina (부드러움)</option>
+                            <option value="Erinome">Erinome (명료)</option>
+                            <option value="Laomedeia">Laomedeia (활기)</option>
+                            <option value="Achernar">Achernar (여림)</option>
+                            <option value="Gacrux">Gacrux (성숙)</option>
+                            <option value="Vindemiatrix">Vindemiatrix (온화)</option>
+                            <option value="Pulcherrima">Pulcherrima (당참)</option>
+                            <option value="Sulafat">Sulafat (따뜻함)</option>
+                        </optgroup>
                     </select>
                 </div>
             </div>
+            <label>목소리 연기 지시 <span class="dbridge_hint">(톤·말투를 프롬프트로 연기시킴 — 체감 차이 큼)</span></label>
+            <input type="text" id="dbridge_livestyle" class="text_pole" autocomplete="off" placeholder="예: 낮고 허스키하게, 나른하고 빈정대는 톤으로, 살짝 웃음기 섞어서" />
             <div class="dbridge_hint"><b>aistudio.google.com/apikey</b>에서 무료 키 발급 (결제등록 불필요). 키가 없으면 /call은 STT+TTS 모드(느림)로 동작. 변경 후 봇 재시작.</div>
+
+            <label>🎭 RVC 변환 서버 URL <span class="dbridge_hint">(통화 목소리를 학습된 목소리로 — 예: 데드풀)</span></label>
+            <input type="text" id="dbridge_rvcurl" class="text_pole" autocomplete="off" placeholder="https://…-rvcserver-api.modal.run (비우면 Live 프리셋 목소리)" />
+            <div class="dbridge_hint">modal.com 무료 크레딧으로 구동. <code>modal deploy modal/rvc_app.py</code> 하고 나온 URL 붙여넣기. 변경 후 봇 재시작.</div>
 
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>

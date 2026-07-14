@@ -998,7 +998,8 @@ const Bot = {
             annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
             personaText,
         }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
-            + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.';
+            + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.'
+            + (config.liveStyle ? `\n- VOICE ACTING — deliver every line in this manner: ${config.liveStyle}` : '');
 
         // 직전 대화 꼬리도 얹어줌 (통화가 채팅 맥락을 이어가게)
         const recent = ChatHistory.getMessages(channelId, 12)
@@ -1008,15 +1009,38 @@ const Bot = {
 
         let userBuf = '';
         let modelBuf = '';
+
+        // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
+        const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
+        let segBuf = []; let segBytes = 0; let playChain = Promise.resolve();
+        const SEG_BYTES = 24000 * 2 * 2; // 24kHz 16bit mono 2초
+        const flushSeg = () => {
+            if (!segBytes) return;
+            const pcm = Buffer.concat(segBuf); segBuf = []; segBytes = 0;
+            const converted = this._rvcConvert(rvcBase, pcm).catch((e) => { console.warn('[RVC] 변환 실패(원음 재생):', e.message); return pcm; });
+            playChain = playChain.then(async () => {
+                const out = await converted;
+                if (VoiceCall.active(channelId)) VoiceCall.playPcm24(channelId, out);
+            }).catch(() => {});
+        };
+
         const live = new GeminiLive({
             apiKey: config.liveApiKey,
             model: config.liveModel || 'gemini-2.5-flash-native-audio-preview-09-2025',
             voiceName: config.liveVoice || 'Charon',
             systemInstruction: sysFull,
-            onAudio: (pcm) => VoiceCall.playPcm24(channelId, pcm),
-            onInterrupted: () => VoiceCall.stopPlayback(channelId),
+            onAudio: (pcm) => {
+                if (!rvcBase) return VoiceCall.playPcm24(channelId, pcm);
+                segBuf.push(pcm); segBytes += pcm.length;
+                if (segBytes >= SEG_BYTES) flushSeg();
+            },
+            onInterrupted: () => {
+                segBuf = []; segBytes = 0; playChain = Promise.resolve();
+                VoiceCall.stopPlayback(channelId);
+            },
             onTurnComplete: () => {
-                VoiceCall.endTurnAudio(channelId);
+                if (rvcBase) { flushSeg(); playChain = playChain.then(() => VoiceCall.endTurnAudio(channelId)); }
+                else VoiceCall.endTurnAudio(channelId);
                 // 통화 내용을 갠톡 기억으로 (자막 누적분 저장)
                 if (userBuf.trim()) ChatHistory.addMessage(channelId, 'user', `📞 ${userBuf.trim()}`);
                 if (modelBuf.trim()) ChatHistory.addMessage(channelId, 'assistant', `📞 ${modelBuf.trim()}`, character.name);
@@ -1027,7 +1051,34 @@ const Bot = {
             onClose: () => VoiceCall.end(channelId, 'Live 연결 종료'),
         });
         await live.connect();
+        // RVC 서버 미리 깨우기 (콜드스타트 수십초 → 인사 전에 시작)
+        if (rvcBase) {
+            const headers = config.rvcToken ? { 'x-auth': config.rvcToken } : {};
+            fetch(`${rvcBase}/warm`, { headers }).then((r) => console.log(`[RVC] 워밍업: ${r.status}`)).catch((e) => console.warn('[RVC] 워밍업 실패:', e.message));
+        }
         return live;
+    },
+
+    // PCM(24k mono)을 WAV로 감싸 Modal RVC에 보내고, 변환된 raw PCM(24k mono)을 받는다
+    async _rvcConvert(base, pcm24k) {
+        if (!base) return pcm24k;
+        const h = Buffer.alloc(44);
+        h.write('RIFF', 0); h.writeUInt32LE(36 + pcm24k.length, 4); h.write('WAVE', 8);
+        h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+        h.writeUInt32LE(24000, 24); h.writeUInt32LE(24000 * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+        h.write('data', 36); h.writeUInt32LE(pcm24k.length, 40);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60_000); // 콜드스타트 포함 여유
+        try {
+            const headers = { 'Content-Type': 'audio/wav' };
+            if (config.rvcToken) headers['x-auth'] = config.rvcToken;
+            const pitch = Number(config.rvcPitch) || 0;
+            const resp = await fetch(`${base}/convert${pitch ? `?pitch=${pitch}` : ''}`, {
+                method: 'POST', headers, body: Buffer.concat([h, pcm24k]), signal: ctrl.signal,
+            });
+            if (!resp.ok) throw new Error(`RVC ${resp.status}`);
+            return Buffer.from(await resp.arrayBuffer());
+        } finally { clearTimeout(timer); }
     },
 
     // 통화 중 유저 발화 1회분: STT → 히스토리 저장 → 응답 생성
