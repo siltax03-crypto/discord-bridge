@@ -13,8 +13,13 @@ import os
 
 import modal
 
-# 데드풀 (Ryan Reynolds) RVC v2 모델 — 다른 목소리 쓰려면 이 URL만 교체
-MODEL_URL = "https://huggingface.co/Cauthess/Deadpool_Marvel/resolve/main/Deadpool%20-%20Marvel%20Saga.zip"
+# 목소리 모델들 — 추가하려면 줄 하나 넣고 `modal deploy modal/rvc_app.py` 다시 (이름: zip URL)
+# 봇에서 /convert?voice=이름 으로 선택. 지정 없으면 DEFAULT_VOICE.
+MODELS = {
+    "deadpool": "https://huggingface.co/Cauthess/Deadpool_Marvel/resolve/main/Deadpool%20-%20Marvel%20Saga.zip",
+    # "ghost": "https://…(고스트 RVC zip URL)…",
+}
+DEFAULT_VOICE = "deadpool"
 # 봇 config.rvcToken과 동일하게 설정하면 남이 URL 알아도 못 씀 (빈값 = 인증 생략)
 AUTH_TOKEN = ""
 
@@ -26,11 +31,13 @@ def _download_model():
 
     import requests
 
-    os.makedirs("/model", exist_ok=True)
-    r = requests.get(MODEL_URL, timeout=600)
-    r.raise_for_status()
-    zipfile.ZipFile(io.BytesIO(r.content)).extractall("/model")
-    print("모델 파일:", glob.glob("/model/**/*.*", recursive=True))
+    for name, url in MODELS.items():
+        dest = f"/model/{name}"
+        os.makedirs(dest, exist_ok=True)
+        r = requests.get(url, timeout=600)
+        r.raise_for_status()
+        zipfile.ZipFile(io.BytesIO(r.content)).extractall(dest)
+        print(f"모델 [{name}]:", glob.glob(f"{dest}/**/*.*", recursive=True))
 
 
 image = (
@@ -53,22 +60,30 @@ class RVCServer:
     def setup(self):
         from rvc_python.infer import RVCInference
 
-        pth = sorted(glob.glob("/model/**/*.pth", recursive=True))
-        idx = sorted(glob.glob("/model/**/*.index", recursive=True))
-        if not pth:
-            raise RuntimeError("모델 .pth를 못 찾음 — MODEL_URL zip 내용 확인")
-        # rvc-python은 models_dir/모델명/파일 구조를 기대 → 심볼릭 구성
-        os.makedirs("/models/voice", exist_ok=True)
-        os.symlink(pth[0], "/models/voice/voice.pth")
-        if idx:
-            os.symlink(idx[0], "/models/voice/voice.index")
+        # rvc-python은 models_dir/모델명/파일 구조를 기대 → 목소리별 심볼릭 구성
+        available = []
+        for name in MODELS:
+            pth = sorted(glob.glob(f"/model/{name}/**/*.pth", recursive=True))
+            idx = sorted(glob.glob(f"/model/{name}/**/*.index", recursive=True))
+            if not pth:
+                print(f"⚠ [{name}] .pth 없음 — zip 내용 확인")
+                continue
+            os.makedirs(f"/models/{name}", exist_ok=True)
+            os.symlink(pth[0], f"/models/{name}/{name}.pth")
+            if idx:
+                os.symlink(idx[0], f"/models/{name}/{name}.index")
+            available.append(name)
+        if not available:
+            raise RuntimeError("사용 가능한 모델이 없음")
         self.rvc = RVCInference(device="cuda:0", models_dir="/models")
-        self.rvc.load_model("voice")
+        self.current = DEFAULT_VOICE if DEFAULT_VOICE in available else available[0]
+        self.available = available
+        self.rvc.load_model(self.current)
         try:
             self.rvc.set_params(f0method="rmvpe", index_rate=0.75, protect=0.33)
         except Exception as e:  # 라이브러리 버전에 따라 파라미터명이 다를 수 있음
             print("set_params 생략:", e)
-        print("RVC 준비 완료:", pth[0])
+        print(f"RVC 준비 완료: {available} (기본 {self.current})")
 
     @modal.asgi_app()
     def api(self):
@@ -86,15 +101,22 @@ class RVCServer:
         def warm(request: Request):
             if not _auth_ok(request):
                 return Response(status_code=401)
-            return {"ok": True}
+            return {"ok": True, "voices": self.available, "current": self.current}
 
         @web.post("/convert")
-        async def convert(request: Request, pitch: int = 0):
+        async def convert(request: Request, pitch: int = 0, voice: str = ""):
             if not _auth_ok(request):
                 return Response(status_code=401)
             body = await request.body()
             if not body:
                 return Response(status_code=400)
+            # 목소리 전환 (요청마다 지정 가능 — 로드된 모델 캐시로 전환 빠름)
+            want = voice or DEFAULT_VOICE
+            if want != self.current:
+                if want not in self.available:
+                    return Response(status_code=404, content=f"unknown voice: {want}".encode())
+                self.rvc.load_model(want)
+                self.current = want
             # 입력 WAV → 임시 파일 → RVC 변환 → 24k mono s16 raw PCM으로 응답
             in_path, out_path = "/tmp/in.wav", "/tmp/out.wav"
             with open(in_path, "wb") as f:

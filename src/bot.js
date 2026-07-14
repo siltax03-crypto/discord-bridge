@@ -927,8 +927,8 @@ const Bot = {
             || (lang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
         const userName = interaction.member?.displayName || interaction.user.username;
 
-        // Gemini Live(실시간): AI Studio 키가 있거나, Vertex 모드(채팅 프로필 키 재사용)면 켜짐
-        const useLive = !!(config.liveApiKey || (config.liveVertex && AIClient.getProfile()?.apiKey));
+        // Gemini Live(실시간): Vertex 키(이미지/채팅 프로필) 또는 AI Studio 키가 있으면 켜짐
+        const useLive = !!this._liveAuth();
         await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${useLive ? ' · Live' : ''})`, ...eph });
 
         // Live 모드: 음성↔음성 실시간. 캐릭터 컨텍스트는 시스템 프롬프트로 주입.
@@ -984,6 +984,17 @@ const Bot = {
         greet();
     },
 
+    // Live 인증 결정: Vertex 기본 (이미지 전용 프로필 > Gemini 채팅 프로필), 없으면 AI Studio 키. 다 없으면 null.
+    _liveAuth() {
+        const isGem = (p) => !!p?.apiKey && (/vertex|google|makersuite/.test(p.api || '') || (p.model || '').includes('gemini'));
+        const imgP = AIClient.getImageProfile();
+        const chatP = AIClient.getProfile();
+        const vp = isGem(imgP) ? imgP : (isGem(chatP) ? chatP : null);
+        if (vp) return { vertex: true, apiKey: vp.apiKey };
+        if (config.liveApiKey) return { vertex: false, apiKey: config.liveApiKey };
+        return null;
+    },
+
     // Gemini Live 클라이언트 생성 + 오디오/자막 배선
     async _startLiveClient(channelId, character, userName) {
         const personaName = this._getPersonaName(channelId);
@@ -1015,25 +1026,26 @@ const Bot = {
 
         // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
         const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
+        // 목소리: 채널별(channels[id].rvcVoice) > 전역(config.rvcVoice) > 서버 기본
+        const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
         let segBuf = []; let segBytes = 0; let playChain = Promise.resolve();
         const SEG_BYTES = 24000 * 2 * 2; // 24kHz 16bit mono 2초
         const flushSeg = () => {
             if (!segBytes) return;
             const pcm = Buffer.concat(segBuf); segBuf = []; segBytes = 0;
-            const converted = this._rvcConvert(rvcBase, pcm).catch((e) => { console.warn('[RVC] 변환 실패(원음 재생):', e.message); return pcm; });
+            const converted = this._rvcConvert(rvcBase, pcm, rvcVoice).catch((e) => { console.warn('[RVC] 변환 실패(원음 재생):', e.message); return pcm; });
             playChain = playChain.then(async () => {
                 const out = await converted;
                 if (VoiceCall.active(channelId)) VoiceCall.playPcm24(channelId, out);
             }).catch(() => {});
         };
 
-        // Vertex 모드: 채팅 프로필의 Vertex 키 재사용 (학습 미사용 약관). 모델명 체계가 달라 기본값도 분리.
-        const useVertex = !!config.liveVertex;
-        const vertexKey = AIClient.getProfile()?.apiKey;
+        // 인증: 기본 Vertex(이미지 전용 프로필 > Gemini 채팅 프로필 — 학습 미사용 약관), 없으면 AI Studio 키
+        const auth = this._liveAuth();
         const live = new GeminiLive({
-            vertex: useVertex,
-            apiKey: useVertex ? (vertexKey || config.liveApiKey) : config.liveApiKey,
-            model: config.liveModel || (useVertex ? 'gemini-live-2.5-flash' : 'gemini-2.5-flash-native-audio-preview-09-2025'),
+            vertex: auth.vertex,
+            apiKey: auth.apiKey,
+            model: config.liveModel || (auth.vertex ? 'gemini-live-2.5-flash' : 'gemini-2.5-flash-native-audio-preview-09-2025'),
             voiceName: config.liveVoice || 'Charon',
             systemInstruction: sysFull,
             onAudio: (pcm) => {
@@ -1067,7 +1079,7 @@ const Bot = {
     },
 
     // PCM(24k mono)을 WAV로 감싸 Modal RVC에 보내고, 변환된 raw PCM(24k mono)을 받는다
-    async _rvcConvert(base, pcm24k) {
+    async _rvcConvert(base, pcm24k, voice = '') {
         if (!base) return pcm24k;
         const h = Buffer.alloc(44);
         h.write('RIFF', 0); h.writeUInt32LE(36 + pcm24k.length, 4); h.write('WAVE', 8);
@@ -1080,7 +1092,11 @@ const Bot = {
             const headers = { 'Content-Type': 'audio/wav' };
             if (config.rvcToken) headers['x-auth'] = config.rvcToken;
             const pitch = Number(config.rvcPitch) || 0;
-            const resp = await fetch(`${base}/convert${pitch ? `?pitch=${pitch}` : ''}`, {
+            const qs = new URLSearchParams();
+            if (pitch) qs.set('pitch', String(pitch));
+            if (voice) qs.set('voice', voice);
+            const q = qs.toString();
+            const resp = await fetch(`${base}/convert${q ? `?${q}` : ''}`, {
                 method: 'POST', headers, body: Buffer.concat([h, pcm24k]), signal: ctrl.signal,
             });
             if (!resp.ok) throw new Error(`RVC ${resp.status}`);

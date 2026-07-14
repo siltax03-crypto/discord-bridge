@@ -20,6 +20,10 @@ const AIClient = {
         return profile;
     },
 
+    getImageProfile() {
+        return imageProfile;
+    },
+
     async sendMessage(messages, options = {}) {
         const api = profile.api || '';
         const model = profile.model || '';
