@@ -90,7 +90,6 @@ async function loadAll() {
             chatSlang: c.chatSlang !== false,
             movieToken: c.movieToken || '',
             openSub: c.openSub || {},
-            liveKeySaved: !!c.liveApiKey,
             liveVoice: c.liveVoice || 'Charon',
             liveStyle: c.liveStyle || '',
             rvcUrl: c.rvcUrl || '',
@@ -209,8 +208,6 @@ function render() {
     $('#dbridge_opensub').val(state.openSub?.apiKey || '');
 
     // Gemini Live (통화)
-    $('#dbridge_livekey').val('')
-        .attr('placeholder', state.liveKeySaved ? '•••••••• (저장됨, 비우면 유지)' : 'AI Studio API 키 (aistudio.google.com/apikey)');
     $('#dbridge_livevoice').val(state.liveVoice || 'Charon');
     $('#dbridge_livestyle').val(state.liveStyle || '');
     $('#dbridge_rvcurl').val(state.rvcUrl || '');
@@ -529,8 +526,6 @@ async function save() {
             rvcUrl: ($('#dbridge_rvcurl').val() || '').trim(),
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
-        const liveKey = ($('#dbridge_livekey').val() || '').trim();
-        if (liveKey) payload.liveApiKey = liveKey;
         const mainTok = ($('#dbridge_token').val() || '').trim();
         if (mainTok) payload.discordToken = mainTok;
         const pbTok = ($('#dbridge_personabot').val() || '').trim();
@@ -540,7 +535,6 @@ async function save() {
         // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
         if (payload.discordToken) state.tokenSaved = true;
         if (payload.personaBotToken) state.personaBotSaved = true;
-        if (payload.liveApiKey) state.liveKeySaved = true;
         for (const c of Object.values(state.channels)) {
             if (c.token) { c.tokenSaved = true; delete c.token; }
         }
@@ -726,11 +720,7 @@ const SETTINGS_HTML = `
             <input type="text" id="dbridge_opensub" class="text_pole" autocomplete="off" placeholder="opensubtitles.com API Key (anonymous면 키만)" />
             <div class="dbridge_hint">opensubtitles.com → 가입 → Consumers → "Allow anonymous downloads" 켜고 키 발급. 비우면 .srt 파일 직접 첨부로만 가능. 변경 후 봇 재시작.</div>
 
-            <label>📞 Gemini Live API 키 <span class="dbridge_hint">(선택 — 기본은 이미지/채팅 프로필의 Vertex 키로 자동 통화. Vertex 프로필이 없을 때만 필요)</span></label>
-            <div class="dbridge_inline">
-                <input type="password" id="dbridge_livekey" class="text_pole" autocomplete="off" />
-                <div class="menu_button" id="dbridge_livekey_eye"><i class="fa-solid fa-eye"></i></div>
-            </div>
+            <label>📞 통화 (Gemini Live) <span class="dbridge_hint">— 이미지/채팅 프로필의 Vertex 키로 자동 연결 (별도 키 불필요)</span></label>
             <div class="dbridge_grid2">
                 <div>
                     <label>Live 목소리</label>
@@ -855,10 +845,6 @@ jQuery(async () => {
     });
     $('#dbridge_token_eye').on('click', () => {
         const $t = $('#dbridge_token');
-        $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
-    });
-    $('#dbridge_livekey_eye').on('click', () => {
-        const $t = $('#dbridge_livekey');
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
     });
     // RVC 목소리 목록/추가 (Modal 서버에 직접 — 재배포 불필요)
