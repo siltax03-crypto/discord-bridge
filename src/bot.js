@@ -1095,6 +1095,9 @@ const Bot = {
             const qs = new URLSearchParams();
             if (pitch) qs.set('pitch', String(pitch));
             if (voice) qs.set('voice', voice);
+            // 발음 보존 다이얼 (선택): index 낮을수록 한국어 발음 유지, protect 높을수록 자음 보존
+            if (config.rvcIndex !== undefined && config.rvcIndex !== '') qs.set('index', String(config.rvcIndex));
+            if (config.rvcProtect !== undefined && config.rvcProtect !== '') qs.set('protect', String(config.rvcProtect));
             const q = qs.toString();
             const resp = await fetch(`${base}/convert${q ? `?${q}` : ''}`, {
                 method: 'POST', headers, body: Buffer.concat([h, pcm24k]), signal: ctrl.signal,

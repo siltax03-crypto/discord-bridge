@@ -59,7 +59,7 @@ const VoiceCall = {
             if (s.recording) return;
             s.recording = true;
             if (s.live) { try { s.live.onUserSpeakStart?.(); } catch { /* 무시 */ } }
-            const silenceMs = s.live ? 300 : 750; // Live는 서버가 문맥을 아니 빨리 끊어도 됨
+            const silenceMs = s.live ? 450 : 750; // 너무 짧으면 말 중간 숨에서 끊겨 조각 발화가 됨
             const opus = receiver.subscribe(uid, { end: { behavior: EndBehaviorType.AfterSilence, duration: silenceMs } });
             const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
             const chunks = [];

@@ -98,9 +98,11 @@ class RVCServer:
         self._tune()
         print(f"RVC 준비 완료: {self.available} (기본 {self.current})")
 
-    def _tune(self):
+    # index_rate 높으면 학습데이터(영어) 발음 특징까지 끌려와 한국어가 외국인 억양이 됨 → 낮게.
+    # protect 높으면 원음의 자음/발성을 보존 (발음 뭉개짐 방지).
+    def _tune(self, index_rate=0.25, protect=0.45):
         try:
-            self.rvc.set_params(f0method="rmvpe", index_rate=0.75, protect=0.33)
+            self.rvc.set_params(f0method="rmvpe", index_rate=index_rate, protect=protect)
         except Exception as e:  # 라이브러리 버전에 따라 파라미터명이 다를 수 있음
             print("set_params 생략:", e)
 
@@ -167,7 +169,7 @@ class RVCServer:
             return {"ok": True, "voices": self.available}
 
         @web.post("/convert")
-        async def convert(request: Request, pitch: int = 0, voice: str = ""):
+        async def convert(request: Request, pitch: int = 0, voice: str = "", index: float = 0.25, protect: float = 0.45):
             if not _auth_ok(request):
                 return Response(status_code=401)
             body = await request.body()
@@ -192,6 +194,8 @@ class RVCServer:
 
                     traceback.print_exc()
                     return Response(status_code=500, content=f"모델 로드 실패({want}): {e}".encode())
+            # 발음 보존 다이얼 적용 (요청별 조절 가능)
+            self._tune(index_rate=index, protect=protect)
             # 입력 WAV → 임시 파일 → RVC 변환 → 24k mono s16 raw PCM으로 응답
             in_path, out_path = "/tmp/in.wav", "/tmp/out.wav"
             with open(in_path, "wb") as f:
