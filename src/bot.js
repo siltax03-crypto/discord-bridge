@@ -927,7 +927,8 @@ const Bot = {
             || (lang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
         const userName = interaction.member?.displayName || interaction.user.username;
 
-        const useLive = !!config.liveApiKey; // AI Studio 키가 있으면 Gemini Live(실시간)로
+        // Gemini Live(실시간): AI Studio 키가 있거나, Vertex 모드(채팅 프로필 키 재사용)면 켜짐
+        const useLive = !!(config.liveApiKey || (config.liveVertex && AIClient.getProfile()?.apiKey));
         await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${useLive ? ' · Live' : ''})`, ...eph });
 
         // Live 모드: 음성↔음성 실시간. 캐릭터 컨텍스트는 시스템 프롬프트로 주입.
@@ -1026,9 +1027,13 @@ const Bot = {
             }).catch(() => {});
         };
 
+        // Vertex 모드: 채팅 프로필의 Vertex 키 재사용 (학습 미사용 약관). 모델명 체계가 달라 기본값도 분리.
+        const useVertex = !!config.liveVertex;
+        const vertexKey = AIClient.getProfile()?.apiKey;
         const live = new GeminiLive({
-            apiKey: config.liveApiKey,
-            model: config.liveModel || 'gemini-2.5-flash-native-audio-preview-09-2025',
+            vertex: useVertex,
+            apiKey: useVertex ? (vertexKey || config.liveApiKey) : config.liveApiKey,
+            model: config.liveModel || (useVertex ? 'gemini-live-2.5-flash' : 'gemini-2.5-flash-native-audio-preview-09-2025'),
             voiceName: config.liveVoice || 'Charon',
             systemInstruction: sysFull,
             onAudio: (pcm) => {

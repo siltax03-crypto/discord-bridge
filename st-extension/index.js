@@ -93,6 +93,7 @@ async function loadAll() {
             liveKeySaved: !!c.liveApiKey,
             liveVoice: c.liveVoice || 'Charon',
             liveStyle: c.liveStyle || '',
+            liveVertex: !!c.liveVertex,
             rvcUrl: c.rvcUrl || '',
             proactive: {
                 enabled: !!p.enabled,
@@ -213,6 +214,7 @@ function render() {
         .attr('placeholder', state.liveKeySaved ? '•••••••• (저장됨, 비우면 유지)' : 'AI Studio API 키 (aistudio.google.com/apikey)');
     $('#dbridge_livevoice').val(state.liveVoice || 'Charon');
     $('#dbridge_livestyle').val(state.liveStyle || '');
+    $('#dbridge_livevertex').prop('checked', !!state.liveVertex);
     $('#dbridge_rvcurl').val(state.rvcUrl || '');
 
     // 선톡
@@ -518,6 +520,7 @@ async function save() {
             openSub: { ...(state.openSub || {}), apiKey: ($('#dbridge_opensub').val() || '').trim() },
             liveVoice: $('#dbridge_livevoice').val() || 'Charon',
             liveStyle: ($('#dbridge_livestyle').val() || '').trim(),
+            liveVertex: $('#dbridge_livevertex').prop('checked'),
             rvcUrl: ($('#dbridge_rvcurl').val() || '').trim(),
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
@@ -764,6 +767,9 @@ const SETTINGS_HTML = `
                     </select>
                 </div>
             </div>
+            <label class="dbridge_check"><input type="checkbox" id="dbridge_livevertex" />
+                <span>Live를 Vertex로 <span class="dbridge_hint">(채팅 프로필의 Vertex 키 재사용 — 통화 내용이 구글 학습에 안 쓰임. AI Studio 키 불필요)</span></span></label>
+
             <label>목소리 연기 지시 <span class="dbridge_hint">(톤·말투를 프롬프트로 연기시킴 — 체감 차이 큼)</span></label>
             <input type="text" id="dbridge_livestyle" class="text_pole" autocomplete="off" placeholder="예: 낮고 허스키하게, 나른하고 빈정대는 톤으로, 살짝 웃음기 섞어서" />
             <div class="dbridge_hint"><b>aistudio.google.com/apikey</b>에서 무료 키 발급 (결제등록 불필요). 키가 없으면 /call은 STT+TTS 모드(느림)로 동작. 변경 후 봇 재시작.</div>

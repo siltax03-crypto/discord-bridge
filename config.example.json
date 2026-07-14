@@ -27,6 +27,7 @@
   "liveModel": "gemini-2.5-flash-native-audio-preview-09-2025",
   "liveVoice": "Charon",
   "liveStyle": "",
+  "liveVertex": false,
   "rvcUrl": "",
   "rvcToken": "",
   "rvcPitch": 0,

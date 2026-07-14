@@ -1,12 +1,11 @@
-// Gemini Live API 클라이언트 (실시간 음성↔음성, AI Studio 키)
+// Gemini Live API 클라이언트 (실시간 음성↔음성)
 // 오디오 IN: PCM 16kHz mono base64 / OUT: PCM 24kHz mono
 // VAD는 수동(activityStart/End) — 디코가 침묵을 전송 안 하므로 서버 자동감지 대신 디코의 말시작/끝 이벤트를 쓴다.
+// vertex:true면 Vertex(aiplatform) 엔드포인트 — 무료 AI Studio와 달리 대화가 구글 학습에 안 쓰임.
 import WebSocket from 'ws';
 
-const HOST = 'generativelanguage.googleapis.com';
-
 class GeminiLive {
-    // opts: { apiKey, model, voiceName, systemInstruction, onAudio(pcm24kBuf), onInterrupted(), onTurnComplete(),
+    // opts: { apiKey, model, voiceName, systemInstruction, vertex, onAudio(pcm24kBuf), onInterrupted(), onTurnComplete(),
     //         onUserText(t), onModelText(t), onError(msg), onClose() }
     constructor(opts) {
         this.o = opts;
@@ -17,7 +16,9 @@ class GeminiLive {
 
     connect() {
         return new Promise((resolve, reject) => {
-            const url = `wss://${HOST}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${this.o.apiKey}`;
+            const url = this.o.vertex
+                ? `wss://aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent?key=${this.o.apiKey}`
+                : `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${this.o.apiKey}`;
             const ws = this.ws = new WebSocket(url);
             let settled = false;
             const fail = (msg) => { if (!settled) { settled = true; reject(new Error(msg)); } try { ws.close(); } catch { /* 무시 */ } };
@@ -25,7 +26,7 @@ class GeminiLive {
             ws.on('open', () => {
                 ws.send(JSON.stringify({
                     setup: {
-                        model: `models/${this.o.model}`,
+                        model: this.o.vertex ? `publishers/google/models/${this.o.model}` : `models/${this.o.model}`,
                         generationConfig: {
                             responseModalities: ['AUDIO'],
                             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.o.voiceName || 'Charon' } } },
