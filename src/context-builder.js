@@ -117,7 +117,6 @@ ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
             crossSummaries = [],
             crossRecent = null,
             meetEnabled = false,
-            voiceNote = false,
         } = options;
         // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
         const charName = charNameOpt || character.name || character.data?.name || 'Character';
@@ -252,13 +251,9 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             : "- Do NOT use ㅋㅋ/ㅎㅎ or excessive emoji. Speak in the character's own voice.";
 
         // 사진 전송은 채팅 모드에서만. 롤플 모드는 이미지 전송 절대 금지.
-        const photoInstruction = (mode === 'rp'
+        const photoInstruction = mode === 'rp'
             ? ''
-            : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.')
-            // 음성메모: 목소리 모델이 영어라 내용은 반드시 영어. 채팅 모드 + 설정된 채널에서만.
-            + ((mode !== 'rp' && voiceNote)
-                ? '\n- You can also send a VOICE MEMO: append [VOICE_NOTE: what you say, in ENGLISH] at the very end. The spoken content MUST be English (your voice model is English) even if the chat is Korean — short and natural like a real voice message (1-3 sentences, casual, emotional). Use it when the user wants to hear your voice, when you miss them, for good-morning/good-night, or just occasionally instead of typing. Do NOT overuse (at most once in a while), and always include a normal text reply too. NEVER type "🎤 (voice memo) ..." as plain text — that marker in history means audio that was ACTUALLY sent; to send one, use the [VOICE_NOTE: ...] tag.'
-                : '');
+            : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
 
         // 하루 일정 — 살아있는 사람처럼 (요일/주말 인식 포함)
         const clock = this._clock(timezone);

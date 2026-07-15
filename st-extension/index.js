@@ -89,7 +89,6 @@ async function loadAll() {
             splitMessages: c.splitMessages !== false,
             chatSlang: c.chatSlang !== false,
             movieToken: c.movieToken || '',
-            rvcUrl: c.rvcUrl || '', // 음성메모 변환 서버 (비우면 기본 서버)
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -110,7 +109,6 @@ async function loadAll() {
         render();
         refreshStatus();
         refreshChannels(); // 디스코드 채널은 느릴 수 있어 별도 로드
-        loadRvcVoices();   // 음성메모 목소리 목록 (콜드스타트면 늦게 채워짐)
     } catch (e) {
         $('#dbridge_status').html(`🔴 플러그인 연결 실패 — ${e.message}`);
         console.error('[DiscordBridge]', e);
@@ -377,11 +375,6 @@ function renderChannelRows() {
                 </div>`;
         }
 
-        // 1:1 채널만: 🎤 음성메모 목소리 (서버에 있는 목소리만 — 목록에서 선택)
-        const voiceField = (!isGroup && !isNpc)
-            ? `<span>🎤목소리</span><input type="text" class="text_pole dbridge_row_rvc" list="dbridge_rvc_list" value="${escapeHtml(conf.rvcVoice || '')}" placeholder="(끔)" style="max-width:100px" />`
-            : '';
-
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
@@ -389,7 +382,6 @@ function renderChannelRows() {
                 ${charField}
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
-                ${voiceField}
                 ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
                 ${groupBox}
@@ -397,22 +389,6 @@ function renderChannelRows() {
             </div>
         `);
         $list.append($row);
-    }
-}
-
-// RVC 목소리 목록 (서버에 실제로 있는 것만 선택 가능하게 datalist 채움 + 저장 검증용)
-const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
-let rvcVoiceList = null; // null = 아직 못 받음
-async function loadRvcVoices() {
-    const base = ((state.rvcUrl || DEFAULT_RVC_URL) + '').trim().replace(/\/+$/, '');
-    try {
-        const r = await fetch(`${base}/warm`);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const d = await r.json();
-        rvcVoiceList = Array.isArray(d.voices) ? d.voices : [];
-        $('#dbridge_rvc_list').html(rvcVoiceList.map((v) => `<option value="${escapeHtml(v)}">`).join(''));
-    } catch (e) {
-        console.warn('[DiscordBridge] RVC 목소리 목록 실패:', e.message);
     }
 }
 
@@ -500,15 +476,6 @@ function syncFromDom() {
                 if (!char) return;
                 const entry = { character: char };
                 if (persona) entry.persona = persona;
-                // 🎤 음성메모 목소리 — 서버에 있는 목소리만 허용 (목록을 받았을 때만 검증)
-                const rvcVoice = ($(this).find('.dbridge_row_rvc').val() || '').trim();
-                if (rvcVoice) {
-                    if (Array.isArray(rvcVoiceList) && !rvcVoiceList.includes(rvcVoice)) {
-                        toastr.warning(`"${rvcVoice}"는 서버에 없는 목소리라 저장에서 뺐어요. 가능한 목소리: ${rvcVoiceList.join(', ') || '(없음)'}`, '음성메모');
-                    } else {
-                        entry.rvcVoice = rvcVoice;
-                    }
-                }
                 channels[chId] = entry;
             }
         });
@@ -588,13 +555,6 @@ const SETTINGS_HTML = `
             <details class="dbridge_changelog">
                 <summary>📋 업데이트 내역</summary>
                 <div class="dbridge_changelog_body">
-                    <b>2026-07-15 — 🎤 음성메모</b>
-                    <ul>
-                        <li>채널 매핑 행의 <b>🎤목소리</b>에 목소리 이름을 넣으면 (목록에서 선택) 캐릭터가 <b>음성메시지</b>를 보낼 수 있어요</li>
-                        <li>"목소리 듣고 싶어" 하면 남겨주고, 보고플 때·굿나잇 등에 가끔 자발적으로도 보냄 (선톡 포함)</li>
-                        <li>대사는 <b>영어</b>로 말해요 (목소리 모델이 영어 학습이라 억양이 자연스러움)</li>
-                        <li>별도 설정 불필요 — 채팅/이미지 프로필의 Gemini(Vertex) 키를 그대로 사용</li>
-                    </ul>
                     <b>2026-07-05 — NPC 단톡</b>
                     <ul>
                         <li>채널 매핑에서 <b>"NPC그룹" 체크 + NPC 이름/아바타 입력</b> (그 채널은 1:1 그대로 유지됨)</li>
@@ -667,8 +627,6 @@ const SETTINGS_HTML = `
                 </div>
                 <div class="dbridge_hint" id="dbridge_channels_note"></div>
                 <div id="dbridge_channel_list"></div>
-                <datalist id="dbridge_rvc_list"></datalist>
-                <div class="dbridge_hint">🎤목소리: 채널에 목소리를 지정하면 캐릭터가 가끔 <b>음성메모</b>(그 목소리, 영어)를 보냅니다. "목소리 듣고 싶어"라고 하면 남겨줘요. 목록에 있는 목소리만 사용 가능.</div>
             </div>
 
             <!-- 멀티봇: 캐릭터(멤버) 목록. 봇 초대된 채널 어디서나 동작 -->
