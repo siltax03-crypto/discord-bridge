@@ -1084,6 +1084,32 @@ const Bot = {
         return live;
     },
 
+    // 음성메모 가능 채널인지: RVC 목소리 지정 + RVC 서버 + TTS용 AI Studio 키
+    _voiceNoteReady(channelId) {
+        const voice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
+        return !!(voice && (config.rvcUrl || '').trim() && config.liveApiKey);
+    },
+
+    // 음성메모 생성: 영어 대사 → Gemini TTS → RVC(캐릭터 목소리) → WAV 첨부 전송
+    async _sendVoiceNote(channel, channelId, character, text) {
+        const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
+        const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
+        await channel.sendTyping().catch(() => {});
+        const pcm = await AIClient.ttsSpeak(text, config.liveVoice || 'Charon');
+        let out = pcm;
+        try { out = await this._rvcConvert(rvcBase, pcm, rvcVoice); }
+        catch (e) { console.warn('[VoiceNote] RVC 실패(원음 사용):', e.message); }
+        const h = Buffer.alloc(44);
+        h.write('RIFF', 0); h.writeUInt32LE(36 + out.length, 4); h.write('WAVE', 8);
+        h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+        h.writeUInt32LE(24000, 24); h.writeUInt32LE(24000 * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+        h.write('data', 36); h.writeUInt32LE(out.length, 40);
+        const file = new AttachmentBuilder(Buffer.concat([h, out]), { name: 'voice-message.wav' });
+        await channel.send({ files: [file] });
+        // 보냈다는 걸 히스토리에 남겨 다음 턴에도 기억하게
+        ChatHistory.addMessage(channelId, 'assistant', `🎤 (voice memo) ${text}`, character.name);
+    },
+
     // PCM(24k mono)을 WAV로 감싸 Modal RVC에 보내고, 변환된 raw PCM(24k mono)을 받는다
     async _rvcConvert(base, pcm24k, voice = '') {
         if (!base) return pcm24k;
@@ -1178,6 +1204,7 @@ const Bot = {
 - This is spoken conversation. Output ONLY the words you actually say out loud.
 - NO *actions*, NO emojis, NO markdown, NO [tags], NO narration, NO stage directions. Voice only.
 - Talk like a real phone call: short and reactive (usually 1-3 sentences). Do not monologue.
+- CRITICAL — this is NOT a stranger or a customer. Everything above (your character sheet, memories, lorebook, recent chat) is YOUR shared history with ${userName}. Speak with the warmth/intimacy/teasing that relationship actually has. Reference shared memories naturally. Cold, curt, assistant-like replies are OUT OF CHARACTER.
 - Natural spoken fillers are good. Laugh in words ("하하"), never typed laughter like "ㅋㅋ".
 - If what they said seems cut off or unclear, react like a real person would on the phone (ask them to repeat, etc.).`;
     },
@@ -2017,6 +2044,7 @@ const Bot = {
             showStatus: multi,
             sheetMember,          // 단체시트 속 "내가 연기할 인물" 이름 (없으면 '')
             charName,             // 멤버 표시 이름
+            voiceNote: this._voiceNoteReady(channelId),
         }) + this._movieContextNote(channelId) + this._npcLinkedNote(channelId);
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -2048,6 +2076,18 @@ const Bot = {
             const emoji = tagBody(reactMatch[0], 'react');
             response = response.replace(reactMatch[0], '').trim();
             if (reactTarget && emoji) reactTarget.react(emoji).catch((e) => console.warn('[Bot] 리액션 실패:', e.message));
+        }
+
+        // [VOICE_NOTE: 영어 대사] 태그 → 음성메모 생성해 첨부 (RVC 목소리 지정 채널만, 롤플 제외)
+        let voiceNoteText = null;
+        const vnMatch = response.match(/\[\s*voice_note\b[^\]]*\]/i);
+        if (vnMatch) {
+            if (mode !== 'rp' && this._voiceNoteReady(channelId)) voiceNoteText = tagBody(vnMatch[0], 'voice_note');
+            response = response.replace(vnMatch[0], '').trim();
+        }
+        if (voiceNoteText) {
+            this._sendVoiceNote(channel, channelId, character, voiceNoteText)
+                .catch((e) => console.warn('[VoiceNote] 실패:', e.message));
         }
 
         // [STATUS: 활동] 태그 → 멀티봇 프로필 상태 갱신
@@ -2931,9 +2971,13 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             // 선톡 사진(이미지 생성 비용) — config에서 켰을 때만, 35% 확률. 롤플 모드는 이미지 금지.
             const photosOn = !!config.proactive?.photos && mode !== 'rp';
             const wantPhoto = photosOn && Math.random() < 0.35;
+            // 선톡 음성메모 — RVC 목소리 채널이면 25% 확률로 텍스트 대신 목소리
+            const wantVoice = !wantPhoto && mode !== 'rp' && this._voiceNoteReady(channelId) && Math.random() < 0.25;
             const fullNote = wantPhoto
                 ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
-                : note;
+                : wantVoice
+                    ? `${note} This time leave a VOICE MEMO instead of just text: append [VOICE_NOTE: what you say, in ENGLISH — short, casual, like a real voice message] at the end. Keep the text part very short (or just an emoji).`
+                    : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
             const personaName = this._getPersonaName(channelId);
@@ -2975,13 +3019,22 @@ ${(movieSession.card.description || '').slice(0, 1500)}
                 response = response.replace(photoMatch[0], '').trim();
             }
 
+            // [VOICE_NOTE] → 음성메모 첨부
+            let voiceNoteText = null;
+            const vnMatch = response.match(/\[\s*voice_note\b\s*:?\s*([^\]]+)\]/is);
+            if (vnMatch) {
+                if (mode !== 'rp' && this._voiceNoteReady(channelId)) voiceNoteText = vnMatch[1].trim();
+                response = response.replace(vnMatch[0], '').trim();
+            }
+
             // 선톡(단일봇 경로): STATUS/REMIND 태그는 제거만 (선톡은 리마인더 새로 안 만듦)
             response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, '').trim();
             response = response.replace(/\[REMIND:\s*([^|\]]+)\|([^\]]+)\]/gs, '').trim();
-            if (!response && !photoPrompt) return; // 보낼 게 없으면 중단
+            if (!response && !photoPrompt && !voiceNoteText) return; // 보낼 게 없으면 중단
 
-            ChatHistory.addMessage(channelId, 'assistant', response, charName);
-            await this._sendResponse(channel, character, response, photoPrompt);
+            if (response) ChatHistory.addMessage(channelId, 'assistant', response, charName);
+            if (response || photoPrompt) await this._sendResponse(channel, character, response, photoPrompt);
+            if (voiceNoteText) await this._sendVoiceNote(channel, channelId, character, voiceNoteText).catch((e) => console.warn('[VoiceNote] 선톡 실패:', e.message));
             console.log(`[Bot] 선톡 전송: 채널 ${channelId}`);
         } catch (e) {
             console.error('[Bot] 선톡 실패:', e.message);

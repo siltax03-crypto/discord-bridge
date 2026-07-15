@@ -266,6 +266,31 @@ const AIClient = {
         return this.sendMessage(modified, options);
     },
 
+    // 음성메모 TTS: 텍스트 → PCM(24kHz mono s16le) Buffer. AI Studio 키 필요 (Gemini TTS 모델).
+    async ttsSpeak(text, voiceName = 'Charon') {
+        const apiKey = config.liveApiKey;
+        if (!apiKey) throw new Error('음성메모에는 AI Studio 키(liveApiKey)가 필요해요');
+        const model = config.ttsModel || 'gemini-2.5-flash-preview-tts';
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text }] }],
+                generationConfig: {
+                    responseModalities: ['AUDIO'],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+                },
+            }),
+        });
+        if (!resp.ok) throw new Error(`TTS 오류 (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
+        const data = await resp.json();
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const b64 = parts.find((p) => p.inlineData?.data)?.inlineData?.data;
+        if (!b64) throw new Error('TTS 응답에 오디오 없음');
+        return Buffer.from(b64, 'base64'); // PCM 24k mono s16le
+    },
+
     // 통화 STT: WAV(base64) → 텍스트. Gemini 멀티모달 사용 (이미지 프로필 우선, 없으면 채팅 프로필이 Gemini일 때)
     async transcribeAudio(base64Wav, mimeType = 'audio/wav') {
         const p = imageProfile
