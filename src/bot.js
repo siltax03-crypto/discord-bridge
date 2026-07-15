@@ -1013,8 +1013,9 @@ const Bot = {
         // 목소리 지정 + RVC 엔진일 때만 — 복제(clone) 엔진은 텍스트 기반이라 실시간 통화엔 못 씀(Live 원음 사용).
         const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
         const rvcBase = (rvcVoice && this._voiceEngine() === 'rvc') ? this._rvcUrl() : '';
-        // 통화 언어: 채널 언어 기본. RVC(영어 모델) 억양을 살리고 싶을 때만 callLanguage='en'으로.
-        const callLang = config.callLanguage || Langs.get(channelId, config.language || 'ko');
+        // 통화 언어: RVC 목소리를 입히면 영어 고정 (목소리 모델이 영어라 한국어는 억양이 깨짐).
+        // 목소리 안 씌우면 Live 원음이라 채널 언어 그대로. config.callLanguage로 강제 가능.
+        const callLang = config.callLanguage || (rvcBase ? 'en' : Langs.get(channelId, config.language || 'ko'));
 
         const sys = ContextBuilder.build(character, {
             userName: effUserName,
@@ -3065,7 +3066,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             const fullNote = wantPhoto
                 ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
                 : wantVoice
-                    ? `${note} This time leave a VOICE MEMO instead of just text: append [VOICE_NOTE: what you say${this._voiceNoteLang(channelId) === 'en' ? ', in ENGLISH' : ''} — short, casual, like a real voice message] at the end. Keep the text part very short (or just an emoji).`
+                    ? `${note} This time leave a VOICE MEMO instead of just text: append [VOICE_NOTE: what you say, in ENGLISH — short, casual, like a real voice message] at the end. Keep the text part very short (or just an emoji).`
                     : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
