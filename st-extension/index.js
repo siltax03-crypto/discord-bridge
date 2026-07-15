@@ -384,9 +384,12 @@ function renderChannelRows() {
                 </div>`;
         }
 
-        // 통화(1:1) 채널만: RVC 목소리 지정 (비우면 기본 목소리/프리셋)
+        // 통화(1:1) 채널만: RVC 목소리 지정 — 행 아래 별도 줄 + 진짜 드롭다운 (전체 목록 항상 보임)
         const voiceField = (!isGroup && !isNpc)
-            ? `<span>📞목소리</span><input type="text" class="text_pole dbridge_row_rvc" list="dbridge_rvc_list" value="${escapeHtml(conf.rvcVoice || '')}" placeholder="(기본)" style="max-width:100px" />`
+            ? `<div style="width:100%;display:flex;gap:8px;align-items:center;padding-left:1em">
+                   <span class="dbridge_hint" style="white-space:nowrap">🎤 목소리 (통화·음성메모)</span>
+                   <select class="text_pole dbridge_row_rvc" style="max-width:200px">${rvcVoiceOptions(conf.rvcVoice || '')}</select>
+               </div>`
             : '';
 
         const $row = $(`
@@ -396,15 +399,31 @@ function renderChannelRows() {
                 ${charField}
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
-                ${voiceField}
                 ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
+                ${voiceField}
                 ${groupBox}
                 ${npcBox}
             </div>
         `);
         $list.append($row);
     }
+}
+
+// 서버에서 받아온 RVC 목소리 목록 (없으면 현재 값만이라도 보이게)
+let rvcVoicesArr = null;
+function rvcVoiceOptions(cur) {
+    const names = [...new Set([...(rvcVoicesArr || []), ...(cur ? [cur] : [])])];
+    return '<option value="">(안 씀)</option>'
+        + names.map((v) => `<option value="${escapeHtml(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(v)}</option>`).join('')
+        + (rvcVoicesArr === null ? '<option value="" disabled>(목록 로딩 전 — 🔄)</option>' : '');
+}
+// 목록 갱신 시 이미 그려진 드롭다운들도 제자리에서 갱신
+function refreshVoiceSelects() {
+    $('.dbridge_row_rvc').each(function () {
+        const cur = $(this).val() || '';
+        $(this).html(rvcVoiceOptions(cur)).val(cur);
+    });
 }
 
 // 화면 → state 동기화 (저장 직전 호출)
@@ -810,7 +829,7 @@ jQuery(async () => {
     });
     // RVC 목소리 목록/추가 (Modal 서버에 직접 — 재배포 불필요)
     async function rvcVoiceList() {
-        const base = ($('#dbridge_rvcurl').val() || '').trim().replace(/\/+$/, '');
+        const base = (($('#dbridge_rvcurl').val() || state.rvcUrl || '') + '').trim().replace(/\/+$/, '');
         if (!base) { $('#dbridge_rvc_voicelist').text('먼저 RVC 서버 URL을 입력하세요.'); return; }
         $('#dbridge_rvc_voicelist').text('목소리 목록 불러오는 중... (서버가 자고 있으면 ~30초)');
         try {
@@ -818,13 +837,15 @@ jQuery(async () => {
             if (!r.ok) throw new Error(`HTTP ${r.status}`);
             const d = await r.json();
             const vs = d.voices || [];
-            $('#dbridge_rvc_voicelist').text(`목소리: ${vs.join(', ') || '(없음)'} — 채널 행 "📞목소리" 칸에 이름 입력`);
-            $('#dbridge_rvc_list').html(vs.map((v) => `<option value="${escapeHtml(v)}">`).join(''));
+            rvcVoicesArr = vs;
+            $('#dbridge_rvc_voicelist').text(`목소리: ${vs.join(', ') || '(없음)'} — 채널 행 "🎤 목소리"에서 선택`);
+            refreshVoiceSelects();
         } catch (e) {
             $('#dbridge_rvc_voicelist').text(`목소리 목록 실패: ${e.message}`);
         }
     }
     $('#dbridge_rvc_vrefresh').on('click', rvcVoiceList);
+    setTimeout(rvcVoiceList, 1500); // config 로드 후 자동 (콜드스타트면 늦게 채워짐)
     $('#dbridge_rvc_vadd').on('click', async () => {
         const base = ($('#dbridge_rvcurl').val() || '').trim().replace(/\/+$/, '');
         const name = ($('#dbridge_rvc_vname').val() || '').trim();
