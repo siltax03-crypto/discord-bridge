@@ -20,6 +20,49 @@ const AIClient = {
         return profile;
     },
 
+    getImageProfile() {
+        return imageProfile;
+    },
+
+    // 음성메모 TTS 가능 여부 (Vertex 프로필 또는 AI Studio 키)
+    canTts() {
+        const isGem = (p) => !!p?.apiKey && (/vertex|google|makersuite/.test(p.api || '') || (p.model || '').includes('gemini'));
+        return isGem(imageProfile) || isGem(profile) || !!config.liveApiKey;
+    },
+
+    // 음성메모 TTS: 텍스트 → PCM(24kHz mono s16le) Buffer.
+    // Vertex 우선(이미지 전용 프로필 > Gemini 채팅 프로필 키 — 별도 키 불필요), 없으면 AI Studio 키(liveApiKey).
+    async ttsSpeak(text, voiceName = 'Charon') {
+        const isGem = (p) => !!p?.apiKey && (/vertex|google|makersuite/.test(p.api || '') || (p.model || '').includes('gemini'));
+        const vp = isGem(imageProfile) ? imageProfile : (isGem(profile) ? profile : null);
+        const model = config.ttsModel || 'gemini-2.5-flash-preview-tts';
+        let url;
+        if (vp) {
+            url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent?key=${vp.apiKey}`;
+        } else if (config.liveApiKey) {
+            url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.liveApiKey}`;
+        } else {
+            throw new Error('음성메모 TTS에 쓸 Gemini 키가 없어요 (Vertex 프로필 또는 liveApiKey)');
+        }
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ role: 'user', parts: [{ text }] }],
+                generationConfig: {
+                    responseModalities: ['AUDIO'],
+                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+                },
+            }),
+        });
+        if (!resp.ok) throw new Error(`TTS 오류 (${resp.status}): ${(await resp.text()).slice(0, 200)}`);
+        const data = await resp.json();
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        const b64 = parts.find((p) => p.inlineData?.data)?.inlineData?.data;
+        if (!b64) throw new Error('TTS 응답에 오디오 없음');
+        return Buffer.from(b64, 'base64'); // PCM 24k mono s16le
+    },
+
     async sendMessage(messages, options = {}) {
         const api = profile.api || '';
         const model = profile.model || '';
