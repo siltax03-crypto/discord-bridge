@@ -25,6 +25,9 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 // clone : zero-shot 복제 (참조 음성 몇 초 → 그 목소리로 바로 말함). 학습 불필요 + 한국어 네이티브.
 const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
 const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-cloneserver-api.modal.run';
+// 음성메모: 파일명 + 기억에 남기는 접두어 (purge/삭제 동기화가 이걸로 찾는다)
+const VOICE_MEMO_FILE = 'voice-message.wav';
+const VOICE_MEMO_PREFIX = '🎤 (voice memo)';
 
 let config = {};
 const clients = [];              // 기동된 모든 Client
@@ -636,7 +639,12 @@ const Bot = {
             let synced = 0;
             for (const m of deleted.values()) {
                 const c = (m.content || '').trim();
-                if (c && ChatHistory.removeByContent(channelId, c)) synced++;
+                if (c) {
+                    if (ChatHistory.removeByContent(channelId, c)) synced++;
+                } else if (this._isVoiceMemoMsg(m)) {
+                    // 음성메모는 본문이 없어 내용 매칭 불가 → 🎤 기록을 최근 것부터 제거
+                    if (ChatHistory.removeLastByPrefix(channelId, VOICE_MEMO_PREFIX)) synced++;
+                }
             }
             const old = n - deleted.size;
             return interaction.editReply(`🧹 디코 ${deleted.size}개 삭제 + 기억 ${synced}개 정리 완료.${old > 0 ? `\n※ ${old}개는 14일이 지나 일괄삭제가 안 돼요 (개별 삭제만 가능).` : ''}`);
@@ -1141,7 +1149,10 @@ const Bot = {
     // 음성메모 생성 → 캐릭터 웹훅으로 WAV 첨부 전송
     //   clone: 텍스트 → 복제서버가 그 목소리로 바로 생성
     //   rvc  : 텍스트 → Gemini TTS → RVC로 음색 변환
-    async _sendVoiceNote(channel, channelId, character, text) {
+    async _sendVoiceNote(channel, channelId, character, rawText) {
+        // 지문/괄호/기호는 TTS가 그대로 읽어버리므로 말할 것만 남긴다
+        const text = this._cleanForSpeech(rawText);
+        if (!text) { console.warn('[VoiceNote] 정리 후 말할 내용 없음 — 스킵'); return; }
         const engine = this._voiceEngine();
         const voice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
         await channel.sendTyping().catch(() => {});
@@ -1164,13 +1175,13 @@ const Bot = {
         h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
         h.writeUInt32LE(24000, 24); h.writeUInt32LE(24000 * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
         h.write('data', 36); h.writeUInt32LE(out.length, 40);
-        const file = new AttachmentBuilder(Buffer.concat([h, out]), { name: 'voice-message.wav' });
+        const file = new AttachmentBuilder(Buffer.concat([h, out]), { name: VOICE_MEMO_FILE });
         // 일반 답장과 동일하게 캐릭터 웹훅(이름/아바타)으로 전송 (멀티봇은 봇 본인)
         const webhook = config.botMode === 'multi' ? null : await this._getWebhook(channel, character).catch(() => null);
         if (webhook) await webhook.send({ username: character.name || 'Character', files: [file] });
         else await channel.send({ files: [file] });
         // 보냈다는 걸 히스토리에 남겨 다음 턴에도 기억하게
-        ChatHistory.addMessage(channelId, 'assistant', `🎤 (voice memo) ${text}`, character.name);
+        ChatHistory.addMessage(channelId, 'assistant', `${VOICE_MEMO_PREFIX} ${text}`, character.name);
     },
 
     // 음성 복제(zero-shot): 텍스트 → 그 목소리의 raw PCM(24k mono). 학습 없이 참조 샘플로 바로 생성.
@@ -1291,17 +1302,21 @@ const Bot = {
 - If what they said seems cut off or unclear, react like a real person would on the phone (ask them to repeat, etc.).`;
     },
 
-    // TTS로 읽을 수 있게 정리: 태그/마크다운/행동지문/이모지 제거
+    // TTS로 읽을 수 있게 정리: 태그/마크다운/행동지문/이모지 제거.
+    // TTS는 글자를 그대로 읽으므로 지문류는 프롬프트로 막지 말고 여기서 확실히 지운다.
     _cleanForSpeech(text) {
         if (!text) return '';
         return text
+            .replace(/```[\s\S]*?```/g, ' ')        // 코드블록
+            .replace(/\([^)]*\)/g, ' ')             // (행동지문) — 괄호 안은 안 읽음
+            .replace(/（[^）]*）/g, ' ')             // 전각 괄호
             .replace(/\[[^\]]*\]/g, ' ')            // [태그]
             .replace(/\*[^*]*\*/g, ' ')             // *행동지문*
-            .replace(/```[\s\S]*?```/g, ' ')        // 코드블록
-            .replace(/[`_~#>|]/g, ' ')              // 마크다운 기호
             .replace(/https?:\/\/\S+/g, ' ')        // URL
+            .replace(/[`_~#>|*[\]()]/g, ' ')        // 짝 안 맞고 남은 기호
             .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, ' ') // 이모지
             .replace(/ㅋ{2,}|ㅎ{2,}/g, ' 하하 ')     // 타이핑 웃음 → 말 웃음
+            .replace(/\s+([,.!?])/g, '$1')          // 지운 자리에 생긴 " ," 정리
             .replace(/\s+/g, ' ')
             .trim();
     },
@@ -3168,10 +3183,26 @@ ${(movieSession.card.description || '').slice(0, 1500)}
         // 내용으로 매칭해 그 메시지를 히스토리에서 제거 (유저/페르소나/캐릭터 버블 모두)
         // 캐시 안 된 옛 메시지는 content가 없어 매칭 불가 → 조용히 스킵
         const content = (message.content || '').trim();
-        if (!content) return;
+        if (!content) {
+            // 음성메모는 본문 없이 첨부만 있어 매칭 불가 → 🎤 기록으로 정리
+            if (this._isVoiceMemoMsg(message) && ChatHistory.removeLastByPrefix(message.channelId, VOICE_MEMO_PREFIX)) {
+                console.log(`[Bot] 음성메모 삭제 동기화: 채널 ${message.channelId}`);
+            }
+            return;
+        }
         if (ChatHistory.removeByContent(message.channelId, content)) {
             console.log(`[Bot] 메시지 삭제 동기화: 채널 ${message.channelId}`);
         }
+    },
+
+    // 이 디코 메시지가 음성메모인가 (본문 없이 voice-message.wav 첨부)
+    _isVoiceMemoMsg(message) {
+        try {
+            for (const a of message.attachments?.values?.() || []) {
+                if ((a.name || '') === VOICE_MEMO_FILE) return true;
+            }
+        } catch { /* 캐시 안 된 메시지 */ }
+        return false;
     },
 
     async stop() {

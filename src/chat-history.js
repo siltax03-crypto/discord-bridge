@@ -103,6 +103,21 @@ const ChatHistory = {
 
     // 내용이 일치하는 가장 최근 메시지 1개 제거 (디코에서 메시지를 지웠을 때 동기화용)
     // 분할 전송된 봇 메시지의 한 조각만 지운 경우 그 묶음 전체를 제거.
+    // 접두어로 시작하는 가장 최근 메시지 1개 삭제.
+    // 첨부파일만 있는 메시지(음성메모 등)는 본문 매칭이 안 돼서 이걸로 정리한다.
+    removeLastByPrefix(channelId, prefix) {
+        const data = this._load(channelId);
+        for (let i = data.messages.length - 1; i >= 0; i--) {
+            const c = (data.messages[i].content || '').trim();
+            if (typeof c === 'string' && c.startsWith(prefix)) {
+                data.messages.splice(i, 1);
+                this._save(channelId, data);
+                return true;
+            }
+        }
+        return false;
+    },
+
     removeByContent(channelId, content) {
         const target = (content || '').trim();
         if (!target) return false;
