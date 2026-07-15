@@ -20,8 +20,11 @@ import GeminiLive from './voice-live.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 배포판 기본 RVC 목소리 변환 서버 (config.rvcUrl로 교체 가능)
+// 목소리 서버 기본값 (config.rvcUrl / config.cloneUrl로 교체 가능)
+// rvc   : 미리 학습된 모델로 음색 변환 (Gemini TTS → 변환). 정교하지만 학습 언어 억양이 묻어남.
+// clone : zero-shot 복제 (참조 음성 몇 초 → 그 목소리로 바로 말함). 학습 불필요 + 한국어 네이티브.
 const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
+const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-cloneserver-api.modal.run';
 
 let config = {};
 const clients = [];              // 기동된 모든 Client
@@ -1006,10 +1009,10 @@ const Bot = {
         const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
         const effUserName = personaName || userName;
 
-        // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
-        // 채널에 📞목소리(rvcVoice)를 지정한 통화만 변환 — 빈칸이면 Live 원음 그대로 (한국어는 원음이 나음)
+        // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생.
+        // 목소리 지정 + RVC 엔진일 때만 — 복제(clone) 엔진은 텍스트 기반이라 실시간 통화엔 못 씀(Live 원음 사용).
         const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
-        const rvcBase = rvcVoice ? this._rvcUrl() : '';
+        const rvcBase = (rvcVoice && this._voiceEngine() === 'rvc') ? this._rvcUrl() : '';
         // 통화 언어: 채널 언어 기본. RVC(영어 모델) 억양을 살리고 싶을 때만 callLanguage='en'으로.
         const callLang = config.callLanguage || Langs.get(channelId, config.language || 'ko');
 
@@ -1092,41 +1095,68 @@ const Bot = {
         return ((config.rvcUrl || DEFAULT_RVC_URL) + '').trim().replace(/\/+$/, '');
     },
 
-    // 서버에 실제로 있는 목소리 목록 (10분 캐시) — 없는 목소리는 변환 안 함
+    // 음성 복제(zero-shot) 서버 주소
+    _cloneUrl() {
+        return ((config.cloneUrl || DEFAULT_CLONE_URL) + '').trim().replace(/\/+$/, '');
+    },
+
+    // 목소리 엔진: 'clone'(zero-shot, 한국어 OK) | 'rvc'(학습모델 변환). 기본 rvc(기존 동작 유지)
+    _voiceEngine() {
+        return config.voiceEngine === 'clone' ? 'clone' : 'rvc';
+    },
+
+    // 현재 엔진 서버에 실제로 있는 목소리 목록 (10분 캐시) — 없는 목소리는 변환/생성 안 함
     async _rvcVoices() {
+        const engine = this._voiceEngine();
         const now = Date.now();
-        if (this._rvcVoicesCache && now - this._rvcVoicesCache.ts < 600_000) return this._rvcVoicesCache.list;
+        const c = this._rvcVoicesCache;
+        if (c && c.engine === engine && now - c.ts < 600_000) return c.list;
+        const base = engine === 'clone' ? this._cloneUrl() : this._rvcUrl();
         try {
-            const resp = await fetch(`${this._rvcUrl()}/warm`, { signal: AbortSignal.timeout(60_000) });
+            const resp = await fetch(`${base}/warm`, { signal: AbortSignal.timeout(90_000) });
             const d = await resp.json();
             const list = Array.isArray(d.voices) ? d.voices : [];
-            this._rvcVoicesCache = { list, ts: now };
+            this._rvcVoicesCache = { list, ts: now, engine };
             return list;
         } catch (e) {
-            console.warn('[RVC] 목소리 목록 조회 실패:', e.message);
-            return this._rvcVoicesCache?.list || [];
+            console.warn(`[Voice:${engine}] 목소리 목록 조회 실패:`, e.message);
+            return (c && c.engine === engine && c.list) || [];
         }
     },
 
-    // 음성메모 가능 채널인지: RVC 목소리 지정 + TTS 가능한 Gemini 키(Vertex 프로필 또는 liveApiKey)
+    // 음성메모 가능 채널인지: 목소리 지정 필수. RVC는 Gemini TTS 키도 필요(복제는 서버가 다 함).
     _voiceNoteReady(channelId) {
         const voice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
-        return !!(voice && AIClient.canTts());
+        if (!voice) return false;
+        return this._voiceEngine() === 'clone' ? true : AIClient.canTts();
     },
 
-    // 음성메모 생성: 영어 대사 → Gemini TTS → RVC(캐릭터 목소리) → WAV 첨부 전송
+    // 복제 엔진이면 대사 언어 제한 없음(한국어 네이티브), RVC면 영어 (학습 언어)
+    _voiceNoteLang(channelId) {
+        if (this._voiceEngine() !== 'clone') return 'en';
+        return config.voiceNoteLang || Langs.get(channelId, config.language || 'ko');
+    },
+
+    // 음성메모 생성 → 캐릭터 웹훅으로 WAV 첨부 전송
+    //   clone: 텍스트 → 복제서버가 그 목소리로 바로 생성
+    //   rvc  : 텍스트 → Gemini TTS → RVC로 음색 변환
     async _sendVoiceNote(channel, channelId, character, text) {
-        const rvcBase = this._rvcUrl();
-        const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
+        const engine = this._voiceEngine();
+        const voice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
         await channel.sendTyping().catch(() => {});
-        const pcm = await AIClient.ttsSpeak(text, config.liveVoice || 'Charon');
-        let out = pcm;
         const voices = await this._rvcVoices();
-        if (!voices.includes(rvcVoice)) {
-            console.warn(`[VoiceNote] 서버에 없는 목소리 "${rvcVoice}" → 변환 생략 (있는 목소리: ${voices.join(', ')})`);
+        let out;
+        if (engine === 'clone') {
+            if (!voices.includes(voice)) throw new Error(`복제서버에 없는 목소리 "${voice}" (있는 목소리: ${voices.join(', ') || '없음'})`);
+            out = await this._cloneSpeak(voice, text, this._voiceNoteLang(channelId));
         } else {
-            try { out = await this._rvcConvert(rvcBase, pcm, rvcVoice); }
-            catch (e) { console.warn('[VoiceNote] RVC 실패(원음 사용):', e.message); }
+            out = await AIClient.ttsSpeak(text, config.liveVoice || 'Charon');
+            if (!voices.includes(voice)) {
+                console.warn(`[VoiceNote] 서버에 없는 목소리 "${voice}" → 변환 생략 (있는 목소리: ${voices.join(', ')})`);
+            } else {
+                try { out = await this._rvcConvert(this._rvcUrl(), out, voice); }
+                catch (e) { console.warn('[VoiceNote] RVC 실패(원음 사용):', e.message); }
+            }
         }
         const h = Buffer.alloc(44);
         h.write('RIFF', 0); h.writeUInt32LE(36 + out.length, 4); h.write('WAVE', 8);
@@ -1140,6 +1170,25 @@ const Bot = {
         else await channel.send({ files: [file] });
         // 보냈다는 걸 히스토리에 남겨 다음 턴에도 기억하게
         ChatHistory.addMessage(channelId, 'assistant', `🎤 (voice memo) ${text}`, character.name);
+    },
+
+    // 음성 복제(zero-shot): 텍스트 → 그 목소리의 raw PCM(24k mono). 학습 없이 참조 샘플로 바로 생성.
+    async _cloneSpeak(voice, text, lang = 'ko') {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 180_000); // 콜드스타트(모델 로드) 포함
+        try {
+            const qs = new URLSearchParams({ voice, lang });
+            if (config.cloneExaggeration) qs.set('exaggeration', String(config.cloneExaggeration));
+            if (config.cloneCfg) qs.set('cfg', String(config.cloneCfg));
+            const resp = await fetch(`${this._cloneUrl()}/speak?${qs}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: Buffer.from(text, 'utf-8'),
+                signal: ctrl.signal,
+            });
+            if (!resp.ok) throw new Error(`복제 ${resp.status}: ${(await resp.text().catch(() => '')).slice(0, 150)}`);
+            return Buffer.from(await resp.arrayBuffer());
+        } finally { clearTimeout(timer); }
     },
 
     // PCM(24k mono)을 WAV로 감싸 Modal RVC에 보내고, 변환된 raw PCM(24k mono)을 받는다
@@ -2076,7 +2125,7 @@ const Bot = {
             showStatus: multi,
             sheetMember,          // 단체시트 속 "내가 연기할 인물" 이름 (없으면 '')
             charName,             // 멤버 표시 이름
-            voiceNote: this._voiceNoteReady(channelId),
+            voiceNote: this._voiceNoteReady(channelId) && this._voiceNoteLang(channelId),
         }) + this._movieContextNote(channelId) + this._npcLinkedNote(channelId);
 
         const history = ChatHistory.toAPIMessages(channelId, config.maxHistoryMessages);
@@ -3016,7 +3065,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             const fullNote = wantPhoto
                 ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
                 : wantVoice
-                    ? `${note} This time leave a VOICE MEMO instead of just text: append [VOICE_NOTE: what you say, in ENGLISH — short, casual, like a real voice message] at the end. Keep the text part very short (or just an emoji).`
+                    ? `${note} This time leave a VOICE MEMO instead of just text: append [VOICE_NOTE: what you say${this._voiceNoteLang(channelId) === 'en' ? ', in ENGLISH' : ''} — short, casual, like a real voice message] at the end. Keep the text part very short (or just an emoji).`
                     : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)

@@ -93,6 +93,8 @@ async function loadAll() {
             liveStyle: c.liveStyle || '',
             rvcUrl: c.rvcUrl || '',
             rvcToken: c.rvcToken || '', // 목소리 추가(add_voice) 토큰 — config.json에서만 설정
+            voiceEngine: c.voiceEngine === 'clone' ? 'clone' : 'rvc',
+            cloneUrl: c.cloneUrl || '',
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -210,6 +212,10 @@ function render() {
     // 통화 (Live/RVC)
     $('#dbridge_livestyle').val(state.liveStyle || '');
     $('#dbridge_rvcurl').val(state.rvcUrl || '');
+    $('#dbridge_cloneurl').val(state.cloneUrl || '');
+    $(`input[name="dbridge_vengine"][value="${state.voiceEngine || 'rvc'}"]`).prop('checked', true);
+    $('#dbridge_engine_rvc').toggle(state.voiceEngine !== 'clone');
+    $('#dbridge_engine_clone').toggle(state.voiceEngine === 'clone');
 
     // 선톡
     const p = state.proactive;
@@ -541,6 +547,8 @@ async function save() {
             openSub: { ...(state.openSub || {}), apiKey: ($('#dbridge_opensub').val() || '').trim() },
             liveStyle: ($('#dbridge_livestyle').val() || '').trim(),
             rvcUrl: ($('#dbridge_rvcurl').val() || '').trim(),
+            voiceEngine: $('input[name="dbridge_vengine"]:checked').val() || 'rvc',
+            cloneUrl: ($('#dbridge_cloneurl').val() || '').trim(),
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const mainTok = ($('#dbridge_token').val() || '').trim();
@@ -555,6 +563,8 @@ async function save() {
         state.openSub = payload.openSub;
         state.liveStyle = payload.liveStyle;
         state.rvcUrl = payload.rvcUrl;
+        state.voiceEngine = payload.voiceEngine;
+        state.cloneUrl = payload.cloneUrl;
         if (payload.discordToken) state.tokenSaved = true;
         if (payload.personaBotToken) state.personaBotSaved = true;
         for (const c of Object.values(state.channels)) {
@@ -746,16 +756,39 @@ const SETTINGS_HTML = `
             <input type="text" id="dbridge_livestyle" class="text_pole" autocomplete="off" placeholder="예: 낮고 허스키하게, 나른하고 빈정대는 톤으로, 살짝 웃음기 섞어서" />
             <div class="dbridge_hint"><b>aistudio.google.com/apikey</b>에서 무료 키 발급 (결제등록 불필요). 키가 없으면 /call은 STT+TTS 모드(느림)로 동작. 변경 후 봇 재시작.</div>
 
-            <label>🎭 RVC 변환 서버 URL <span class="dbridge_hint">(통화 목소리를 학습된 목소리로 — 예: 데드풀)</span></label>
-            <input type="text" id="dbridge_rvcurl" class="text_pole" autocomplete="off" placeholder="https://…-rvcserver-api.modal.run (비우면 Live 프리셋 목소리)" />
-            <div class="dbridge_inline" style="margin-top:4px">
-                <input type="text" id="dbridge_rvc_vname" class="text_pole" autocomplete="off" placeholder="이름 (예: ghost)" style="max-width:110px" />
-                <input type="text" id="dbridge_rvc_vurl" class="text_pole" autocomplete="off" placeholder="RVC 모델 zip URL (voice-models.com 등에서 복사)" />
-                <div class="menu_button" id="dbridge_rvc_vadd" style="width:auto;white-space:nowrap">＋ 목소리</div>
-                <div class="menu_button" id="dbridge_rvc_vrefresh" title="목소리 목록 새로고침" style="width:auto;white-space:nowrap">🔄</div>
+            <label>🎙 목소리 엔진 <span class="dbridge_hint">(통화·음성메모에 쓸 목소리를 만드는 방식)</span></label>
+            <label class="dbridge_check"><input type="radio" name="dbridge_vengine" value="rvc" />
+                <span>🎭 <b>RVC 변환</b> <span class="dbridge_hint">— 학습된 모델(zip)로 음색 변환. 재현 정교하지만 <b>영어 전용</b>(한국어는 외국인 억양).</span></span></label>
+            <label class="dbridge_check"><input type="radio" name="dbridge_vengine" value="clone" />
+                <span>🧬 <b>음성 복제</b> (c.ai 방식) <span class="dbridge_hint">— 참조 음성 10~30초만 있으면 학습 없이 즉시. <b>한국어 자연스러움</b>.</span></span></label>
+
+            <div id="dbridge_engine_rvc">
+                <label>RVC 변환 서버 URL <span class="dbridge_hint">(비우면 기본 서버)</span></label>
+                <input type="text" id="dbridge_rvcurl" class="text_pole" autocomplete="off" placeholder="https://…-rvcserver-api.modal.run" />
+                <div class="dbridge_inline" style="margin-top:4px">
+                    <input type="text" id="dbridge_rvc_vname" class="text_pole" autocomplete="off" placeholder="이름 (예: ghost)" style="max-width:110px" />
+                    <input type="text" id="dbridge_rvc_vurl" class="text_pole" autocomplete="off" placeholder="RVC 모델 zip URL (voice-models.com 등에서 복사)" />
+                    <div class="menu_button" id="dbridge_rvc_vadd" style="width:auto;white-space:nowrap">＋ 목소리</div>
+                </div>
             </div>
-            <div class="dbridge_hint" id="dbridge_rvc_voicelist">목소리 추가는 재배포 없이 바로 반영. 채널 행의 "📞목소리" 칸에 이름을 넣으면 그 캐릭터가 그 목소리로 전화해요.</div>
-            <datalist id="dbridge_rvc_list"></datalist>
+
+            <div id="dbridge_engine_clone" style="display:none">
+                <label>복제 서버 URL <span class="dbridge_hint">(비우면 기본 서버)</span></label>
+                <input type="text" id="dbridge_cloneurl" class="text_pole" autocomplete="off" placeholder="https://…-cloneserver-api.modal.run" />
+                <div class="dbridge_inline" style="margin-top:4px">
+                    <input type="text" id="dbridge_clone_vname" class="text_pole" autocomplete="off" placeholder="이름 (예: mia)" style="max-width:110px" />
+                    <input type="file" id="dbridge_clone_file" class="text_pole" accept="audio/*" style="flex:1" />
+                    <div class="menu_button" id="dbridge_clone_add" style="width:auto;white-space:nowrap">＋ 목소리</div>
+                </div>
+                <label class="dbridge_check"><input type="checkbox" id="dbridge_clone_consent" />
+                    <span class="dbridge_hint">이 음성은 <b>내 목소리이거나 사용 권한이 있는 목소리</b>입니다 (업로드에 필요)</span></label>
+                <div class="dbridge_hint">10~30초짜리 깨끗한 음성(배경음·음악 없이)이면 충분. mp3/wav/m4a 다 됨.</div>
+            </div>
+
+            <div class="dbridge_inline" style="margin-top:4px">
+                <div class="menu_button" id="dbridge_rvc_vrefresh" title="목소리 목록 새로고침" style="width:auto;white-space:nowrap">🔄 목소리 목록</div>
+            </div>
+            <div class="dbridge_hint" id="dbridge_rvc_voicelist">채널 행의 "🎤 목소리"에서 캐릭터별로 고르면 돼요. 엔진을 바꾸면 목록도 바뀝니다.</div>
 
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
@@ -827,10 +860,29 @@ jQuery(async () => {
         const $t = $('#dbridge_token');
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
     });
-    // RVC 목소리 목록/추가 (Modal 서버에 직접 — 재배포 불필요)
+    // 엔진 전환 → 해당 서버의 목소리 목록으로 교체
+    $('input[name="dbridge_vengine"]').on('change', function () {
+        const eng = $(this).val();
+        $('#dbridge_engine_rvc').toggle(eng !== 'clone');
+        $('#dbridge_engine_clone').toggle(eng === 'clone');
+        rvcVoicesArr = null;
+        refreshVoiceSelects();
+        rvcVoiceList();
+    });
+
+    // 목소리 목록 (현재 엔진 서버에서) — Modal 서버에 직접, 재배포 불필요
+    const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
+    const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-cloneserver-api.modal.run';
+    function voiceBase() {
+        const clone = $('input[name="dbridge_vengine"]:checked').val() === 'clone';
+        const v = clone
+            ? ($('#dbridge_cloneurl').val() || state.cloneUrl || DEFAULT_CLONE_URL)
+            : ($('#dbridge_rvcurl').val() || state.rvcUrl || DEFAULT_RVC_URL);
+        return (v + '').trim().replace(/\/+$/, '');
+    }
     async function rvcVoiceList() {
-        const base = (($('#dbridge_rvcurl').val() || state.rvcUrl || '') + '').trim().replace(/\/+$/, '');
-        if (!base) { $('#dbridge_rvc_voicelist').text('먼저 RVC 서버 URL을 입력하세요.'); return; }
+        const base = voiceBase();
+        if (!base) { $('#dbridge_rvc_voicelist').text('먼저 서버 URL을 입력하세요.'); return; }
         $('#dbridge_rvc_voicelist').text('목소리 목록 불러오는 중... (서버가 자고 있으면 ~30초)');
         try {
             const r = await fetch(`${base}/warm`);
@@ -846,6 +898,34 @@ jQuery(async () => {
     }
     $('#dbridge_rvc_vrefresh').on('click', rvcVoiceList);
     setTimeout(rvcVoiceList, 1500); // config 로드 후 자동 (콜드스타트면 늦게 채워짐)
+
+    // 음성 복제: 오디오 파일 업로드로 목소리 등록 (동의 체크 필수 — 책임 구조)
+    $('#dbridge_clone_add').on('click', async () => {
+        const name = ($('#dbridge_clone_vname').val() || '').trim();
+        const file = $('#dbridge_clone_file')[0]?.files?.[0];
+        if (!name || !file) { toastr.warning('이름과 음성 파일이 필요해요.'); return; }
+        if (!$('#dbridge_clone_consent').prop('checked')) {
+            toastr.warning('본인 목소리이거나 사용 권한이 있다는 동의가 필요해요.', '음성 복제');
+            return;
+        }
+        const $b = $('#dbridge_clone_add').text('올리는 중...');
+        try {
+            const r = await fetch(`${voiceBase()}/add_sample?name=${encodeURIComponent(name)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': file.type || 'application/octet-stream', 'x-add-token': state.rvcToken || '' },
+                body: await file.arrayBuffer(),
+            });
+            if (!r.ok) throw new Error((await r.text().catch(() => '')) || `HTTP ${r.status}`);
+            toastr.success(`목소리 "${name}" 등록! 채널 행 "🎤 목소리"에서 고르고 저장하세요.`, '음성 복제');
+            $('#dbridge_clone_vname').val('');
+            $('#dbridge_clone_file').val('');
+            rvcVoiceList();
+        } catch (e) {
+            toastr.error(String(e.message || e).slice(0, 200), '목소리 등록 실패');
+        } finally {
+            $b.text('＋ 목소리');
+        }
+    });
     $('#dbridge_rvc_vadd').on('click', async () => {
         const base = ($('#dbridge_rvcurl').val() || '').trim().replace(/\/+$/, '');
         const name = ($('#dbridge_rvc_vname').val() || '').trim();

@@ -28,9 +28,12 @@
   "liveVoice": "Charon",
   "liveStyle": "",
   "rvcVoice": "",
+  "voiceEngine": "rvc",
   "rvcUrl": "",
   "rvcToken": "",
   "rvcPitch": 0,
+  "cloneUrl": "",
+  "voiceNoteLang": "",
   "openSub": { "apiKey": "", "username": "", "password": "" },
   "proactive": {
     "enabled": false,
