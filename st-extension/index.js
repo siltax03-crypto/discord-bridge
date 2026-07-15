@@ -391,7 +391,8 @@ function renderChannelRows() {
         }
 
         // 통화(1:1) 채널만: RVC 목소리 지정 — 행 아래 별도 줄 + 진짜 드롭다운 (전체 목록 항상 보임)
-        const voiceField = (!isGroup && !isNpc)
+        // NPC그룹 체크(로스터 보관)만 켠 갠톡도 1:1이라 목소리 사용 가능. 진짜 단톡(시트)만 제외.
+        const voiceField = (!isGroup)
             ? `<div style="width:100%;display:flex;gap:8px;align-items:center;padding-left:1em">
                    <span class="dbridge_hint" style="white-space:nowrap">🎤 목소리 (통화·음성메모)</span>
                    <select class="text_pole dbridge_row_rvc" style="max-width:200px">${rvcVoiceOptions(conf.rvcVoice || '')}</select>
@@ -430,6 +431,12 @@ function refreshVoiceSelects() {
         const cur = $(this).val() || '';
         $(this).html(rvcVoiceOptions(cur)).val(cur);
     });
+}
+
+// 채널 행의 🎤 목소리를 entry에 담는다
+function addVoice($row, entry) {
+    const voice = ($row.find('.dbridge_row_rvc').val() || '').trim();
+    if (voice) entry.rvcVoice = voice;
 }
 
 // 화면 → state 동기화 (저장 직전 호출)
@@ -510,14 +517,14 @@ function syncFromDom() {
                 });
                 const entry = { npcGroup: true, character: char, npcs };
                 if (persona) entry.persona = persona;
+                addVoice($(this), entry);   // NPC 로스터를 담은 갠톡도 1:1이라 목소리 사용
                 channels[chId] = entry;
             } else {
                 const char = $(this).find('.dbridge_row_char').val();
                 if (!char) return;
                 const entry = { character: char };
                 if (persona) entry.persona = persona;
-                const rvcVoice = ($(this).find('.dbridge_row_rvc').val() || '').trim();
-                if (rvcVoice) entry.rvcVoice = rvcVoice;
+                addVoice($(this), entry);
                 channels[chId] = entry;
             }
         });
