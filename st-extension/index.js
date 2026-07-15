@@ -377,9 +377,12 @@ function renderChannelRows() {
                 </div>`;
         }
 
-        // 1:1 채널만: 🎤 음성메모 목소리 (서버에 있는 목소리만 — 목록에서 선택)
+        // 1:1 채널만: 🎤 음성메모 목소리 — 행 아래 별도 줄 + 드롭다운 (서버에 있는 목소리만)
         const voiceField = (!isGroup && !isNpc)
-            ? `<span>🎤목소리</span><input type="text" class="text_pole dbridge_row_rvc" list="dbridge_rvc_list" value="${escapeHtml(conf.rvcVoice || '')}" placeholder="(끔)" style="max-width:100px" />`
+            ? `<div style="width:100%;display:flex;gap:8px;align-items:center;padding-left:1em">
+                   <span class="dbridge_hint" style="white-space:nowrap">🎤 음성메모 목소리</span>
+                   <select class="text_pole dbridge_row_rvc" style="max-width:200px">${rvcVoiceOptions(conf.rvcVoice || '')}</select>
+               </div>`
             : '';
 
         const $row = $(`
@@ -389,9 +392,9 @@ function renderChannelRows() {
                 ${charField}
                 <span>나(페르소나)</span>
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
-                ${voiceField}
                 ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
+                ${voiceField}
                 ${groupBox}
                 ${npcBox}
             </div>
@@ -400,9 +403,21 @@ function renderChannelRows() {
     }
 }
 
-// RVC 목소리 목록 (서버에 실제로 있는 것만 선택 가능하게 datalist 채움 + 저장 검증용)
+// RVC 목소리 목록 (서버에 실제로 있는 것만 선택 가능 + 저장 검증용)
 const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
 let rvcVoiceList = null; // null = 아직 못 받음
+function rvcVoiceOptions(cur) {
+    const names = [...new Set([...(rvcVoiceList || []), ...(cur ? [cur] : [])])];
+    return '<option value="">(안 씀)</option>'
+        + names.map((v) => `<option value="${escapeHtml(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(v)}</option>`).join('')
+        + (rvcVoiceList === null ? '<option value="" disabled>(목록 로딩 중...)</option>' : '');
+}
+function refreshVoiceSelects() {
+    $('.dbridge_row_rvc').each(function () {
+        const cur = $(this).val() || '';
+        $(this).html(rvcVoiceOptions(cur)).val(cur);
+    });
+}
 async function loadRvcVoices() {
     const base = ((state.rvcUrl || DEFAULT_RVC_URL) + '').trim().replace(/\/+$/, '');
     try {
@@ -410,7 +425,7 @@ async function loadRvcVoices() {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         rvcVoiceList = Array.isArray(d.voices) ? d.voices : [];
-        $('#dbridge_rvc_list').html(rvcVoiceList.map((v) => `<option value="${escapeHtml(v)}">`).join(''));
+        refreshVoiceSelects();
     } catch (e) {
         console.warn('[DiscordBridge] RVC 목소리 목록 실패:', e.message);
     }
