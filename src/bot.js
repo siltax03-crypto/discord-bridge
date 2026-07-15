@@ -156,6 +156,42 @@ const Bot = {
                 .addSubcommand((s) => s.setName('list').setDescription('NPC 목록'))
                 .addSubcommand((s) => s.setName('delete').setDescription('이 NPC 단톡 채널 해제/삭제')),
             new SlashCommandBuilder()
+                .setName('mode')
+                .setDescription('대화 모드 전환 (채팅 ↔ 롤플)')
+                .addStringOption((o) =>
+                    o
+                        .setName('type')
+                        .setDescription('chat = 디스코드 채팅, rp = 문자 롤플')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: '채팅 (chat)', value: 'chat' },
+                            { name: '롤플 (rp)', value: 'rp' },
+                        ),
+                ),
+            new SlashCommandBuilder()
+                .setName('nsfw')
+                .setDescription('이 채널 연령제한(NSFW) 켜기/끄기'),
+            new SlashCommandBuilder()
+                .setName('lang')
+                .setDescription('이 채널 응답 언어 (한국어 ↔ English)')
+                .addStringOption((o) =>
+                    o.setName('lang').setDescription('ko = 한국어, en = English').setRequired(true)
+                        .addChoices({ name: '한국어 (ko)', value: 'ko' }, { name: 'English (en)', value: 'en' })),
+            new SlashCommandBuilder()
+                .setName('clear')
+                .setDescription('이 채널의 대화 기록 초기화 (봇 기억만)'),
+            new SlashCommandBuilder()
+                .setName('purge')
+                .setDescription('디코 메시지 최근 N개 삭제 + 봇 기억에서도 제거 (14일 이내만)')
+                .addIntegerOption((o) =>
+                    o.setName('count').setDescription('지울 개수 (1~100, 기본 20)').setRequired(false)),
+            new SlashCommandBuilder()
+                .setName('nuke')
+                .setDescription('채널 통째 비우기: 복제 후 원본 삭제 (14일 제한 없음, 채널 ID 바뀜)'),
+            new SlashCommandBuilder()
+                .setName('retry')
+                .setDescription('마지막 메시지에 다시 답하기 (오류로 답이 안 왔을 때)'),
+            new SlashCommandBuilder()
                 .setName('note')
                 .setDescription('작가노트(추가 지시) 관리')
                 .addSubcommand((s) =>
@@ -1601,21 +1637,11 @@ const Bot = {
             if (reactTarget && emoji) reactTarget.react(emoji).catch((e) => console.warn('[Bot] 리액션 실패:', e.message));
         }
 
-        // [VOICE_NOTE: 영어 대사] → 🎤 음성메모 (목소리 지정 채널 + 채팅 모드만)
-        let voiceNoteText = null;
-        const vnMatch = response.match(/\[\s*voice_note[^\]]*\]/i);
-        if (vnMatch) {
-            if (mode !== 'rp' && this._voiceNoteReady(channelId)) voiceNoteText = tagBody(vnMatch[0], 'voice_note');
-            response = response.replace(vnMatch[0], '').trim();
-        }
-        // 히스토리의 "🎤 (voice memo) ..." 표기를 흉내내 텍스트로 쓴 경우도 진짜 음성으로 전환
-        if (!voiceNoteText && mode !== 'rp' && this._voiceNoteReady(channelId)) {
-            const mimic = response.match(/🎤?\s*\(\s*voice\s*memo\s*\)\s*:?\s*([^\n]+)/i);
-            if (mimic && mimic[1].trim()) {
-                voiceNoteText = mimic[1].trim();
-                response = response.replace(mimic[0], '').trim();
-            }
-        }
+        // [VOICE_NOTE: 영어 대사] → 🎤 음성메모 (목소리 지정 채널 + 채팅 모드만).
+        // 태그는 조건과 무관하게 항상 본문에서 제거한다 (안 그러면 글자로 샘)
+        const vn = this._extractVoiceNote(response);
+        response = vn.response;
+        const voiceNoteText = (mode !== 'rp' && this._voiceNoteReady(channelId)) ? vn.text : null;
         if (voiceNoteText) {
             this._sendVoiceNote(channel, channelId, character, voiceNoteText)
                 .catch((e) => console.warn('[VoiceNote] 실패:', e.message));
@@ -1812,6 +1838,25 @@ const Bot = {
             .replace(/\s+([,.!?])/g, '$1')          // 지운 자리에 생긴 " ," 정리
             .replace(/\s+/g, ' ')
             .trim();
+    },
+
+    // 응답에서 [VOICE_NOTE: 대사] 추출 + 본문에서 제거.
+    // 모델이 태그 이름을 흘리는(VOICE NOTE / VOICE-NOTE / voicenote) 경우와 닫는 ']'를
+    // 빼먹는 경우가 잦다. 못 잡으면 태그가 그대로 유저에게 글자로 나가므로 아주 관대하게.
+    _extractVoiceNote(response) {
+        const NAME = String.raw`voice[\s_-]*note`;
+        // 1) 정상 태그 → 2) 닫는 괄호 없는 태그(줄 끝까지) → 3) "🎤 (voice memo) ..." 흉내
+        const m = response.match(new RegExp(String.raw`\[\s*${NAME}\b[^\]]*\]`, 'i'))
+            || response.match(new RegExp(String.raw`\[\s*${NAME}\b[^\n]*`, 'i'))
+            || response.match(/🎤?\s*\(\s*voice\s*memo\s*\)\s*:?[^\n]*/i);
+        if (!m) return { text: null, response };
+        const text = m[0]
+            .replace(new RegExp(String.raw`^\s*\[?\s*${NAME}\b`, 'i'), '')
+            .replace(/^\s*🎤?\s*\(\s*voice\s*memo\s*\)/i, '')
+            .replace(/^[:|\s]+/, '')
+            .replace(/\]\s*$/, '')
+            .trim();
+        return { text: text || null, response: response.replace(m[0], '').trim() };
     },
 
     // 이 디코 메시지가 음성메모인가 (본문 없이 voice-message.wav 첨부)
@@ -2192,20 +2237,10 @@ const Bot = {
                 response = response.replace(photoMatch[0], '').trim();
             }
 
-            // [VOICE_NOTE] → 🎤 음성메모 (흉내낸 표기도 잡음)
-            let voiceNoteText = null;
-            const vnMatch = response.match(/\[\s*voice_note\s*:?\s*([^\]]+)\]/is);
-            if (vnMatch) {
-                if (mode !== 'rp' && this._voiceNoteReady(channelId)) voiceNoteText = vnMatch[1].trim();
-                response = response.replace(vnMatch[0], '').trim();
-            }
-            if (!voiceNoteText && mode !== 'rp' && this._voiceNoteReady(channelId)) {
-                const mimic = response.match(/🎤?\s*\(\s*voice\s*memo\s*\)\s*:?\s*([^\n]+)/i);
-                if (mimic && mimic[1].trim()) {
-                    voiceNoteText = mimic[1].trim();
-                    response = response.replace(mimic[0], '').trim();
-                }
-            }
+            // [VOICE_NOTE] → 🎤 음성메모 (태그는 조건과 무관하게 항상 제거)
+            const vn = this._extractVoiceNote(response);
+            response = vn.response;
+            const voiceNoteText = (mode !== 'rp' && this._voiceNoteReady(channelId)) ? vn.text : null;
 
             // 선톡(단일봇 경로): STATUS/REMIND 태그는 제거만 (선톡은 리마인더 새로 안 만듦)
             response = response.replace(/\[STATUS:\s*([^\]]+)\]/g, '').trim();
