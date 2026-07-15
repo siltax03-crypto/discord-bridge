@@ -379,7 +379,8 @@ function renderChannelRows() {
         }
 
         // 1:1 채널 + 음성메모 서버 설정됨 → 🎤 목소리 선택 (행 아래 별도 줄)
-        const voiceField = (!isGroup && !isNpc && (state.cloneUrl || '').trim())
+        // NPC그룹 체크(로스터 보관)만 켠 갠톡도 1:1이라 목소리 사용 가능. 진짜 단톡(시트)만 제외.
+        const voiceField = (!isGroup && (state.cloneUrl || '').trim())
             ? `<div style="width:100%;display:flex;gap:8px;align-items:center;padding-left:1em">
                    <span class="dbridge_hint" style="white-space:nowrap">🎤 음성메모 목소리</span>
                    <select class="text_pole dbridge_row_voice" style="max-width:200px">${voiceOptions(conf.voice || '')}</select>
@@ -436,6 +437,17 @@ async function loadVoices(verbose) {
         if (verbose) $('#dbridge_voice_list').text(`목소리 목록 실패: ${e.message} — 서버 URL 확인`);
         console.warn('[DiscordBridge] 목소리 목록:', e.message);
     }
+}
+
+// 채널 행의 🎤 목소리를 entry에 담는다 — 서버에 실제로 있는 목소리만 (목록을 받았을 때만 검증)
+function addVoice($row, entry) {
+    const voice = ($row.find('.dbridge_row_voice').val() || '').trim();
+    if (!voice) return;
+    if (Array.isArray(voiceList) && !voiceList.includes(voice)) {
+        toastr.warning(`"${voice}"는 서버에 없는 목소리라 저장에서 뺐어요.`, '음성메모');
+        return;
+    }
+    entry.voice = voice;
 }
 
 // 화면 → state 동기화 (저장 직전 호출)
@@ -516,21 +528,14 @@ function syncFromDom() {
                 });
                 const entry = { npcGroup: true, character: char, npcs };
                 if (persona) entry.persona = persona;
+                addVoice($(this), entry);   // NPC 로스터를 담은 갠톡도 1:1이라 목소리 사용
                 channels[chId] = entry;
             } else {
                 const char = $(this).find('.dbridge_row_char').val();
                 if (!char) return;
                 const entry = { character: char };
                 if (persona) entry.persona = persona;
-                // 🎤 음성메모 목소리 — 서버에 있는 목소리만 허용 (목록을 받았을 때만 검증)
-                const voice = ($(this).find('.dbridge_row_voice').val() || '').trim();
-                if (voice) {
-                    if (Array.isArray(voiceList) && !voiceList.includes(voice)) {
-                        toastr.warning(`"${voice}"는 서버에 없는 목소리라 저장에서 뺐어요.`, '음성메모');
-                    } else {
-                        entry.voice = voice;
-                    }
-                }
+                addVoice($(this), entry);
                 channels[chId] = entry;
             }
         });
