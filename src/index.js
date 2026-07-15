@@ -93,6 +93,11 @@ try {
         }
     } else {
         for (const [channelId, channelConfig] of Object.entries(config.channels)) {
+            // 단톡(시트)/캐릭터 미지정 항목은 카드 검증 대상 아님
+            if (!channelConfig?.character) {
+                if (channelConfig?.group) console.log(`[Init] 채널 ${channelId} → 단톡(시트: ${channelConfig.sheet || '미지정'})`);
+                continue;
+            }
             try {
                 const char = STReader.getCharacter(channelConfig.character);
                 console.log(`[Init] 채널 ${channelId} → ${char.name || channelConfig.character} ✓`);
