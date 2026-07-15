@@ -131,7 +131,8 @@ class CloneServer:
 
         # 텍스트 → 그 목소리로 말하기 (학습 없음)
         @web.post("/speak")
-        async def speak(request: Request, voice: str = "", lang: str = "en", exaggeration: float = 0.5, cfg: float = 0.5):
+        # exaggeration↑ = 감정 과장, cfg↓ = 참조 억양에 덜 묶임(자유로운 연기). 기본값은 실측 튜닝값.
+        async def speak(request: Request, voice: str = "", lang: str = "en", exaggeration: float = 1.2, cfg: float = 0.3):
             text = (await request.body()).decode("utf-8").strip()
             if not text:
                 return Response(status_code=400, content=b"text required")

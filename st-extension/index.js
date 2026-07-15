@@ -782,7 +782,8 @@ const SETTINGS_HTML = `
                 </div>
                 <label class="dbridge_check"><input type="checkbox" id="dbridge_clone_consent" />
                     <span class="dbridge_hint">이 음성은 <b>내 목소리이거나 사용 권한이 있는 목소리</b>입니다 (업로드에 필요)</span></label>
-                <div class="dbridge_hint">10~30초짜리 깨끗한 음성(배경음·음악 없이)이면 충분. mp3/wav/m4a 다 됨.</div>
+                <div class="dbridge_hint">10~30초, 배경음·음악 없는 <b>실제 사람 음성</b>. mp3/wav/m4a 다 됨.<br/>
+                ⚠ <b>참조 음성의 감정이 결과를 좌우해요.</b> 무미건조하게 읽은 음성을 넣으면 캐릭터도 무감정하게 말합니다 — 감정이 실린 대사(연기·대화)를 넣으세요.</div>
             </div>
 
             <div class="dbridge_inline" style="margin-top:4px">
