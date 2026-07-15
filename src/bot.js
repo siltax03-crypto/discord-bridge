@@ -904,9 +904,9 @@ const Bot = {
             const ok = VoiceCall.end(channelId, '사용자가 끊음');
             return interaction.reply({ content: ok ? '📞 통화를 끊었어요.' : '진행 중인 통화가 없어요.', ...eph });
         }
-        // start
+        // start — NPC그룹 체크만 켜둔 갠톡은 1:1이다 (실제 단톡은 /npc create로 파생된 채널뿐)
         const chCfg = config.channels[channelId] || {};
-        if (chCfg.group || chCfg.npcGroup || chCfg.summaryOnly || chCfg.movie) {
+        if (chCfg.group || this._isNpcGroup(channelId) || chCfg.summaryOnly || chCfg.movie) {
             return interaction.reply({ content: '⚠️ 통화는 캐릭터 1:1 채널에서만 돼요.', ...eph });
         }
         const character = this._getCharacter(channelId);
