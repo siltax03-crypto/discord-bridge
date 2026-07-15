@@ -781,7 +781,7 @@ const SETTINGS_HTML = `
                     <span class="dbridge_hint" id="dbridge_clone_fname" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">선택된 파일 없음</span>
                     <div class="menu_button" id="dbridge_clone_add" style="width:auto;white-space:nowrap">＋ 목소리</div>
                 </div>
-                <input type="file" id="dbridge_clone_file" accept="audio/*" style="display:none" />
+                <input type="file" id="dbridge_clone_file" accept="audio/*,video/*,.wav,.mp3,.m4a,.ogg,.flac,.opus,.aac,.wma,.webm,.mp4" style="display:none" />
                 <label class="dbridge_check"><input type="checkbox" id="dbridge_clone_consent" />
                     <span class="dbridge_hint">이 음성은 <b>내 목소리이거나 사용 권한이 있는 목소리</b>입니다 (업로드에 필요)</span></label>
                 <div class="dbridge_hint">10~30초, 배경음·음악 없는 <b>실제 사람 음성</b>. mp3/wav/m4a 다 됨.<br/>
