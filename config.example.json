@@ -15,11 +15,9 @@
   "devBranch": "dev",
   "botMode": "single",
   "personaBotToken": "",
-  "movieEnabled": true,
-  "moviePort": 8788,
-  "movieToken": "여기에_아무_긴_랜덤_문자열_확장과_동일하게",
-  "movieReactSec": 35,
   "oauthProxyUrl": "http://127.0.0.1:18765/v1",
+  "cloneUrl": "",
+  "voiceToken": "",
   "proactive": {
     "enabled": false,
     "photos": false,
@@ -28,7 +26,7 @@
     "activeHours": [9, 23]
   },
   "channels": {
-    "채널ID_1": { "character": "Snow" },
+    "채널ID_1": { "character": "Snow", "voice": "" },
     "채널ID_2": { "character": "Blaise" }
   },
   "groupSheet": "",

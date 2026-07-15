@@ -117,6 +117,7 @@ ${slangLine}${seedNote ? `\n- ${seedNote}` : ''}`);
             crossSummaries = [],
             crossRecent = null,
             meetEnabled = false,
+            voiceNote = false,
         } = options;
         // 멤버 표시 이름(단체시트 속 인물) 우선, 없으면 카드 이름
         const charName = charNameOpt || character.name || character.data?.name || 'Character';
@@ -251,9 +252,17 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             : "- Do NOT use ㅋㅋ/ㅎㅎ or excessive emoji. Speak in the character's own voice.";
 
         // 사진 전송은 채팅 모드에서만. 롤플 모드는 이미지 전송 절대 금지.
-        const photoInstruction = mode === 'rp'
+        const photoInstruction = (mode === 'rp'
             ? ''
-            : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.';
+            : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.')
+            // 음성메모 (채팅 모드 + 목소리 지정 채널만). 대사는 영어 고정 — 목소리 모델이 영어라서.
+            + ((mode !== 'rp' && voiceNote)
+                ? `\n- You can also send a VOICE MEMO: append [VOICE_NOTE: what you say out loud, in ENGLISH] at the very end. The spoken content MUST be English (your voice is an English voice) even though the chat is Korean — short and natural like a real voice message (1-3 sentences, casual, emotional).
+- NEVER write stage directions (*sighs*, [laughs], (moans)) — asterisks/brackets are not voiced, they get read as symbols or dropped.
+- SHORT non-verbal sounds written as letters DO get voiced, so use them where the character really would: "Mmm", "Hnn", "Ahh", "Tch", "Heh". Keep them to one syllable and lead with them ("Hnn... don't stop.", "Mmm, that's better."). Long drawn-out spellings ("Haaah") come out as a flat spoken syllable — avoid those.
+- "..." reads as a real pause, so use it for breath and hesitation. Beyond that, let word choice carry the emotion ("God, I'm wrecked.", "Don't even ask."); the engine colors delivery from your mood.
+- Use a voice memo when the user wants to hear your voice, when you miss them, for good-morning/good-night, or just occasionally instead of typing. Do NOT overuse (at most once in a while), and always include a normal text reply too. NEVER type "🎤 (voice memo) ..." as plain text — that marker in history means audio that was ACTUALLY sent; to send one, use the [VOICE_NOTE: ...] tag.`
+                : '');
 
         // 하루 일정 — 살아있는 사람처럼 (요일/주말 인식 포함)
         const clock = this._clock(timezone);

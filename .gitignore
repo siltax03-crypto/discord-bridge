@@ -4,3 +4,8 @@ config.json
 *.log
 README.md
 설치설명서.md
+
+# 로컬 잡동사니
+*.code-workspace
+movie-extension.zip
+__pycache__/

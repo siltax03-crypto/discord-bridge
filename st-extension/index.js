@@ -88,7 +88,8 @@ async function loadAll() {
             stPath: c.stPath || '',
             splitMessages: c.splitMessages !== false,
             chatSlang: c.chatSlang !== false,
-            movieToken: c.movieToken || '',
+            cloneUrl: c.cloneUrl || '',      // 🎤 음성메모 서버 (본인 Modal)
+            voiceToken: c.voiceToken || '',  // 목소리 추가 토큰 (선택)
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -199,8 +200,10 @@ function render() {
     $('#dbridge_split').prop('checked', state.splitMessages);
     $('#dbridge_slang').prop('checked', state.chatSlang);
 
-    // 영화 같이보기 토큰
-    $('#dbridge_movietoken').val(state.movieToken || '');
+    // 🎤 음성메모
+    $('#dbridge_cloneurl').val(state.cloneUrl || '');
+    $('#dbridge_voice_token').val(state.voiceToken || '');
+    $('#dbridge_voice_box').toggle(!!(state.cloneUrl || '').trim());
 
     // 선톡
     const p = state.proactive;
@@ -375,6 +378,14 @@ function renderChannelRows() {
                 </div>`;
         }
 
+        // 1:1 채널 + 음성메모 서버 설정됨 → 🎤 목소리 선택 (행 아래 별도 줄)
+        const voiceField = (!isGroup && !isNpc && (state.cloneUrl || '').trim())
+            ? `<div style="width:100%;display:flex;gap:8px;align-items:center;padding-left:1em">
+                   <span class="dbridge_hint" style="white-space:nowrap">🎤 음성메모 목소리</span>
+                   <select class="text_pole dbridge_row_voice" style="max-width:200px">${voiceOptions(conf.voice || '')}</select>
+               </div>`
+            : '';
+
         const $row = $(`
             <div class="dbridge_row" data-channel="${escapeHtml(channelId)}">
                 <span>채널</span>
@@ -384,11 +395,46 @@ function renderChannelRows() {
                 <select class="text_pole dbridge_row_persona">${ensurePersona}${personaOpts}</select>
                 ${groupCheck}
                 <div class="menu_button dbridge_row_del" title="삭제"><i class="fa-solid fa-trash"></i></div>
+                ${voiceField}
                 ${groupBox}
                 ${npcBox}
             </div>
         `);
         $list.append($row);
+    }
+}
+
+// --- 🎤 음성메모 목소리 목록 (서버에 실제로 있는 것만 선택 가능) ---
+let voiceList = null; // null = 아직 못 받음
+function voiceOptions(cur) {
+    const names = [...new Set([...(voiceList || []), ...(cur ? [cur] : [])])];
+    return '<option value="">(안 씀)</option>'
+        + names.map((v) => `<option value="${escapeHtml(v)}"${v === cur ? ' selected' : ''}>${escapeHtml(v)}</option>`).join('')
+        + (voiceList === null ? '<option value="" disabled>(목록 로딩 중...)</option>' : '');
+}
+function refreshVoiceSelects() {
+    $('.dbridge_row_voice').each(function () {
+        const cur = $(this).val() || '';
+        $(this).html(voiceOptions(cur)).val(cur);
+    });
+}
+function voiceBase() {
+    return (($('#dbridge_cloneurl').val() || state.cloneUrl || '') + '').trim().replace(/\/+$/, '');
+}
+async function loadVoices(verbose) {
+    const base = voiceBase();
+    if (!base) return;
+    if (verbose) $('#dbridge_voice_list').text('목소리 목록 불러오는 중... (서버가 자고 있으면 ~30초)');
+    try {
+        const r = await fetch(`${base}/warm`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        voiceList = Array.isArray(d.voices) ? d.voices : [];
+        $('#dbridge_voice_list').text(`등록된 목소리: ${voiceList.join(', ') || '(없음 — 위에서 추가)'} · 채널 행의 "🎤 음성메모 목소리"에서 선택하세요. 대사는 영어로 나갑니다.`);
+        refreshVoiceSelects();
+    } catch (e) {
+        if (verbose) $('#dbridge_voice_list').text(`목소리 목록 실패: ${e.message} — 서버 URL 확인`);
+        console.warn('[DiscordBridge] 목소리 목록:', e.message);
     }
 }
 
@@ -476,6 +522,15 @@ function syncFromDom() {
                 if (!char) return;
                 const entry = { character: char };
                 if (persona) entry.persona = persona;
+                // 🎤 음성메모 목소리 — 서버에 있는 목소리만 허용 (목록을 받았을 때만 검증)
+                const voice = ($(this).find('.dbridge_row_voice').val() || '').trim();
+                if (voice) {
+                    if (Array.isArray(voiceList) && !voiceList.includes(voice)) {
+                        toastr.warning(`"${voice}"는 서버에 없는 목소리라 저장에서 뺐어요.`, '음성메모');
+                    } else {
+                        entry.voice = voice;
+                    }
+                }
                 channels[chId] = entry;
             }
         });
@@ -501,7 +556,8 @@ async function save() {
             proactive: state.proactive,
             channels: state.channels,
             members: state.members,
-            movieToken: ($('#dbridge_movietoken').val() || '').trim(),
+            cloneUrl: ($('#dbridge_cloneurl').val() || '').trim(),
+            voiceToken: ($('#dbridge_voice_token').val() || '').trim(),
         };
         // 토큰류는 입력했을 때만 전송. 비우면 안 보냄 → 서버가 기존 유지(절대 안 날아감).
         const mainTok = ($('#dbridge_token').val() || '').trim();
@@ -511,6 +567,8 @@ async function save() {
 
         await apiPost('/config', payload);
         // 저장 성공 → 화면을 날리지 않고 state만 "저장됨" 상태로 갱신 후 다시 그림
+        state.cloneUrl = payload.cloneUrl;
+        state.voiceToken = payload.voiceToken;
         if (payload.discordToken) state.tokenSaved = true;
         if (payload.personaBotToken) state.personaBotSaved = true;
         for (const c of Object.values(state.channels)) {
@@ -555,6 +613,14 @@ const SETTINGS_HTML = `
             <details class="dbridge_changelog">
                 <summary>📋 업데이트 내역</summary>
                 <div class="dbridge_changelog_body">
+                    <b>2026-07-15 — 🎤 음성메모 / 영화 같이보기 제거</b>
+                    <ul>
+                        <li><b>음성메모</b>: 캐릭터가 <b>음성메시지</b>를 보냅니다. "목소리 듣고 싶어" 하면 남겨주고, 보고플 때·굿나잇 등에 가끔 자발적으로도 (선톡 포함)</li>
+                        <li>목소리는 <b>음성 파일 10~30초</b>만 올리면 학습 없이 바로 사용 (zero-shot 복제)</li>
+                        <li>쓰려면 본인 <b>Modal</b> 계정에 서버 배포 필요 (무료 크레딧, 5분) — 방법은 봇 폴더 <code>modal/README.md</code>. 안 쓰면 그냥 꺼둬도 됩니다</li>
+                        <li>⚠ 본인 목소리이거나 <b>사용 권한이 있는 음성만</b> 올리세요. 생성물 공개·판매는 권리 침해가 될 수 있어요</li>
+                        <li><b>영화 같이보기 기능은 제거됐습니다</b> (크롬 확장·<code>/movie</code>)</li>
+                    </ul>
                     <b>2026-07-05 — NPC 단톡</b>
                     <ul>
                         <li>채널 매핑에서 <b>"NPC그룹" 체크 + NPC 이름/아바타 입력</b> (그 채널은 1:1 그대로 유지됨)</li>
@@ -566,7 +632,6 @@ const SETTINGS_HTML = `
                     </ul>
                     <b>이전 업데이트</b>
                     <ul>
-                        <li>영화 같이보기 (크롬 확장 + <code>/movie</code>) — 넷플/디즈니/유튜브/쿠팡 자막 실시간 반응</li>
                         <li>이미지 전용 프로필 분리, OpenAI 호환 커스텀 URL, 잼민 프록시 라우팅</li>
                         <li>사람답게: 타이핑 감지 배칭(입력 중엔 기다림), 단톡 자유 티키타카, 갠톡 줄수 가변</li>
                         <li>세트: <code>/setup</code>(챗·롤플·요약 채널), <code>/mode</code> 이동+요약, [MEET] 자동 롤플 개장</li>
@@ -687,12 +752,22 @@ const SETTINGS_HTML = `
             <div class="dbridge_hint">⏰ "8시에 깨워줘", "2시에 약속 리마인드 해줘" 같은 <b>특정 시각 알람은 봇한테 채팅으로 말하면</b> 알아서 그 시각에 연락합니다 (설정 불필요).</div>
 
             <hr/>
-            <label>🎬 영화 같이보기 토큰 <span class="dbridge_hint">(크롬 확장에 똑같이 입력)</span></label>
-            <div class="dbridge_inline">
-                <input type="text" id="dbridge_movietoken" class="text_pole" autocomplete="off" placeholder="아무 긴 랜덤 문자열" />
-                <div class="menu_button" id="dbridge_movietoken_gen" title="랜덤 생성"><i class="fa-solid fa-dice"></i></div>
+            <hr/>
+            <label>🎤 음성메모 <span class="dbridge_hint">(선택 — 캐릭터가 음성메시지를 보냄)</span></label>
+            <div class="dbridge_hint">본인 <b>Modal</b> 계정에 서버를 배포해서 씁니다 (무료 크레딧, 5분). 방법은 봇 폴더의 <code>modal/README.md</code></div>
+            <input type="text" id="dbridge_cloneurl" class="text_pole" autocomplete="off" placeholder="https://…-voice-clone-cloneserver-api.modal.run (비우면 기능 끔)" />
+            <div id="dbridge_voice_box" style="display:none">
+                <div class="dbridge_inline" style="margin-top:4px">
+                    <input type="text" id="dbridge_voice_name" class="text_pole" autocomplete="off" placeholder="이름 (예: mia)" style="max-width:110px" />
+                    <input type="file" id="dbridge_voice_file" class="text_pole" accept="audio/*" style="flex:1" />
+                    <div class="menu_button" id="dbridge_voice_add" style="width:auto;white-space:nowrap">＋ 목소리</div>
+                    <div class="menu_button" id="dbridge_voice_refresh" title="목소리 목록 새로고침" style="width:auto;white-space:nowrap">🔄</div>
+                </div>
+                <label class="dbridge_check"><input type="checkbox" id="dbridge_voice_consent" />
+                    <span class="dbridge_hint">이 음성은 <b>내 목소리이거나 사용 권한이 있는 목소리</b>입니다</span></label>
+                <input type="password" id="dbridge_voice_token" class="text_pole" autocomplete="off" placeholder="목소리 추가 토큰 (배포 때 CLONE_ADD_TOKEN 걸었으면)" style="margin-top:4px" />
+                <div class="dbridge_hint" id="dbridge_voice_list">10~30초, 배경음 없는 <b>감정이 실린</b> 음성이 좋아요 (무미건조하게 읽은 음성 → 캐릭터도 무감정). 등록 후 채널 행의 <b>🎤 목소리</b>에서 캐릭터별로 고르면 끝. 대사는 영어로 나갑니다.</div>
             </div>
-            <div class="dbridge_hint">넷플/유튜브/디즈니+ 같이보기용. 이 값과 크롬 확장의 토큰이 일치해야 합니다. 변경 후 봇·ST 재시작.</div>
 
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
@@ -765,10 +840,6 @@ jQuery(async () => {
         $t.attr('type', $t.attr('type') === 'password' ? 'text' : 'password');
     });
     // 영화 토큰 랜덤 생성
-    $('#dbridge_movietoken_gen').on('click', () => {
-        const rnd = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-        $('#dbridge_movietoken').val((rnd() + rnd()).slice(0, 48));
-    });
     // 봇 모드 전환: 입력 보존하고 모드에 맞게 다시 그림
     $('#dbridge_botmode').on('change', () => { syncFromDom(); render(); });
     $('#dbridge_add_channel').on('click', () => {
@@ -903,6 +974,45 @@ jQuery(async () => {
             toastr.error(e.message, '시트 추출 실패');
         }
     });
+
+    // --- 🎤 음성메모 ---
+    $('#dbridge_cloneurl').on('input', function () {
+        const on = !!($(this).val() || '').trim();
+        $('#dbridge_voice_box').toggle(on);
+        if (on) { voiceList = null; loadVoices(false); }
+    });
+    $('#dbridge_voice_refresh').on('click', () => loadVoices(true));
+    $('#dbridge_voice_add').on('click', async () => {
+        const name = ($('#dbridge_voice_name').val() || '').trim();
+        const file = $('#dbridge_voice_file')[0]?.files?.[0];
+        if (!voiceBase()) { toastr.warning('먼저 음성메모 서버 URL을 넣으세요.'); return; }
+        if (!name || !file) { toastr.warning('이름과 음성 파일이 필요해요.'); return; }
+        if (!$('#dbridge_voice_consent').prop('checked')) {
+            toastr.warning('본인 목소리이거나 사용 권한이 있다는 동의가 필요해요.', '음성메모');
+            return;
+        }
+        const $b = $('#dbridge_voice_add').text('올리는 중...');
+        try {
+            const r = await fetch(`${voiceBase()}/add_sample?name=${encodeURIComponent(name)}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': file.type || 'application/octet-stream',
+                    'x-add-token': ($('#dbridge_voice_token').val() || '').trim(),
+                },
+                body: await file.arrayBuffer(),
+            });
+            if (!r.ok) throw new Error((await r.text().catch(() => '')) || `HTTP ${r.status}`);
+            toastr.success(`목소리 "${name}" 등록! 채널 행의 🎤 목소리에서 고르고 저장하세요.`, '음성메모');
+            $('#dbridge_voice_name').val('');
+            $('#dbridge_voice_file').val('');
+            loadVoices(true);
+        } catch (e) {
+            toastr.error(String(e.message || e).slice(0, 200), '목소리 등록 실패');
+        } finally {
+            $b.text('＋ 목소리');
+        }
+    });
+    setTimeout(() => loadVoices(false), 1500); // config 로드 후 자동
 
     $('#dbridge_save').on('click', save);
 
