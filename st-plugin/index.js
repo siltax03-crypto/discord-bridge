@@ -80,6 +80,40 @@ function readPngCard(filePath) {
 }
 
 // --- 영화 같이보기: 브라우저 확장 → (이 플러그인) → localhost 봇으로 프록시 ---
+function movieCors(res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
+function moviePreflight(req, res) { movieCors(res); res.status(204).end(); }
+
+async function proxyToBot(subPath, req, res) {
+    movieCors(res);
+    const config = readJson(CONFIG_PATH, {}) || {};
+    const port = config.moviePort || 8788;
+    // GET 쿼리(CSRF 회피) 또는 POST 바디 둘 다 허용
+    const src = (req.method === 'GET') ? (req.query || {}) : (req.body || {});
+    const body = { ...src };
+    if (typeof body.cues === 'string') { try { body.cues = JSON.parse(body.cues); } catch { body.cues = []; } }
+    // 확장이 올바른 토큰을 보냈는지 검증 (아무나 못 쏘게)
+    if (config.movieToken && body.token !== config.movieToken) {
+        return res.status(401).json({ error: 'bad token' });
+    }
+    try {
+        const r = await fetch(`http://127.0.0.1:${port}${subPath}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const text = await r.text();
+        res.status(r.status).type('application/json').send(text || '{}');
+    } catch (e) {
+        res.status(502).json({ error: `봇 수신 서버에 연결 실패: ${e.message}` });
+    }
+}
+
+// --- 라우트 핸들러 ---
+
 // 봇 config.json 읽기
 function getConfig(req, res) {
     const config = readJson(CONFIG_PATH, null);
@@ -430,6 +464,13 @@ async function init(router) {
     router.post('/update', jsonParser, postUpdate);
     router.post('/dev-update', jsonParser, postDevUpdate);
     // 영화 같이보기 프록시 (브라우저 확장 → 봇). GET 사용(ST CSRF 회피), POST도 허용.
+    router.options('/movie/:action', moviePreflight);
+    router.get('/movie/start', (req, res) => proxyToBot('/movie/start', req, res));
+    router.get('/movie/sub', (req, res) => proxyToBot('/movie/sub', req, res));
+    router.get('/movie/end', (req, res) => proxyToBot('/movie/end', req, res));
+    router.post('/movie/start', jsonParser, (req, res) => proxyToBot('/movie/start', req, res));
+    router.post('/movie/sub', jsonParser, (req, res) => proxyToBot('/movie/sub', req, res));
+    router.post('/movie/end', jsonParser, (req, res) => proxyToBot('/movie/end', req, res));
     console.log('[discord-bridge-config] 플러그인 로드됨. bridge 경로:', BRIDGE_PATH);
 }
 
