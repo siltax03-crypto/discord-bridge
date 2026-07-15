@@ -1004,9 +1004,9 @@ const Bot = {
         const effUserName = personaName || userName;
 
         // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
-        const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
-        // 목소리: 채널별(channels[id].rvcVoice) > 전역(config.rvcVoice) > 서버 기본
+        // 채널에 📞목소리(rvcVoice)를 지정한 통화만 변환 — 빈칸이면 Live 원음 그대로 (한국어는 원음이 나음)
         const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
+        const rvcBase = rvcVoice ? (config.rvcUrl || '').trim().replace(/\/+$/, '') : '';
         // 통화 언어: 채널 언어 기본. RVC(영어 모델) 억양을 살리고 싶을 때만 callLanguage='en'으로.
         const callLang = config.callLanguage || Langs.get(channelId, config.language || 'ko');
 
