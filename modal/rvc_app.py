@@ -21,6 +21,8 @@ MODELS = {
 DEFAULT_VOICE = "deadpool"
 # 봇 config.rvcToken과 동일하게 설정하면 남이 URL 알아도 못 씀 (빈값 = 인증 생략)
 AUTH_TOKEN = ""
+# 목소리 추가 전용 토큰 — Modal 시크릿(rvc-add-token)의 ADD_TOKEN 값. 변환은 열어두고 add_voice만 보호.
+ADD_TOKEN = os.environ.get("ADD_TOKEN", "")
 
 app = modal.App("rvc-voice")
 
@@ -56,7 +58,7 @@ image = (
 voices_vol = modal.Volume.from_name("rvc-voices", create_if_missing=True)
 
 
-@app.cls(image=image, gpu="T4", scaledown_window=420, timeout=300, volumes={"/voices": voices_vol})
+@app.cls(image=image, gpu="T4", scaledown_window=420, timeout=300, volumes={"/voices": voices_vol}, secrets=[modal.Secret.from_name("rvc-add-token")])
 class RVCServer:
     # 목소리 등록: src 폴더에서 .pth/.index를 찾아 rvc-python이 기대하는 /models/<name>/ 구조로 링크
     def _register(self, name, src):
@@ -142,11 +144,11 @@ class RVCServer:
                 return Response(status_code=401)
             return {"ok": True, "voices": self.available, "current": self.current}
 
-        # 목소리 추가: {name, url(zip)} → 볼륨에 영구 저장 + 즉시 사용. 재배포 불필요.
+        # 목소리 추가: {name, url(zip)} → 볼륨에 영구 저장 + 즉시 사용. 재배포 불필요. ADD_TOKEN 필요.
         @web.post("/add_voice")
         async def add_voice(request: Request):
-            if not _auth_ok(request):
-                return Response(status_code=401)
+            if ADD_TOKEN and request.headers.get("x-add-token") != ADD_TOKEN:
+                return Response(status_code=401, content=b"add token required")
             import re
             import zipfile
 

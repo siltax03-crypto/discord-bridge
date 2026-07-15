@@ -24,6 +24,12 @@ const AIClient = {
         return imageProfile;
     },
 
+    // 음성메모 TTS 가능 여부 (Vertex 프로필 또는 AI Studio 키)
+    canTts() {
+        const isGem = (p) => !!p?.apiKey && (/vertex|google|makersuite/.test(p.api || '') || (p.model || '').includes('gemini'));
+        return isGem(imageProfile) || isGem(profile) || !!config.liveApiKey;
+    },
+
     async sendMessage(messages, options = {}) {
         const api = profile.api || '';
         const model = profile.model || '';
@@ -266,17 +272,25 @@ const AIClient = {
         return this.sendMessage(modified, options);
     },
 
-    // 음성메모 TTS: 텍스트 → PCM(24kHz mono s16le) Buffer. AI Studio 키 필요 (Gemini TTS 모델).
+    // 음성메모 TTS: 텍스트 → PCM(24kHz mono s16le) Buffer.
+    // Vertex 우선(이미지 전용 프로필 > Gemini 채팅 프로필 키 — 별도 키 불필요), 없으면 AI Studio 키(liveApiKey).
     async ttsSpeak(text, voiceName = 'Charon') {
-        const apiKey = config.liveApiKey;
-        if (!apiKey) throw new Error('음성메모에는 AI Studio 키(liveApiKey)가 필요해요');
+        const isGem = (p) => !!p?.apiKey && (/vertex|google|makersuite/.test(p.api || '') || (p.model || '').includes('gemini'));
+        const vp = isGem(imageProfile) ? imageProfile : (isGem(profile) ? profile : null);
         const model = config.ttsModel || 'gemini-2.5-flash-preview-tts';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        let url;
+        if (vp) {
+            url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent?key=${vp.apiKey}`;
+        } else if (config.liveApiKey) {
+            url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.liveApiKey}`;
+        } else {
+            throw new Error('음성메모 TTS에 쓸 Gemini 키가 없어요 (Vertex 프로필 또는 liveApiKey)');
+        }
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                contents: [{ parts: [{ text }] }],
+                contents: [{ role: 'user', parts: [{ text }] }],
                 generationConfig: {
                     responseModalities: ['AUDIO'],
                     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },

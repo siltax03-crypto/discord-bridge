@@ -20,6 +20,9 @@ import GeminiLive from './voice-live.js';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 배포판 기본 RVC 목소리 변환 서버 (config.rvcUrl로 교체 가능)
+const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
+
 let config = {};
 const clients = [];              // 기동된 모든 Client
 const channelClients = {};       // 단일봇: { channelId: client }
@@ -1006,7 +1009,7 @@ const Bot = {
         // RVC 변환 (Modal): Live 오디오를 ~2초 세그먼트로 잘라 변환 서버에 보내고, 순서대로 재생
         // 채널에 📞목소리(rvcVoice)를 지정한 통화만 변환 — 빈칸이면 Live 원음 그대로 (한국어는 원음이 나음)
         const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
-        const rvcBase = rvcVoice ? (config.rvcUrl || '').trim().replace(/\/+$/, '') : '';
+        const rvcBase = rvcVoice ? this._rvcUrl() : '';
         // 통화 언어: 채널 언어 기본. RVC(영어 모델) 억양을 살리고 싶을 때만 callLanguage='en'으로.
         const callLang = config.callLanguage || Langs.get(channelId, config.language || 'ko');
 
@@ -1084,21 +1087,47 @@ const Bot = {
         return live;
     },
 
-    // 음성메모 가능 채널인지: RVC 목소리 지정 + RVC 서버 + TTS용 AI Studio 키
+    // RVC 서버 주소 (미설정이면 내장 기본 서버)
+    _rvcUrl() {
+        return ((config.rvcUrl || DEFAULT_RVC_URL) + '').trim().replace(/\/+$/, '');
+    },
+
+    // 서버에 실제로 있는 목소리 목록 (10분 캐시) — 없는 목소리는 변환 안 함
+    async _rvcVoices() {
+        const now = Date.now();
+        if (this._rvcVoicesCache && now - this._rvcVoicesCache.ts < 600_000) return this._rvcVoicesCache.list;
+        try {
+            const resp = await fetch(`${this._rvcUrl()}/warm`, { signal: AbortSignal.timeout(60_000) });
+            const d = await resp.json();
+            const list = Array.isArray(d.voices) ? d.voices : [];
+            this._rvcVoicesCache = { list, ts: now };
+            return list;
+        } catch (e) {
+            console.warn('[RVC] 목소리 목록 조회 실패:', e.message);
+            return this._rvcVoicesCache?.list || [];
+        }
+    },
+
+    // 음성메모 가능 채널인지: RVC 목소리 지정 + TTS 가능한 Gemini 키(Vertex 프로필 또는 liveApiKey)
     _voiceNoteReady(channelId) {
         const voice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
-        return !!(voice && (config.rvcUrl || '').trim() && config.liveApiKey);
+        return !!(voice && AIClient.canTts());
     },
 
     // 음성메모 생성: 영어 대사 → Gemini TTS → RVC(캐릭터 목소리) → WAV 첨부 전송
     async _sendVoiceNote(channel, channelId, character, text) {
-        const rvcBase = (config.rvcUrl || '').trim().replace(/\/+$/, '');
+        const rvcBase = this._rvcUrl();
         const rvcVoice = config.channels[channelId]?.rvcVoice || config.rvcVoice || '';
         await channel.sendTyping().catch(() => {});
         const pcm = await AIClient.ttsSpeak(text, config.liveVoice || 'Charon');
         let out = pcm;
-        try { out = await this._rvcConvert(rvcBase, pcm, rvcVoice); }
-        catch (e) { console.warn('[VoiceNote] RVC 실패(원음 사용):', e.message); }
+        const voices = await this._rvcVoices();
+        if (!voices.includes(rvcVoice)) {
+            console.warn(`[VoiceNote] 서버에 없는 목소리 "${rvcVoice}" → 변환 생략 (있는 목소리: ${voices.join(', ')})`);
+        } else {
+            try { out = await this._rvcConvert(rvcBase, pcm, rvcVoice); }
+            catch (e) { console.warn('[VoiceNote] RVC 실패(원음 사용):', e.message); }
+        }
         const h = Buffer.alloc(44);
         h.write('RIFF', 0); h.writeUInt32LE(36 + out.length, 4); h.write('WAVE', 8);
         h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);

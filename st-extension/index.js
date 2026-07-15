@@ -92,6 +92,7 @@ async function loadAll() {
             openSub: c.openSub || {},
             liveStyle: c.liveStyle || '',
             rvcUrl: c.rvcUrl || '',
+            rvcToken: c.rvcToken || '', // 목소리 추가(add_voice) 토큰 — config.json에서만 설정
             proactive: {
                 enabled: !!p.enabled,
                 photos: !!p.photos,
@@ -833,7 +834,7 @@ jQuery(async () => {
         try {
             const r = await fetch(`${base}/add_voice`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-add-token': state.rvcToken || '' },
                 body: JSON.stringify({ name, url }),
             });
             if (!r.ok) throw new Error((await r.text().catch(() => '')) || `HTTP ${r.status}`);
