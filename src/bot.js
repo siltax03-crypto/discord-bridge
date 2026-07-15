@@ -1134,7 +1134,10 @@ const Bot = {
         h.writeUInt32LE(24000, 24); h.writeUInt32LE(24000 * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
         h.write('data', 36); h.writeUInt32LE(out.length, 40);
         const file = new AttachmentBuilder(Buffer.concat([h, out]), { name: 'voice-message.wav' });
-        await channel.send({ files: [file] });
+        // 일반 답장과 동일하게 캐릭터 웹훅(이름/아바타)으로 전송 (멀티봇은 봇 본인)
+        const webhook = config.botMode === 'multi' ? null : await this._getWebhook(channel, character).catch(() => null);
+        if (webhook) await webhook.send({ username: character.name || 'Character', files: [file] });
+        else await channel.send({ files: [file] });
         // 보냈다는 걸 히스토리에 남겨 다음 턴에도 기억하게
         ChatHistory.addMessage(channelId, 'assistant', `🎤 (voice memo) ${text}`, character.name);
     },
