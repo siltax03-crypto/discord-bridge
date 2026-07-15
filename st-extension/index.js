@@ -764,7 +764,7 @@ const SETTINGS_HTML = `
                     <div class="menu_button" id="dbridge_voice_add" style="width:auto;white-space:nowrap">＋ 목소리</div>
                     <div class="menu_button" id="dbridge_voice_refresh" title="목소리 목록 새로고침" style="width:auto;white-space:nowrap">🔄</div>
                 </div>
-                <input type="file" id="dbridge_voice_file" accept="audio/*" style="display:none" />
+                <input type="file" id="dbridge_voice_file" accept="audio/*,video/*,.wav,.mp3,.m4a,.ogg,.flac,.opus,.aac,.wma,.webm,.mp4" style="display:none" />
                 <label class="dbridge_check"><input type="checkbox" id="dbridge_voice_consent" />
                     <span class="dbridge_hint">이 음성은 <b>내 목소리이거나 사용 권한이 있는 목소리</b>입니다</span></label>
                 <input type="password" id="dbridge_voice_token" class="text_pole" autocomplete="off" placeholder="목소리 추가 토큰 (배포 때 CLONE_ADD_TOKEN 걸었으면)" style="margin-top:4px" />
