@@ -777,9 +777,11 @@ const SETTINGS_HTML = `
                 <input type="text" id="dbridge_cloneurl" class="text_pole" autocomplete="off" placeholder="https://…-cloneserver-api.modal.run" />
                 <div class="dbridge_inline" style="margin-top:4px">
                     <input type="text" id="dbridge_clone_vname" class="text_pole" autocomplete="off" placeholder="이름 (예: mia)" style="max-width:110px" />
-                    <input type="file" id="dbridge_clone_file" class="text_pole" accept="audio/*" style="flex:1" />
+                    <div class="menu_button" id="dbridge_clone_pick" style="width:auto;white-space:nowrap">📁 음성 파일 선택</div>
+                    <span class="dbridge_hint" id="dbridge_clone_fname" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">선택된 파일 없음</span>
                     <div class="menu_button" id="dbridge_clone_add" style="width:auto;white-space:nowrap">＋ 목소리</div>
                 </div>
+                <input type="file" id="dbridge_clone_file" accept="audio/*" style="display:none" />
                 <label class="dbridge_check"><input type="checkbox" id="dbridge_clone_consent" />
                     <span class="dbridge_hint">이 음성은 <b>내 목소리이거나 사용 권한이 있는 목소리</b>입니다 (업로드에 필요)</span></label>
                 <div class="dbridge_hint">10~30초, 배경음·음악 없는 <b>실제 사람 음성</b>. mp3/wav/m4a 다 됨.<br/>
@@ -901,6 +903,12 @@ jQuery(async () => {
     setTimeout(rvcVoiceList, 1500); // config 로드 후 자동 (콜드스타트면 늦게 채워짐)
 
     // 음성 복제: 오디오 파일 업로드로 목소리 등록 (동의 체크 필수 — 책임 구조)
+    // 파일 입력은 숨기고 버튼으로 연다 (ST의 text_pole 스타일이 file 입력을 뭉개서)
+    $('#dbridge_clone_pick').on('click', () => $('#dbridge_clone_file').trigger('click'));
+    $('#dbridge_clone_file').on('change', function () {
+        const f = this.files?.[0];
+        $('#dbridge_clone_fname').text(f ? `${f.name} (${Math.round(f.size / 1024)}KB)` : '선택된 파일 없음');
+    });
     $('#dbridge_clone_add').on('click', async () => {
         const name = ($('#dbridge_clone_vname').val() || '').trim();
         const file = $('#dbridge_clone_file')[0]?.files?.[0];
@@ -920,6 +928,7 @@ jQuery(async () => {
             toastr.success(`목소리 "${name}" 등록! 채널 행 "🎤 목소리"에서 고르고 저장하세요.`, '음성 복제');
             $('#dbridge_clone_vname').val('');
             $('#dbridge_clone_file').val('');
+            $('#dbridge_clone_fname').text('선택된 파일 없음');
             rvcVoiceList();
         } catch (e) {
             toastr.error(String(e.message || e).slice(0, 200), '목소리 등록 실패');
