@@ -1131,10 +1131,10 @@ const Bot = {
         return this._voiceEngine() === 'clone' ? true : AIClient.canTts();
     },
 
-    // 복제 엔진이면 대사 언어 제한 없음(한국어 네이티브), RVC면 영어 (학습 언어)
+    // 음성메모 대사 언어 — 두 엔진 다 영어 고정. 목소리 모델이 영어라 한국어는 억양이 깨짐.
+    // (config.voiceNoteLang로 굳이 바꿀 수는 있지만 권장 안 함)
     _voiceNoteLang(channelId) {
-        if (this._voiceEngine() !== 'clone') return 'en';
-        return config.voiceNoteLang || Langs.get(channelId, config.language || 'ko');
+        return config.voiceNoteLang || 'en';
     },
 
     // 음성메모 생성 → 캐릭터 웹훅으로 WAV 첨부 전송
