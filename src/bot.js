@@ -2085,6 +2085,14 @@ const Bot = {
             if (mode !== 'rp' && this._voiceNoteReady(channelId)) voiceNoteText = tagBody(vnMatch[0], 'voice_note');
             response = response.replace(vnMatch[0], '').trim();
         }
+        // 모델이 히스토리의 "🎤 (voice memo) ..." 표기를 흉내내 텍스트로 쓴 경우도 진짜 음성으로 전환
+        if (!voiceNoteText && mode !== 'rp' && this._voiceNoteReady(channelId)) {
+            const mimic = response.match(/🎤?\s*\(\s*voice\s*memo\s*\)\s*:?\s*([^\n]+)/i);
+            if (mimic && mimic[1].trim()) {
+                voiceNoteText = mimic[1].trim();
+                response = response.replace(mimic[0], '').trim();
+            }
+        }
         if (voiceNoteText) {
             this._sendVoiceNote(channel, channelId, character, voiceNoteText)
                 .catch((e) => console.warn('[VoiceNote] 실패:', e.message));
@@ -3025,6 +3033,14 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             if (vnMatch) {
                 if (mode !== 'rp' && this._voiceNoteReady(channelId)) voiceNoteText = vnMatch[1].trim();
                 response = response.replace(vnMatch[0], '').trim();
+            }
+            // "🎤 (voice memo) ..." 텍스트 흉내도 진짜 음성으로 전환
+            if (!voiceNoteText && mode !== 'rp' && this._voiceNoteReady(channelId)) {
+                const mimic = response.match(/🎤?\s*\(\s*voice\s*memo\s*\)\s*:?\s*([^\n]+)/i);
+                if (mimic && mimic[1].trim()) {
+                    voiceNoteText = mimic[1].trim();
+                    response = response.replace(mimic[0], '').trim();
+                }
             }
 
             // 선톡(단일봇 경로): STATUS/REMIND 태그는 제거만 (선톡은 리마인더 새로 안 만듦)
