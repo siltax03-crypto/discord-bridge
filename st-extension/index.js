@@ -435,17 +435,7 @@ async function loadVoices(verbose) {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         voiceList = Array.isArray(d.voices) ? d.voices : [];
-        // 이번 달 사용량 — 서버가 GPU 시간을 직접 세서 알려준다 (예산 넘으면 음성메모만 자동 중단)
-        let usage = '';
-        if (typeof d.spent_usd === 'number') {
-            const pct = d.budget_usd > 0 ? Math.round((d.spent_usd / d.budget_usd) * 100) : 0;
-            const mark = d.budget_usd > 0 && d.spent_usd >= d.budget_usd ? '🛑 한도 도달 — 음성메모 중단됨'
-                : pct >= 80 ? '⚠️' : '💰';
-            usage = d.budget_usd > 0
-                ? `\n${mark} 이번 달 사용: $${d.spent_usd.toFixed(2)} / $${d.budget_usd} (${pct}%)`
-                : `\n💰 이번 달 사용: $${d.spent_usd.toFixed(2)} (한도 없음)`;
-        }
-        $('#dbridge_voice_list').text(`등록된 목소리: ${voiceList.join(', ') || '(없음 — 위에서 추가)'} · 채널 행의 "🎤 음성메모 목소리"에서 선택하세요. 대사는 영어로 나갑니다.${usage}`);
+        $('#dbridge_voice_list').text(`등록된 목소리: ${voiceList.join(', ') || '(없음 — 위에서 추가)'} · 채널 행의 "🎤 음성메모 목소리"에서 선택하세요. 대사는 영어로 나갑니다.`);
         refreshVoiceSelects();
     } catch (e) {
         if (verbose) $('#dbridge_voice_list').text(`목소리 목록 실패: ${e.message} — 서버 URL 확인`);
