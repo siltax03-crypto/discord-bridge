@@ -900,7 +900,17 @@ jQuery(async () => {
             const d = await r.json();
             const vs = d.voices || [];
             rvcVoicesArr = vs;
-            $('#dbridge_rvc_voicelist').text(`목소리: ${vs.join(', ') || '(없음)'} — 채널 행 "🎤 목소리"에서 선택`);
+            // 이번 달 사용량 — 복제 서버가 GPU 시간을 직접 세서 알려준다 (예산 넘으면 음성메모만 자동 중단)
+            let usage = '';
+            if (typeof d.spent_usd === 'number') {
+                const pct = d.budget_usd > 0 ? Math.round((d.spent_usd / d.budget_usd) * 100) : 0;
+                const mark = d.budget_usd > 0 && d.spent_usd >= d.budget_usd ? '🛑 한도 도달 — 음성메모 중단됨'
+                    : pct >= 80 ? '⚠️' : '💰';
+                usage = d.budget_usd > 0
+                    ? `\n${mark} 이번 달 사용: $${d.spent_usd.toFixed(2)} / $${d.budget_usd} (${pct}%)`
+                    : `\n💰 이번 달 사용: $${d.spent_usd.toFixed(2)} (한도 없음)`;
+            }
+            $('#dbridge_rvc_voicelist').text(`목소리: ${vs.join(', ') || '(없음)'} — 채널 행 "🎤 목소리"에서 선택${usage}`);
             refreshVoiceSelects();
         } catch (e) {
             $('#dbridge_rvc_voicelist').text(`목소리 목록 실패: ${e.message}`);

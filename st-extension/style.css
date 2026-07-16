@@ -104,3 +104,8 @@
 }
 .discord-bridge-settings .dbridge_check input { width: auto; }
 .discord-bridge-settings #dbridge_proactive_opts { margin-top: 6px; }
+
+/* 음성메모 안내 — 사용량 줄바꿈 표시 */
+.discord-bridge-settings #dbridge_rvc_voicelist {
+    white-space: pre-line;
+}
