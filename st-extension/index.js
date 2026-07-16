@@ -882,7 +882,7 @@ jQuery(async () => {
 
     // 목소리 목록 (현재 엔진 서버에서) — Modal 서버에 직접, 재배포 불필요
     const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
-    const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-cloneserver-api.modal.run';
+    const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-api.modal.run';
     function voiceBase() {
         const clone = $('input[name="dbridge_vengine"]:checked').val() === 'clone';
         const v = clone

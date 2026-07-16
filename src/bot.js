@@ -24,7 +24,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 // rvc   : 미리 학습된 모델로 음색 변환 (Gemini TTS → 변환). 정교하지만 학습 언어 억양이 묻어남.
 // clone : zero-shot 복제 (참조 음성 몇 초 → 그 목소리로 바로 말함). 학습 불필요 + 한국어 네이티브.
 const DEFAULT_RVC_URL = 'https://siltax03-crypto--rvc-voice-rvcserver-api.modal.run';
-const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-cloneserver-api.modal.run';
+const DEFAULT_CLONE_URL = 'https://siltax03-crypto--voice-clone-api.modal.run';
 // 음성메모: 파일명 + 기억에 남기는 접두어 (purge/삭제 동기화가 이걸로 찾는다)
 const VOICE_MEMO_FILE = 'voice-message.wav';
 const VOICE_MEMO_PREFIX = '🎤 (voice memo)';
