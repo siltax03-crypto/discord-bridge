@@ -41,7 +41,18 @@ ADD_TOKEN = os.environ.get("CLONE_ADD_TOKEN", "")
 BUDGET_USD = os.environ.get("CLONE_BUDGET_USD", "25")
 
 T4_USD_PER_HOUR = 0.60      # 요금이 바뀌면 여기만 수정
-USAGE_PATH = "/samples/_usage.json"   # *.wav만 목소리로 세므로 이 파일은 목록에 안 잡힘
+USAGE_PATH = "/samples/_usage.json"    # *.wav만 목소리로 세므로 이 파일들은 목록에 안 잡힘
+BUDGET_PATH = "/samples/_budget.json"  # 확장에서 바꾼 한도 (없으면 배포 시 env 기본값)
+
+
+def _budget_now(default_usd):
+    """이번 달 한도. 확장에서 저장한 값 > 배포 시 기본값."""
+    try:
+        with open(BUDGET_PATH) as f:
+            v = float(json.load(f).get("budget_usd"))
+        return max(0.0, v)
+    except Exception:
+        return default_usd
 
 
 def _usage_now():
@@ -74,8 +85,11 @@ web_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install("fastapi[standard]", "requests")
-    .env({"ADD_TOKEN": ADD_TOKEN, "BUDGET_USD": BUDGET_USD})
 )
+
+# 토큰/한도는 이미지가 아니라 런타임 시크릿으로 넣는다.
+# (Image.env()에 넣으면 레이어 캐시에 묻혀서, 값을 바꿔도 재배포가 캐시를 재사용해 반영이 안 됨)
+runtime_env = modal.Secret.from_dict({"ADD_TOKEN": ADD_TOKEN, "BUDGET_USD": BUDGET_USD})
 
 samples_vol = modal.Volume.from_name("clone-samples", create_if_missing=True)  # 참조 음성
 cache_vol = modal.Volume.from_name("clone-cache", create_if_missing=True)      # 모델 가중치 캐시(콜드스타트 단축)
@@ -164,7 +178,7 @@ class Speaker:
 # ─────────────────────────────────────────────────────────────
 # CPU: 웹 프론트. 목록/등록/삭제는 여기서 처리하고 /speak만 GPU로 넘긴다.
 # ─────────────────────────────────────────────────────────────
-@app.function(image=web_image, volumes={"/samples": samples_vol}, scaledown_window=60)
+@app.function(image=web_image, volumes={"/samples": samples_vol}, secrets=[runtime_env], scaledown_window=60)
 @modal.asgi_app()
 def api():
     import re
@@ -205,7 +219,7 @@ def api():
             "ok": True,
             "voices": voices(),
             "spent_usd": round(_usd(u["gpu_seconds"]), 2),
-            "budget_usd": budget,
+            "budget_usd": _budget_now(budget),
             "month": u["month"],
         }
 
@@ -244,6 +258,26 @@ def api():
             return Response(status_code=500, content=f"등록 실패: {e}".encode())
         return {"ok": True, "voices": voices()}
 
+    # 한도 변경 — 확장에서 호출. 0이면 무제한.
+    @web.post("/set_budget")
+    async def set_budget(request: Request):
+        if not auth_ok(request):
+            return Response(status_code=401, content=b"add token required")
+        try:
+            v = float((await request.json()).get("budget_usd"))
+        except Exception:
+            return Response(status_code=400, content=b"budget_usd (number) required")
+        if v < 0:
+            return Response(status_code=400, content=b"budget_usd must be >= 0")
+        try:
+            with open(BUDGET_PATH, "w") as f:
+                json.dump({"budget_usd": v}, f)
+            samples_vol.commit()
+        except Exception as e:
+            return Response(status_code=500, content=f"저장 실패: {e}".encode())
+        print(f"[Budget] 한도 변경 → ${v}")
+        return {"ok": True, "budget_usd": v}
+
     @web.post("/del_sample")
     async def del_sample(request: Request):
         if not auth_ok(request):
@@ -265,14 +299,15 @@ def api():
         if voice and voice not in voices():
             return Response(status_code=404, content=f"unknown voice: {voice}".encode())
         # 예산 상한 — 넘으면 GPU를 아예 안 깨운다 (봇은 음성메모 실패를 무시하고 정상 동작)
-        if budget > 0:
-            try:
-                samples_vol.reload()
-            except Exception:
-                pass
+        try:
+            samples_vol.reload()
+        except Exception:
+            pass
+        cap = _budget_now(budget)
+        if cap > 0:
             spent = _usd(_usage_now()["gpu_seconds"])
-            if spent >= budget:
-                msg = f"이번 달 예산 초과 (${spent:.2f}/${budget:.0f}) — 음성메모 중단됨"
+            if spent >= cap:
+                msg = f"이번 달 예산 초과 (${spent:.2f}/${cap:.0f}) — 음성메모 중단됨"
                 print("[Budget]", msg)
                 return Response(status_code=429, content=msg.encode())
         try:

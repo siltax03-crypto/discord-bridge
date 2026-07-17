@@ -797,6 +797,9 @@ const SETTINGS_HTML = `
 
             <div class="dbridge_inline" style="margin-top:4px">
                 <div class="menu_button" id="dbridge_rvc_vrefresh" title="목소리 목록 새로고침" style="width:auto;white-space:nowrap">🔄 목소리 목록</div>
+                <span class="dbridge_hint" style="white-space:nowrap">월 한도 $</span>
+                <input type="number" id="dbridge_budget" class="text_pole" min="0" step="1" style="max-width:70px" />
+                <div class="menu_button" id="dbridge_budget_save" style="width:auto;white-space:nowrap">한도 저장</div>
             </div>
             <div class="dbridge_hint" id="dbridge_rvc_voicelist">채널 행의 "🎤 목소리"에서 캐릭터별로 고르면 돼요. 엔진을 바꾸면 목록도 바뀝니다.</div>
 
@@ -910,6 +913,7 @@ jQuery(async () => {
                     ? `\n${mark} 이번 달 사용: $${d.spent_usd.toFixed(2)} / $${d.budget_usd} (${pct}%)`
                     : `\n💰 이번 달 사용: $${d.spent_usd.toFixed(2)} (한도 없음)`;
             }
+            if (typeof d.budget_usd === 'number') $('#dbridge_budget').val(d.budget_usd);
             $('#dbridge_rvc_voicelist').text(`목소리: ${vs.join(', ') || '(없음)'} — 채널 행 "🎤 목소리"에서 선택${usage}`);
             refreshVoiceSelects();
         } catch (e) {
@@ -917,6 +921,28 @@ jQuery(async () => {
         }
     }
     $('#dbridge_rvc_vrefresh').on('click', rvcVoiceList);
+    // 월 한도 저장 — 서버(볼륨)에 저장돼서 재배포 없이 바로 적용. 넘으면 음성메모만 멈춤.
+    $('#dbridge_budget_save').on('click', async () => {
+        const base = voiceBase();
+        const v = parseFloat($('#dbridge_budget').val());
+        if (!base) { toastr.warning('먼저 서버 URL을 넣으세요.'); return; }
+        if (!Number.isFinite(v) || v < 0) { toastr.warning('한도는 0 이상 숫자로 (0 = 무제한)'); return; }
+        const $b = $('#dbridge_budget_save').text('저장 중...');
+        try {
+            const r = await fetch(`${base}/set_budget`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-add-token': state.rvcToken || '' },
+                body: JSON.stringify({ budget_usd: v }),
+            });
+            if (!r.ok) throw new Error((await r.text().catch(() => '')) || `HTTP ${r.status}`);
+            toastr.success(v > 0 ? `월 한도 $${v}로 저장. 넘으면 음성메모만 자동 중단돼요.` : '한도 없음으로 저장 (주의: 계속 과금됨)', '음성메모');
+            rvcVoiceList();
+        } catch (e) {
+            toastr.error(String(e.message || e).slice(0, 200), '한도 저장 실패');
+        } finally {
+            $b.text('한도 저장');
+        }
+    });
     setTimeout(rvcVoiceList, 1500); // config 로드 후 자동 (콜드스타트면 늦게 채워짐)
 
     // 음성 복제: 오디오 파일 업로드로 목소리 등록 (동의 체크 필수 — 책임 구조)
