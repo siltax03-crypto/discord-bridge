@@ -58,7 +58,7 @@ image = (
 voices_vol = modal.Volume.from_name("rvc-voices", create_if_missing=True)
 
 
-@app.cls(image=image, gpu="T4", scaledown_window=420, timeout=300, volumes={"/voices": voices_vol}, secrets=[modal.Secret.from_name("rvc-add-token")])
+@app.cls(image=image, gpu="T4", scaledown_window=180, timeout=300, volumes={"/voices": voices_vol}, secrets=[modal.Secret.from_name("rvc-add-token")])
 class RVCServer:
     # 목소리 등록: src 폴더에서 .pth/.index를 찾아 rvc-python이 기대하는 /models/<name>/ 구조로 링크
     def _register(self, name, src):

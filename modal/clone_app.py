@@ -13,7 +13,7 @@
 # ⚠️ 비용 구조 — GPU는 "말할 때"만 켜진다:
 #   웹 프론트(/warm, /add_sample, /del_sample)는 CPU 컨테이너라 거의 공짜.
 #   확장이 설정창 열 때마다 목록을 조회해도 GPU는 안 깨어난다.
-#   T4는 /speak 요청이 올 때만 켜지고, 유휴 3분 뒤 자동으로 꺼진다.
+#   T4는 /speak 요청이 올 때만 켜지고, 유휴 2분 뒤 자동으로 꺼진다.
 #
 # 💰 예산 상한 (기본 $25/월):
 #   GPU 컨테이너가 살아있던 시간을 볼륨에 누적 기록하고, 한도를 넘으면 /speak가 429로 거절한다.
@@ -85,7 +85,7 @@ cache_vol = modal.Volume.from_name("clone-cache", create_if_missing=True)      #
 # GPU: 실제 음성 생성만 담당. /speak 요청이 있을 때만 켜진다.
 # ─────────────────────────────────────────────────────────────
 @app.cls(
-    image=gpu_image, gpu="T4", scaledown_window=180, timeout=600,
+    image=gpu_image, gpu="T4", scaledown_window=120, timeout=600,   # 유휴 2분 뒤 자동 종료 (비용 절약; 그만큼 콜드스타트를 더 자주 만남)
     volumes={"/samples": samples_vol, "/cache": cache_vol},
 )
 class Speaker:
