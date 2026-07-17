@@ -8,6 +8,9 @@
 import { getRequestHeaders } from '../../../../script.js';
 
 const PLUGIN_BASE = '/api/plugins/discord-bridge-config';
+// 🎤 음성메모 UI 노출 여부. 기능(봇/서버) 자체는 그대로 있고 설정 화면만 감춘다.
+// true로 바꾸면 그대로 다시 열림 (config의 cloneUrl이 비어 있으면 봇에서 기능이 꺼진 상태).
+const VOICE_UI = false;
 const LANGS = [
     { value: 'ko', label: '한국어' },
     { value: 'en', label: 'English' },
@@ -204,10 +207,11 @@ function render() {
     // 영화 같이보기 토큰
     $('#dbridge_movietoken').val(state.movieToken || '');
 
-    // 🎤 음성메모
+    // 🎤 음성메모 (VOICE_UI=false면 섹션째 숨김 — 값은 그대로 보존되어 저장됨)
+    $('#dbridge_voice_section').toggle(VOICE_UI);
     $('#dbridge_cloneurl').val(state.cloneUrl || '');
     $('#dbridge_voice_token').val(state.voiceToken || '');
-    $('#dbridge_voice_box').toggle(!!(state.cloneUrl || '').trim());
+    $('#dbridge_voice_box').toggle(VOICE_UI && !!(state.cloneUrl || '').trim());
 
     // 선톡
     const p = state.proactive;
@@ -384,7 +388,7 @@ function renderChannelRows() {
 
         // 1:1 채널 + 음성메모 서버 설정됨 → 🎤 목소리 선택 (행 아래 별도 줄)
         // NPC그룹 체크(로스터 보관)만 켠 갠톡도 1:1이라 목소리 사용 가능. 진짜 단톡(시트)만 제외.
-        const voiceField = (!isGroup && (state.cloneUrl || '').trim())
+        const voiceField = (VOICE_UI && !isGroup && (state.cloneUrl || '').trim())
             ? `<div style="width:100%;display:flex;gap:8px;align-items:center;padding-left:1em">
                    <span class="dbridge_hint" style="white-space:nowrap">🎤 음성메모 목소리</span>
                    <select class="text_pole dbridge_row_voice" style="max-width:200px">${voiceOptions(conf.voice || '')}</select>
@@ -624,13 +628,6 @@ const SETTINGS_HTML = `
             <details class="dbridge_changelog">
                 <summary>📋 업데이트 내역</summary>
                 <div class="dbridge_changelog_body">
-                    <b>2026-07-15 — 🎤 음성메모</b>
-                    <ul>
-                        <li><b>음성메모</b>: 캐릭터가 <b>음성메시지</b>를 보냅니다. "목소리 듣고 싶어" 하면 남겨주고, 보고플 때·굿나잇 등에 가끔 자발적으로도 (선톡 포함)</li>
-                        <li>목소리는 <b>음성 파일 10~30초</b>만 올리면 학습 없이 바로 사용 (zero-shot 복제)</li>
-                        <li>쓰려면 본인 <b>Modal</b> 계정에 서버 배포 필요 (무료 크레딧, 5분) — 방법은 봇 폴더 <code>modal/README.md</code>. 안 쓰면 그냥 꺼둬도 됩니다</li>
-                        <li>⚠ 본인 목소리이거나 <b>사용 권한이 있는 음성만</b> 올리세요. 생성물 공개·판매는 권리 침해가 될 수 있어요</li>
-                    </ul>
                     <b>2026-07-05 — NPC 단톡</b>
                     <ul>
                         <li>채널 매핑에서 <b>"NPC그룹" 체크 + NPC 이름/아바타 입력</b> (그 채널은 1:1 그대로 유지됨)</li>
@@ -770,6 +767,7 @@ const SETTINGS_HTML = `
             <div class="dbridge_hint">넷플/유튜브/디즈니+ 같이보기용. 이 값과 크롬 확장의 토큰이 일치해야 합니다. 변경 후 봇·ST 재시작.</div>
 
             <hr/>
+            <div id="dbridge_voice_section" style="display:none">
             <label>🎤 음성메모 <span class="dbridge_hint">(선택 — 캐릭터가 음성메시지를 보냄)</span></label>
             <div class="dbridge_hint">본인 <b>Modal</b> 계정에 서버를 배포해서 씁니다 (무료 크레딧, 5분). 방법은 봇 폴더의 <code>modal/README.md</code></div>
             <input type="text" id="dbridge_cloneurl" class="text_pole" autocomplete="off" placeholder="https://…-voice-clone-cloneserver-api.modal.run (비우면 기능 끔)" />
@@ -787,6 +785,7 @@ const SETTINGS_HTML = `
                 <input type="password" id="dbridge_voice_token" class="text_pole" autocomplete="off" placeholder="목소리 추가 토큰 (배포 때 CLONE_ADD_TOKEN 걸었으면)" style="margin-top:4px" />
                 <div class="dbridge_hint" id="dbridge_voice_list">10~30초, 배경음 없는 <b>감정이 실린</b> 음성이 좋아요 (무미건조하게 읽은 음성 → 캐릭터도 무감정). 등록 후 채널 행의 <b>🎤 목소리</b>에서 캐릭터별로 고르면 끝. 대사는 영어로 나갑니다.</div>
             </div>
+            </div><!-- /dbridge_voice_section -->
 
             <hr/>
             <div class="menu_button menu_button_icon" id="dbridge_save"><i class="fa-solid fa-floppy-disk"></i> 저장</div>
@@ -1043,7 +1042,7 @@ jQuery(async () => {
             $b.text('＋ 목소리');
         }
     });
-    setTimeout(() => loadVoices(false), 1500); // config 로드 후 자동
+    if (VOICE_UI) setTimeout(() => loadVoices(false), 1500); // config 로드 후 자동
 
     $('#dbridge_save').on('click', save);
 
