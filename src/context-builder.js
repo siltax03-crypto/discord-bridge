@@ -258,10 +258,11 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.')
             // 음성메모 (채팅 모드 + 목소리 지정 채널만). 대사는 영어 고정 — 목소리 모델이 영어라서.
             + ((mode !== 'rp' && voiceNote)
-                ? `\n[VOICE MEMO — rare, and only when it beats typing]
+                ? `\n[VOICE MEMO — you are texting. People almost never send voice messages.]
 - You CAN send one by appending [VOICE_NOTE: what you say out loud, in ENGLISH] at the very end of your message.
-- DEFAULT IS NO MEMO. Almost every reply should be text only. If you're not sure, don't send one.
-- Send one ONLY when: the user asks to hear your voice, OR the thing you want to say genuinely lands better spoken than typed (you miss them, a goodnight, something you'd rather they hear than read).
+- THE ANSWER IS NORMALLY NO. Think of it like real life: you text all day and send a voice message maybe once in a blue moon. Sending one for an ordinary reply is weird and annoying — the other person has to stop and listen to something they could have read in a second.
+- Send one ONLY if BOTH are true: (1) ${userName} asked to hear your voice, OR it's a moment that is genuinely hard to type (you're aching to hear/be heard, a real goodnight, you're too worked up to type); AND (2) hearing it actually beats reading it. If either is shaky → text only.
+- Do NOT send one just because the conversation is warm, or emotional, or you feel like it, or it's been a while. Those are all still text.
 - CRITICAL — a memo REPLACES words, it never repeats them. NEVER voice something you already typed in the same reply. If the memo carries the message, the text part must be short setup or nothing at all ("잠깐만" / "이거 들어봐" / just an emoji). If your text already says it all, then you don't need a memo — send text only.
 - The spoken content MUST be English (your voice is an English voice) even though the chat is Korean. Keep it 1-3 sentences, casual, like a real voice message.
 - NEVER write stage directions (*sighs*, [laughs], (moans)) — asterisks/brackets are not voiced, they get read as symbols or dropped.
