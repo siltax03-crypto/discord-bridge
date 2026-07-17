@@ -258,11 +258,16 @@ Speak and act ONLY as ${sheetMember}. Do NOT speak for, narrate, or voice the ot
             : '- If you want to send a photo/selfie, append [SEND_PHOTO: English description of the image] at the very end of your message. Only do this occasionally when it feels natural.')
             // 음성메모 (채팅 모드 + 목소리 지정 채널만). 대사는 영어 고정 — 목소리 모델이 영어라서.
             + ((mode !== 'rp' && voiceNote)
-                ? `\n- You can also send a VOICE MEMO: append [VOICE_NOTE: what you say out loud, in ENGLISH] at the very end. The spoken content MUST be English (your voice is an English voice) even though the chat is Korean — short and natural like a real voice message (1-3 sentences, casual, emotional).
+                ? `\n[VOICE MEMO — rare, and only when it beats typing]
+- You CAN send one by appending [VOICE_NOTE: what you say out loud, in ENGLISH] at the very end of your message.
+- DEFAULT IS NO MEMO. Almost every reply should be text only. If you're not sure, don't send one.
+- Send one ONLY when: the user asks to hear your voice, OR the thing you want to say genuinely lands better spoken than typed (you miss them, a goodnight, something you'd rather they hear than read).
+- CRITICAL — a memo REPLACES words, it never repeats them. NEVER voice something you already typed in the same reply. If the memo carries the message, the text part must be short setup or nothing at all ("잠깐만" / "이거 들어봐" / just an emoji). If your text already says it all, then you don't need a memo — send text only.
+- The spoken content MUST be English (your voice is an English voice) even though the chat is Korean. Keep it 1-3 sentences, casual, like a real voice message.
 - NEVER write stage directions (*sighs*, [laughs], (moans)) — asterisks/brackets are not voiced, they get read as symbols or dropped.
 - SHORT non-verbal sounds written as letters DO get voiced, so use them where the character really would: "Mmm", "Hnn", "Ahh", "Tch", "Heh". Keep them to one syllable and lead with them ("Hnn... don't stop.", "Mmm, that's better."). Long drawn-out spellings ("Haaah", "Haa haa") come out as a flat spoken syllable — avoid those.
 - "..." reads as a real pause, so use it for breath and hesitation. Beyond that, let word choice carry the emotion ("God, I'm wrecked.", "Don't even ask."); the engine colors delivery from your mood.
-- Use a voice memo when the user wants to hear your voice, when you miss them, for good-morning/good-night, or just occasionally instead of typing. Do NOT overuse (at most once in a while), and always include a normal text reply too. NEVER type "🎤 (voice memo) ..." as plain text — that marker in history means audio that was ACTUALLY sent; to send one, use the [VOICE_NOTE: ...] tag.`
+- NEVER type "🎤 (voice memo) ..." as plain text — that marker in history means audio that was ACTUALLY sent; to send one, use the [VOICE_NOTE: ...] tag.`
                 : '');
 
         // 하루 일정 — 살아있는 사람처럼 (요일/주말 인식 포함)

@@ -307,7 +307,7 @@ def api():
         if cap > 0:
             spent = _usd(_usage_now()["gpu_seconds"])
             if spent >= cap:
-                msg = f"이번 달 예산 초과 (${spent:.2f}/${cap:.0f}) — 음성메모 중단됨"
+                msg = f"이번 달 예산 초과 (${spent:.2f}/${cap:g}) — 음성메모 중단됨"
                 print("[Budget]", msg)
                 return Response(status_code=429, content=msg.encode())
         try:
