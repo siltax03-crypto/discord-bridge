@@ -3081,7 +3081,7 @@ ${(movieSession.card.description || '').slice(0, 1500)}
             const fullNote = wantPhoto
                 ? `${note} This time also attach a photo (a selfie of you right now, or the view you're looking at) by adding [SEND_PHOTO: English description] at the end of your message.`
                 : wantVoice
-                    ? `${note} This time reach out with a VOICE MEMO instead of text: append [VOICE_NOTE: what you say, in ENGLISH — short, casual, like a real voice message] at the end. The memo IS the message — keep the text part to a word or an emoji, and never write out in text what the memo already says.`
+                    ? `${note} This time also attach a VOICE MEMO: append [VOICE_NOTE: what you say, in ENGLISH — short, casual, like a real voice message] at the end. Write your normal text message exactly as you would anyway — do NOT shrink it to an emoji or one word. The memo is something EXTRA on top (an aside, a different thought, something you'd rather say out loud), never a re-reading of the text.`
                     : note;
 
             // 채널별 페르소나 (선톡도 일반 답장과 동일하게 적용 — 전역 페르소나 폴백 방지)
