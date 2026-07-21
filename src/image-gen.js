@@ -2,13 +2,13 @@ import fs from 'fs';
 import STReader from './st-reader.js';
 
 let apiKey = null;
-let imageModel = 'gemini-2.5-flash-image';   // config.imageModel로 교체 가능
+let imageModel = 'gemini-3.1-flash-image';   // config.imageModel로 교체 가능
 
 const ImageGen = {
     init(cfg) {
         // 이미지는 Gemini/Vertex 키가 필요(나노바나나). 채팅이 클로드/잼민프록시면 키가 없으므로
         // 이미지 전용 프로필(imageProfile)이 있으면 그 키를 우선 사용, 없으면 채팅 프로필 키.
-        imageModel = cfg.imageModel || 'gemini-2.5-flash-image';
+        imageModel = cfg.imageModel || 'gemini-3.1-flash-image';
         try {
             const profileName = cfg.imageProfile || cfg.connectionProfile;
             const profile = STReader.getConnectionProfile(profileName);
