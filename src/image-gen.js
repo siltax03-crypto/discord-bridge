@@ -2,16 +2,18 @@ import fs from 'fs';
 import STReader from './st-reader.js';
 
 let apiKey = null;
+let imageModel = 'gemini-2.5-flash-image';   // config.imageModel로 교체 가능
 
 const ImageGen = {
     init(cfg) {
         // 이미지는 Gemini/Vertex 키가 필요(나노바나나). 채팅이 클로드/잼민프록시면 키가 없으므로
         // 이미지 전용 프로필(imageProfile)이 있으면 그 키를 우선 사용, 없으면 채팅 프로필 키.
+        imageModel = cfg.imageModel || 'gemini-2.5-flash-image';
         try {
             const profileName = cfg.imageProfile || cfg.connectionProfile;
             const profile = STReader.getConnectionProfile(profileName);
             apiKey = profile.apiKey;
-            if (cfg.imageProfile) console.log(`[ImageGen] 이미지 전용 프로필 사용: "${cfg.imageProfile}"`);
+            if (cfg.imageProfile) console.log(`[ImageGen] 이미지 전용 프로필 사용: "${cfg.imageProfile}" / 모델 ${imageModel}`);
         } catch (e) {
             apiKey = null;
             console.warn('[ImageGen] 이미지 프로필 로드 실패:', e.message);
@@ -39,8 +41,7 @@ const ImageGen = {
     async _generate(scenePrompt, avatarPath) {
         if (!apiKey) throw new Error('API 키가 없습니다');
 
-        const model = 'gemini-3.1-flash-image-preview';
-        const url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${model}:generateContent?key=${apiKey}`;
+        const url = `https://aiplatform.googleapis.com/v1/publishers/google/models/${imageModel}:generateContent?key=${apiKey}`;
 
         // 메시지 parts 조립
         const parts = [];
