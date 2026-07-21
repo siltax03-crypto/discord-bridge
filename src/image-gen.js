@@ -68,7 +68,7 @@ const ImageGen = {
             : scenePrompt;
         parts.push({ text: prompt });
 
-        console.log(`[ImageGen] 모델: ${model}`);
+        console.log(`[ImageGen] 모델: ${imageModel}`);
         console.log(`[ImageGen] 프롬프트: ${prompt.substring(0, 150)}...`);
 
         const resp = await fetch(url, {
