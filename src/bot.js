@@ -936,20 +936,25 @@ const Bot = {
             if (createdVc) vc.delete().catch(() => {});
             return interaction.reply({ content: '⚠️ 봇에 그 음성채널의 "연결"과 "말하기" 권한이 필요해요.', ...eph });
         }
-        // 통화 목소리 우선순위: 클론(음성메모와 같은 목소리) > Live > edge-tts
-        // 클론 목소리가 설정된 채널은 통화도 그 목소리로 — config.callEngine='live'로 옛 동작 강제 가능
+        // 통화 목소리 우선순위: Gemini TTS(빠름·한국어 네이티브) > 클론(음성메모 목소리) > Live > edge-tts
+        // config.callEngine='live'로 Live 강제 가능. 클론은 문장당 6~7초라 통화엔 너무 느림 — 폴백으로만.
         const cloneVoice = chCfg.rvcVoice || config.rvcVoice || '';
-        const useClone = config.callEngine !== 'live' && this._voiceEngine() === 'clone' && !!cloneVoice;
-        const callLang = useClone
-            ? (config.callLanguage || this._voiceNoteLang(channelId))
-            : Langs.get(channelId, config.language || 'ko');
+        const gemVoice = chCfg.callTtsVoice || config.callTtsVoice || '';
+        const useGemTts = config.callEngine !== 'live' && !!gemVoice && AIClient.canTts();
+        const useClone = !useGemTts && config.callEngine !== 'live' && this._voiceEngine() === 'clone' && !!cloneVoice;
+        const callLang = useGemTts
+            ? (config.callLanguage || Langs.get(channelId, config.language || 'ko'))
+            : useClone
+                ? (config.callLanguage || this._voiceNoteLang(channelId))
+                : Langs.get(channelId, config.language || 'ko');
         const voiceName = interaction.options.getString('voice') || chCfg.callVoice || config.callVoice
             || (callLang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
         const userName = interaction.member?.displayName || interaction.user.username;
 
         // Gemini Live(실시간): Vertex 키(이미지/채팅 프로필) 또는 AI Studio 키가 있으면 켜짐
-        const useLive = !useClone && !!this._liveAuth();
-        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${useClone ? ` · 🎤 ${cloneVoice}` : (useLive ? ' · Live' : '')})`, ...eph });
+        const useLive = !useGemTts && !useClone && !!this._liveAuth();
+        const modeLabel = useGemTts ? ` · 🎙 ${gemVoice}` : (useClone ? ` · 🎤 ${cloneVoice}` : (useLive ? ' · Live' : ''));
+        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${modeLabel})`, ...eph });
 
         // Live 모드: 음성↔음성 실시간. 캐릭터 컨텍스트는 시스템 프롬프트로 주입.
         let liveClient = null;
@@ -979,12 +984,15 @@ const Bot = {
             if (useLive) {
                 liveClient = await this._startLiveClient(channelId, character, userName);
                 session.liveClient = liveClient;
-            } else if (useClone) {
-                session.cloneMode = true;
+            } else if (useGemTts || useClone) {
+                session.cloneMode = true; // 커스텀 TTS 통화 모드 (Gemini TTS 또는 클론)
+                session.ttsMode = useGemTts ? 'gemini' : 'clone';
+                session.gemVoice = gemVoice;
+                session.ttsStyle = chCfg.callTtsStyle || config.callTtsStyle || '';
                 session.cloneVoice = cloneVoice;
                 session.callLang = callLang;
-                // 서버 깨우기 + 추임새 미리 합성 (백그라운드 — 인사 생성과 병행)
-                this._cloneCallPrep(channelId, session).catch((e) => console.warn('[Call] 클론 준비 실패:', e.message));
+                // 준비: (클론이면 서버 깨우기) + 추임새 미리 합성 (백그라운드 — 인사 생성과 병행)
+                this._cloneCallPrep(channelId, session).catch((e) => console.warn('[Call] 통화 TTS 준비 실패:', e.message));
             }
         } catch (e) {
             console.error('[Call] 시작 실패:', e);
@@ -1004,7 +1012,7 @@ const Bot = {
             }, 180_000);
             return interaction.editReply(`📞 전화 왔어요! <#${vc.id}> 들어오면 ${character.name}이(가) 받아요. (3분 내)`);
         }
-        await interaction.editReply(`📞 연결됐어요!${useClone ? ` (🎤 ${cloneVoice} 목소리)` : (useLive ? ' (Live — 실시간)' : '')} 그냥 말하면 돼요. 끊을 땐 \`/call end\` 또는 음성채널에서 나가기.`);
+        await interaction.editReply(`📞 연결됐어요!${useGemTts ? ` (🎙 ${gemVoice} 목소리)` : (useClone ? ` (🎤 ${cloneVoice} 목소리)` : (useLive ? ' (Live — 실시간)' : ''))} 그냥 말하면 돼요. 끊을 땐 \`/call end\` 또는 음성채널에서 나가기.`);
         // 캐릭터가 먼저 전화 받는 인사
         session.greeted = true;
         greet();
@@ -1218,20 +1226,22 @@ const Bot = {
         } finally { clearTimeout(timer); }
     },
 
-    // 클론 통화 준비: 서버 워밍업(콜드스타트 수십초 → 인사 전에 시작) + 추임새 미리 합성
+    // 통화 TTS 준비: (클론이면 서버 워밍업 + 언어 접미사 목소리 선택) + 추임새 미리 합성
     async _cloneCallPrep(channelId, s) {
-        fetch(`${this._cloneUrl()}/warm`).then((r) => console.log(`[Call] 클론 워밍업: ${r.status}`)).catch((e) => console.warn('[Call] 클론 워밍업 실패:', e.message));
-        // 언어 접미사 목소리 자동 선택: 통화 언어가 ko고 서버에 "baronko"가 있으면 통화만 그걸 씀
-        // (음성메모는 원본 목소리 그대로 — 언어별 참조 샘플이 억양이 제일 자연스럽다)
         const langCode = String(s.callLang || 'en').toLowerCase().slice(0, 2);
-        if (langCode !== 'en') {
-            try {
-                const list = await this._rvcVoices();
-                if (list.includes(s.cloneVoice + langCode)) {
-                    s.cloneVoice = s.cloneVoice + langCode;
-                    console.log(`[Call] ${langCode} 목소리 사용: ${s.cloneVoice}`);
-                }
-            } catch { /* 무시 — 원본 목소리 유지 */ }
+        if (s.ttsMode !== 'gemini') {
+            fetch(`${this._cloneUrl()}/warm`).then((r) => console.log(`[Call] 클론 워밍업: ${r.status}`)).catch((e) => console.warn('[Call] 클론 워밍업 실패:', e.message));
+            // 언어 접미사 목소리 자동 선택: 통화 언어가 ko고 서버에 "baronko"가 있으면 통화만 그걸 씀
+            // (음성메모는 원본 목소리 그대로 — 언어별 참조 샘플이 억양이 제일 자연스럽다)
+            if (langCode !== 'en') {
+                try {
+                    const list = await this._rvcVoices();
+                    if (list.includes(s.cloneVoice + langCode)) {
+                        s.cloneVoice = s.cloneVoice + langCode;
+                        console.log(`[Call] ${langCode} 목소리 사용: ${s.cloneVoice}`);
+                    }
+                } catch { /* 무시 — 원본 목소리 유지 */ }
+            }
         }
         const texts = (Array.isArray(config.callFillers) && config.callFillers.length)
             ? config.callFillers
@@ -1239,10 +1249,20 @@ const Bot = {
         const fillers = [];
         for (const t of texts) {
             if (!VoiceCall.active(channelId)) return;
-            try { fillers.push(await this._cloneSpeak(s.cloneVoice, t, s.callLang)); }
+            try { fillers.push(await this._callTtsSpeak(s, t)); }
             catch (e) { console.warn('[Call] 추임새 합성 실패(생략):', e.message); break; }
         }
         s.cloneFillers = fillers;
+    },
+
+    // 통화용 TTS 한 조각 합성 → raw PCM(24k mono). 엔진(gemini/clone)은 세션이 결정.
+    async _callTtsSpeak(s, text) {
+        if (s.ttsMode === 'gemini') {
+            // Gemini TTS: "지시문: 대사" 형식 — 지시문은 읽지 않고 연기 톤만 바꾼다
+            const style = s.ttsStyle || 'Say as natural phone-call acting, matching the emotion of the line, never like reading a script';
+            return AIClient.ttsSpeak(`${style}: ${text}`, s.gemVoice || config.liveVoice || 'Charon');
+        }
+        return this._cloneSpeak(s.cloneVoice, text, s.callLang);
     },
 
     // 클론 목소리로 문장 단위 파이프라인 재생: N번째 문장이 재생되는 동안 N+1번째를 합성
@@ -1251,17 +1271,17 @@ const Bot = {
         const parts = this._splitForSpeech(text);
         if (!parts.length) return;
         const myGen = s.speakGen; // 유저가 끼어들면 speakGen이 바뀜 → 남은 문장 폐기
-        let next = this._cloneSpeak(s.cloneVoice, parts[0], s.callLang);
+        let next = this._callTtsSpeak(s, parts[0]);
         try {
             for (let i = 0; i < parts.length; i++) {
                 const pcm = await next;
-                next = (i + 1 < parts.length) ? this._cloneSpeak(s.cloneVoice, parts[i + 1], s.callLang) : null;
+                next = (i + 1 < parts.length) ? this._callTtsSpeak(s, parts[i + 1]) : null;
                 if (!VoiceCall.active(channelId) || s.speakGen !== myGen) { next?.catch(() => {}); return; }
                 await VoiceCall.playPcm24AndWait(channelId, pcm);
             }
         } catch (e) {
             next?.catch(() => {});
-            console.warn('[Call] 클론 TTS 실패 → edge-tts 폴백:', e.message);
+            console.warn(`[Call] ${s.ttsMode || 'clone'} TTS 실패 → edge-tts 폴백:`, e.message);
             if (VoiceCall.active(channelId) && s.speakGen === myGen) await VoiceCall.speak(channelId, text);
         }
     },

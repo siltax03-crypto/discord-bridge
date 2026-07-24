@@ -25,6 +25,8 @@
   "callModel": "gemini-2.5-flash",
   "callEngine": "",
   "callFillers": [],
+  "callTtsVoice": "",
+  "callTtsStyle": "",
   "liveApiKey": "",
   "liveModel": "gemini-2.5-flash-native-audio-preview-09-2025",
   "liveVoice": "Charon",
