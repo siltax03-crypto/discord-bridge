@@ -1221,8 +1221,21 @@ const Bot = {
     // 클론 통화 준비: 서버 워밍업(콜드스타트 수십초 → 인사 전에 시작) + 추임새 미리 합성
     async _cloneCallPrep(channelId, s) {
         fetch(`${this._cloneUrl()}/warm`).then((r) => console.log(`[Call] 클론 워밍업: ${r.status}`)).catch((e) => console.warn('[Call] 클론 워밍업 실패:', e.message));
+        // 언어 접미사 목소리 자동 선택: 통화 언어가 ko고 서버에 "baronko"가 있으면 통화만 그걸 씀
+        // (음성메모는 원본 목소리 그대로 — 언어별 참조 샘플이 억양이 제일 자연스럽다)
+        const langCode = String(s.callLang || 'en').toLowerCase().slice(0, 2);
+        if (langCode !== 'en') {
+            try {
+                const list = await this._rvcVoices();
+                if (list.includes(s.cloneVoice + langCode)) {
+                    s.cloneVoice = s.cloneVoice + langCode;
+                    console.log(`[Call] ${langCode} 목소리 사용: ${s.cloneVoice}`);
+                }
+            } catch { /* 무시 — 원본 목소리 유지 */ }
+        }
         const texts = (Array.isArray(config.callFillers) && config.callFillers.length)
-            ? config.callFillers : ['Mmm...', 'Hmm?', 'Uh...'];
+            ? config.callFillers
+            : (langCode === 'ko' ? ['음...', '어?', '아...'] : ['Mmm...', 'Hmm?', 'Uh...']);
         const fillers = [];
         for (const t of texts) {
             if (!VoiceCall.active(channelId)) return;

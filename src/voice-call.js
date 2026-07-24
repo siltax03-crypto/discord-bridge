@@ -53,21 +53,36 @@ const VoiceCall = {
         const receiver = connection.receiver;
         receiver.speaking.on('start', (uid) => {
             if (s.ended || uid !== userId) return;
-            // 유저가 말 시작하면 봇 음성 즉시 멈춤 + 대기 중 문장 폐기 (말 끊고 들어가기)
-            s.speakGen++;
-            this.stopPlayback(channelId);
             if (s.recording) return;
             s.recording = true;
-            if (s.live) { try { s.live.onUserSpeakStart?.(); } catch { /* 무시 */ } }
+            // 끼어들기 지연 판정: 스피킹 신호 즉시가 아니라 실제 음성이 0.35초 이상 쌓였을 때만
+            // 봇 말을 끊는다 — 숨소리/짧은 노이즈로는 캐릭터가 말을 멈추지 않게.
+            let barged = false;
+            let bytes = 0;
+            const BARGE_BYTES = 192_000 * 0.35; // 48kHz 스테레오 16bit = 초당 192,000바이트
+            const bargeNow = () => {
+                if (barged || s.ended) return;
+                barged = true;
+                s.speakGen++;
+                this.stopPlayback(channelId);
+                if (s.live) {
+                    try { s.live.onUserSpeakStart?.(); } catch { /* 무시 */ }
+                    // 판정 전까지 모아둔 오디오를 한꺼번에 흘려보냄
+                    const pcm = Buffer.concat(chunks.splice(0));
+                    if (pcm.length) { try { s.live.onUserAudioChunk?.(this._down48to16(pcm)); } catch { /* 무시 */ } }
+                }
+            };
             const silenceMs = s.live ? 450 : 750; // 너무 짧으면 말 중간 숨에서 끊겨 조각 발화가 됨
             const opus = receiver.subscribe(uid, { end: { behavior: EndBehaviorType.AfterSilence, duration: silenceMs } });
             const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
             const chunks = [];
             opus.pipe(decoder);
             decoder.on('data', (c) => {
-                if (!s.live) { chunks.push(c); return; }
-                // Live: ~100ms 단위로 묶어 즉시 전송
                 chunks.push(c);
+                bytes += c.length;
+                if (!barged) { if (bytes >= BARGE_BYTES) bargeNow(); return; }
+                if (!s.live) return;
+                // Live: 판정 후엔 ~100ms 단위로 묶어 즉시 전송
                 if (chunks.length >= 5) {
                     const pcm = Buffer.concat(chunks.splice(0));
                     try { s.live.onUserAudioChunk?.(this._down48to16(pcm)); } catch { /* 무시 */ }
@@ -76,14 +91,14 @@ const VoiceCall = {
             const finish = () => {
                 if (!s.recording) return;
                 s.recording = false;
+                // 0.35초 미만(숨소리/노이즈): 봇도 안 끊었고, STT/Live로도 안 보냄
+                if (!barged) return;
                 const pcm = Buffer.concat(chunks);
                 if (s.live) {
                     if (pcm.length) { try { s.live.onUserAudioChunk?.(this._down48to16(pcm)); } catch { /* 무시 */ } }
                     try { s.live.onUserSpeakEnd?.(); } catch { /* 무시 */ }
                     return;
                 }
-                // 0.35초 미만(숨소리/노이즈)은 버림 — 48kHz 스테레오 16bit = 초당 192,000바이트
-                if (pcm.length < 192_000 * 0.35) return;
                 const wav = this._pcmToWav16k(pcm);
                 Promise.resolve(onUtterance(wav)).catch((e) => console.warn('[Call] 발화 처리 오류:', e.message));
             };
