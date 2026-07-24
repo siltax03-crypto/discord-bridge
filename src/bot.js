@@ -1073,15 +1073,16 @@ const Bot = {
                 : '\n- VOICE ACTING: derive your vocal delivery entirely from your character sheet and the CURRENT situation/mood — tone, pace, energy, accent, laughs, sighs, verbal tics. Sound like the character actually talking on the phone right now (sleepy at 3am, hyped, annoyed, teasing — whatever fits the moment), never like a narrator reading lines.');
 
         // 직전 대화 꼬리도 얹어줌 (통화가 채팅 맥락을 이어가게)
-        const recent = ChatHistory.getMessages(channelId, 24)
+        const recent = ChatHistory.getMessages(channelId, config.callHistoryMessages || config.maxHistoryMessages || 50)
             .map((m) => `${m.role === 'user' ? effUserName : (m.author || character.name)}: ${typeof m.content === 'string' ? m.content : ''}`)
             .join('\n');
         let sysFull = recent ? `${sys}\n\n[RECENT CHAT — right before this call]\n${recent}` : sys;
-        // Live 셋업이 비대하면 1007(invalid argument)로 거부돼 통화가 즉시 끊긴다 → 상한 넘으면 가운데를 접음
-        const sysMax = config.liveSysMax || 28000;
+        // Live 셋업이 비대하면 1007(invalid argument)로 거부돼 통화가 즉시 끊긴다 → 상한 넘으면 접음.
+        // 꼬리 12k(통화 지시 + 최근 대화)는 반드시 보존 — 가운데(로어북 뒷부분)부터 희생.
+        const sysMax = config.liveSysMax || 48000;
         if (sysFull.length > sysMax) {
             console.warn(`[Live] 시스템 프롬프트 ${sysFull.length}자 → ${sysMax}자로 압축`);
-            sysFull = sysFull.slice(0, sysMax - 6000) + '\n...[older context trimmed]...\n' + sysFull.slice(-6000);
+            sysFull = sysFull.slice(0, sysMax - 12000) + '\n...[older context trimmed]...\n' + sysFull.slice(-12000);
         }
 
         let userBuf = '';
