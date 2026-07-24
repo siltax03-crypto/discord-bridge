@@ -936,12 +936,20 @@ const Bot = {
             if (createdVc) vc.delete().catch(() => {});
             return interaction.reply({ content: '⚠️ 봇에 그 음성채널의 "연결"과 "말하기" 권한이 필요해요.', ...eph });
         }
-        // 통화 목소리 우선순위: Gemini TTS(빠름·한국어 네이티브) > 클론(음성메모 목소리) > Live > edge-tts
-        // config.callEngine='live'로 Live 강제 가능. 클론은 문장당 6~7초라 통화엔 너무 느림 — 폴백으로만.
+        // 통화 엔진: 채널/전역 callEngine('live'|'gemini'|'clone')으로 지정, 미지정이면 자동.
+        // 지연 실측(2026-07-24): Live ~1-2초 / Gemini TTS 문장당 ~5초 / 클론 문장당 6~7초.
+        // 자동 순서는 gemini > clone > live (목소리 설정이 있는 채널 우선) — 빠른 통화를 원하면 callEngine='live' + 채널별 liveVoice.
         const cloneVoice = chCfg.rvcVoice || config.rvcVoice || '';
         const gemVoice = chCfg.callTtsVoice || config.callTtsVoice || '';
-        const useGemTts = config.callEngine !== 'live' && !!gemVoice && AIClient.canTts();
-        const useClone = !useGemTts && config.callEngine !== 'live' && this._voiceEngine() === 'clone' && !!cloneVoice;
+        const canGem = !!gemVoice && AIClient.canTts();
+        const canClone = this._voiceEngine() === 'clone' && !!cloneVoice;
+        const canLive = !!this._liveAuth();
+        let engine = chCfg.callEngine || config.callEngine || '';
+        if (!engine || (engine === 'gemini' && !canGem) || (engine === 'clone' && !canClone) || (engine === 'live' && !canLive)) {
+            engine = canGem ? 'gemini' : (canClone ? 'clone' : (canLive ? 'live' : 'edge'));
+        }
+        const useGemTts = engine === 'gemini';
+        const useClone = engine === 'clone';
         const callLang = useGemTts
             ? (config.callLanguage || Langs.get(channelId, config.language || 'ko'))
             : useClone
@@ -952,7 +960,7 @@ const Bot = {
         const userName = interaction.member?.displayName || interaction.user.username;
 
         // Gemini Live(실시간): Vertex 키(이미지/채팅 프로필) 또는 AI Studio 키가 있으면 켜짐
-        const useLive = !useGemTts && !useClone && !!this._liveAuth();
+        const useLive = engine === 'live';
         const modeLabel = useGemTts ? ` · 🎙 ${gemVoice}` : (useClone ? ` · 🎤 ${cloneVoice}` : (useLive ? ' · Live' : ''));
         await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${modeLabel})`, ...eph });
 
@@ -1060,15 +1068,21 @@ const Bot = {
         }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
             + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.'
             + (callLang === 'en' ? `\n- ${effUserName} may speak Korean — you understand Korean perfectly, but YOU always speak English (natural spoken English, not textbook).` : '')
-            + (config.liveStyle
-                ? `\n- VOICE ACTING — deliver every line in this manner: ${config.liveStyle}`
+            + ((config.channels[channelId]?.liveStyle || config.liveStyle)
+                ? `\n- VOICE ACTING — deliver every line in this manner: ${config.channels[channelId]?.liveStyle || config.liveStyle}`
                 : '\n- VOICE ACTING: derive your vocal delivery entirely from your character sheet and the CURRENT situation/mood — tone, pace, energy, accent, laughs, sighs, verbal tics. Sound like the character actually talking on the phone right now (sleepy at 3am, hyped, annoyed, teasing — whatever fits the moment), never like a narrator reading lines.');
 
         // 직전 대화 꼬리도 얹어줌 (통화가 채팅 맥락을 이어가게)
         const recent = ChatHistory.getMessages(channelId, 24)
             .map((m) => `${m.role === 'user' ? effUserName : (m.author || character.name)}: ${typeof m.content === 'string' ? m.content : ''}`)
             .join('\n');
-        const sysFull = recent ? `${sys}\n\n[RECENT CHAT — right before this call]\n${recent}` : sys;
+        let sysFull = recent ? `${sys}\n\n[RECENT CHAT — right before this call]\n${recent}` : sys;
+        // Live 셋업이 비대하면 1007(invalid argument)로 거부돼 통화가 즉시 끊긴다 → 상한 넘으면 가운데를 접음
+        const sysMax = config.liveSysMax || 28000;
+        if (sysFull.length > sysMax) {
+            console.warn(`[Live] 시스템 프롬프트 ${sysFull.length}자 → ${sysMax}자로 압축`);
+            sysFull = sysFull.slice(0, sysMax - 6000) + '\n...[older context trimmed]...\n' + sysFull.slice(-6000);
+        }
 
         let userBuf = '';
         let modelBuf = '';
@@ -1090,7 +1104,7 @@ const Bot = {
             vertex: auth.vertex,
             apiKey: auth.apiKey,
             model: config.liveModel || (auth.vertex ? 'gemini-live-2.5-flash' : 'gemini-2.5-flash-native-audio-preview-09-2025'),
-            voiceName: config.liveVoice || 'Charon',
+            voiceName: config.channels[channelId]?.liveVoice || config.liveVoice || 'Charon',
             systemInstruction: sysFull,
             onAudio: (pcm) => {
                 if (!rvcBase) return VoiceCall.playPcm24(channelId, pcm);
