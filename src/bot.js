@@ -936,14 +936,20 @@ const Bot = {
             if (createdVc) vc.delete().catch(() => {});
             return interaction.reply({ content: '⚠️ 봇에 그 음성채널의 "연결"과 "말하기" 권한이 필요해요.', ...eph });
         }
-        const lang = Langs.get(channelId, config.language || 'ko');
+        // 통화 목소리 우선순위: 클론(음성메모와 같은 목소리) > Live > edge-tts
+        // 클론 목소리가 설정된 채널은 통화도 그 목소리로 — config.callEngine='live'로 옛 동작 강제 가능
+        const cloneVoice = chCfg.rvcVoice || config.rvcVoice || '';
+        const useClone = config.callEngine !== 'live' && this._voiceEngine() === 'clone' && !!cloneVoice;
+        const callLang = useClone
+            ? (config.callLanguage || this._voiceNoteLang(channelId))
+            : Langs.get(channelId, config.language || 'ko');
         const voiceName = interaction.options.getString('voice') || chCfg.callVoice || config.callVoice
-            || (lang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
+            || (callLang === 'en' ? 'en-US-GuyNeural' : 'ko-KR-InJoonNeural');
         const userName = interaction.member?.displayName || interaction.user.username;
 
         // Gemini Live(실시간): Vertex 키(이미지/채팅 프로필) 또는 AI Studio 키가 있으면 켜짐
-        const useLive = !!this._liveAuth();
-        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${useLive ? ' · Live' : ''})`, ...eph });
+        const useLive = !useClone && !!this._liveAuth();
+        await interaction.reply({ content: `📞 ${character.name} 연결 중... (${vc.name}${useClone ? ` · 🎤 ${cloneVoice}` : (useLive ? ' · Live' : '')})`, ...eph });
 
         // Live 모드: 음성↔음성 실시간. 캐릭터 컨텍스트는 시스템 프롬프트로 주입.
         let liveClient = null;
@@ -973,6 +979,12 @@ const Bot = {
             if (useLive) {
                 liveClient = await this._startLiveClient(channelId, character, userName);
                 session.liveClient = liveClient;
+            } else if (useClone) {
+                session.cloneMode = true;
+                session.cloneVoice = cloneVoice;
+                session.callLang = callLang;
+                // 서버 깨우기 + 추임새 미리 합성 (백그라운드 — 인사 생성과 병행)
+                this._cloneCallPrep(channelId, session).catch((e) => console.warn('[Call] 클론 준비 실패:', e.message));
             }
         } catch (e) {
             console.error('[Call] 시작 실패:', e);
@@ -992,7 +1004,7 @@ const Bot = {
             }, 180_000);
             return interaction.editReply(`📞 전화 왔어요! <#${vc.id}> 들어오면 ${character.name}이(가) 받아요. (3분 내)`);
         }
-        await interaction.editReply(`📞 연결됐어요!${useLive ? ' (Live — 실시간)' : ''} 그냥 말하면 돼요. 끊을 땐 \`/call end\` 또는 음성채널에서 나가기.`);
+        await interaction.editReply(`📞 연결됐어요!${useClone ? ` (🎤 ${cloneVoice} 목소리)` : (useLive ? ' (Live — 실시간)' : '')} 그냥 말하면 돼요. 끊을 땐 \`/call end\` 또는 음성채널에서 나가기.`);
         // 캐릭터가 먼저 전화 받는 인사
         session.greeted = true;
         greet();
@@ -1033,6 +1045,9 @@ const Bot = {
             timezone: config.timezone || 'Asia/Seoul',
             notes: Notes.list(channelId),
             annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+            // 서사 주입: 롤플↔챗 세트 요약 + 반대편 최근 장면 (통화도 관계 맥락을 알고 받게)
+            crossSummaries: this._crossSummariesFor(channelId),
+            crossRecent: this._crossRecentFor(channelId),
             personaText,
         }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
             + '\n- You are on a REAL-TIME voice line: speak immediately and briefly, like a real phone call.'
@@ -1042,7 +1057,7 @@ const Bot = {
                 : '\n- VOICE ACTING: derive your vocal delivery entirely from your character sheet and the CURRENT situation/mood — tone, pace, energy, accent, laughs, sighs, verbal tics. Sound like the character actually talking on the phone right now (sleepy at 3am, hyped, annoyed, teasing — whatever fits the moment), never like a narrator reading lines.');
 
         // 직전 대화 꼬리도 얹어줌 (통화가 채팅 맥락을 이어가게)
-        const recent = ChatHistory.getMessages(channelId, 12)
+        const recent = ChatHistory.getMessages(channelId, 24)
             .map((m) => `${m.role === 'user' ? effUserName : (m.author || character.name)}: ${typeof m.content === 'string' ? m.content : ''}`)
             .join('\n');
         const sysFull = recent ? `${sys}\n\n[RECENT CHAT — right before this call]\n${recent}` : sys;
@@ -1203,6 +1218,52 @@ const Bot = {
         } finally { clearTimeout(timer); }
     },
 
+    // 클론 통화 준비: 서버 워밍업(콜드스타트 수십초 → 인사 전에 시작) + 추임새 미리 합성
+    async _cloneCallPrep(channelId, s) {
+        fetch(`${this._cloneUrl()}/warm`).then((r) => console.log(`[Call] 클론 워밍업: ${r.status}`)).catch((e) => console.warn('[Call] 클론 워밍업 실패:', e.message));
+        const texts = (Array.isArray(config.callFillers) && config.callFillers.length)
+            ? config.callFillers : ['Mmm...', 'Hmm?', 'Uh...'];
+        const fillers = [];
+        for (const t of texts) {
+            if (!VoiceCall.active(channelId)) return;
+            try { fillers.push(await this._cloneSpeak(s.cloneVoice, t, s.callLang)); }
+            catch (e) { console.warn('[Call] 추임새 합성 실패(생략):', e.message); break; }
+        }
+        s.cloneFillers = fillers;
+    },
+
+    // 클론 목소리로 문장 단위 파이프라인 재생: N번째 문장이 재생되는 동안 N+1번째를 합성
+    // (첫 문장이 준비되는 즉시 입을 떼므로 전체 합성을 기다리는 것보다 체감 지연이 훨씬 짧다)
+    async _speakClone(channelId, s, text) {
+        const parts = this._splitForSpeech(text);
+        if (!parts.length) return;
+        const myGen = s.speakGen; // 유저가 끼어들면 speakGen이 바뀜 → 남은 문장 폐기
+        let next = this._cloneSpeak(s.cloneVoice, parts[0], s.callLang);
+        try {
+            for (let i = 0; i < parts.length; i++) {
+                const pcm = await next;
+                next = (i + 1 < parts.length) ? this._cloneSpeak(s.cloneVoice, parts[i + 1], s.callLang) : null;
+                if (!VoiceCall.active(channelId) || s.speakGen !== myGen) { next?.catch(() => {}); return; }
+                await VoiceCall.playPcm24AndWait(channelId, pcm);
+            }
+        } catch (e) {
+            next?.catch(() => {});
+            console.warn('[Call] 클론 TTS 실패 → edge-tts 폴백:', e.message);
+            if (VoiceCall.active(channelId) && s.speakGen === myGen) await VoiceCall.speak(channelId, text);
+        }
+    },
+
+    // 발화 텍스트를 문장 단위로 쪼갬 (너무 짧은 조각은 앞 문장에 붙여 합성 오버헤드/부자연 방지)
+    _splitForSpeech(text) {
+        const raw = (text.match(/[^.!?…]+[.!?…]+["']?|[^.!?…]+$/g) || [text]).map((t) => t.trim()).filter(Boolean);
+        const out = [];
+        for (const p of raw) {
+            if (out.length && (out[out.length - 1].length < 25 || p.length < 12)) out[out.length - 1] += ' ' + p;
+            else out.push(p);
+        }
+        return out;
+    },
+
     // PCM(24k mono)을 WAV로 감싸 Modal RVC에 보내고, 변환된 raw PCM(24k mono)을 받는다
     async _rvcConvert(base, pcm24k, voice = '') {
         if (!base) return pcm24k;
@@ -1236,6 +1297,11 @@ const Bot = {
     async _onCallUtterance(channelId, character, userName, wavBuffer) {
         const s = VoiceCall.active(channelId);
         if (!s) return;
+        // 클론 모드: STT+생성+합성 동안의 공백을 추임새로 메움 (즉각 반응하는 느낌)
+        if (s.cloneMode && s.cloneFillers?.length && !s.generating) {
+            const f = s.cloneFillers[Math.floor(Math.random() * s.cloneFillers.length)];
+            VoiceCall.playPcm24AndWait(channelId, f).catch(() => { /* 무시 */ });
+        }
         let text = '';
         try { text = await AIClient.transcribeAudio(wavBuffer.toString('base64')); }
         catch (e) { console.warn('[Call] STT 오류:', e.message); return; }
@@ -1255,17 +1321,24 @@ const Bot = {
             const personaName = this._getPersonaName(channelId);
             const personaText = personaName ? STReader.getPersonaByName(personaName) : '';
             const effUserName = personaName || userName;
+            const callLang = s.callLang || Langs.get(channelId, config.language || 'ko');
             const sys = ContextBuilder.build(character, {
                 userName: effUserName,
-                language: Langs.get(channelId, config.language || 'ko'),
+                language: callLang,
                 mode: 'chat',
                 chatSlang: config.chatSlang !== false,
                 timezone: config.timezone || 'Asia/Seoul',
                 notes: Notes.list(channelId),
                 annivStatus: Anniv.status(channelId, config.timezone || 'Asia/Seoul'),
+                // 서사 주입: 롤플↔챗 세트 요약 + 반대편 최근 장면 (없으면 통화가 "성격만 알고 관계는 모르는" 상태가 됨)
+                crossSummaries: this._crossSummariesFor(channelId),
+                crossRecent: this._crossRecentFor(channelId),
                 personaText,
-            }) + this._npcLinkedNote(channelId) + this._callNote(effUserName);
-            const history = ChatHistory.toAPIMessages(channelId, 24);
+            }) + this._npcLinkedNote(channelId) + this._callNote(effUserName)
+                + (callLang === 'en' ? `\n- ${effUserName} may speak Korean — you understand Korean perfectly, but YOU always speak English (natural spoken English, not textbook).` : '')
+                + (s.cloneMode ? '\n- Write every line exactly as it should be SPOKEN and acted: natural fillers ("mm", "uh"), pauses as "...", real laughs written out ("haha"), emphasis through word choice — the voice engine reads only the words you write, so put the emotion INTO the words.' : '');
+            // 서사는 히스토리에 있다 — 일반 채팅과 같은 깊이로 (24개만 주면 관계 맥락이 뚝 끊김)
+            const history = ChatHistory.toAPIMessages(channelId, config.callHistoryMessages || config.maxHistoryMessages || 50);
             const messages = [{ role: 'system', content: sys }, ...history];
             if (greeting) {
                 messages.push({ role: 'user', content: '(The user just called you on the phone and you picked up. Greet them first — short and natural, matching your current mood/situation and time of day.)' });
@@ -1280,7 +1353,8 @@ const Bot = {
             resp = this._cleanForSpeech(resp);
             if (!resp) return;
             ChatHistory.addMessage(channelId, 'assistant', `📞 ${resp}`, character.name);
-            await VoiceCall.speak(channelId, resp);
+            if (s.cloneMode) await this._speakClone(channelId, s, resp);
+            else await VoiceCall.speak(channelId, resp);
         } finally {
             s.generating = false;
             // 생성 중 유저가 더 말했으면 이어서 한 번 더
@@ -1299,7 +1373,8 @@ const Bot = {
 - Talk like a real phone call: short and reactive (usually 1-3 sentences). Do not monologue.
 - CRITICAL — this is NOT a stranger or a customer. Everything above (your character sheet, memories, lorebook, recent chat) is YOUR shared history with ${userName}. Speak with the warmth/intimacy/teasing that relationship actually has. Reference shared memories naturally. Cold, curt, assistant-like replies are OUT OF CHARACTER.
 - Natural spoken fillers are good. Laugh in words ("하하"), never typed laughter like "ㅋㅋ".
-- If what they said seems cut off or unclear, react like a real person would on the phone (ask them to repeat, etc.).`;
+- If what they said seems cut off or unclear, react like a real person would on the phone (ask them to repeat, etc.).
+- NEVER try to wrap up or end the call yourself ("I should let you go", "talk later", "get some rest" etc. are BANNED as call-enders). You LOVE these calls — stay on the line indefinitely; only the user decides when to hang up.`;
     },
 
     // TTS로 읽을 수 있게 정리: 태그/마크다운/행동지문/이모지 제거.

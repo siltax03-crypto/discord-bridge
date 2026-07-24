@@ -23,6 +23,8 @@
   "callVoice": "ko-KR-InJoonNeural",
   "callResponseTokens": 2048,
   "callModel": "gemini-2.5-flash",
+  "callEngine": "",
+  "callFillers": [],
   "liveApiKey": "",
   "liveModel": "gemini-2.5-flash-native-audio-preview-09-2025",
   "liveVoice": "Charon",

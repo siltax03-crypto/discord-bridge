@@ -45,7 +45,7 @@ const VoiceCall = {
             onUtterance, onEnd, character, userName, live,
             recording: false, generating: false, pendingText: false,
             greeted: false, joinTimer: null, liveClient: null, pcmPT: null,
-            speakQueue: Promise.resolve(), ended: false,
+            speakQueue: Promise.resolve(), ended: false, speakGen: 0,
         };
 
         // 유저 발화 수신: 말 시작 → 침묵까지 녹음
@@ -53,9 +53,9 @@ const VoiceCall = {
         const receiver = connection.receiver;
         receiver.speaking.on('start', (uid) => {
             if (s.ended || uid !== userId) return;
-            // 유저가 말 시작하면 봇 음성 즉시 멈춤 (말 끊고 들어가기)
-            try { s.player.stop(true); } catch { /* 무시 */ }
-            if (s.live) this.stopPlayback(channelId);
+            // 유저가 말 시작하면 봇 음성 즉시 멈춤 + 대기 중 문장 폐기 (말 끊고 들어가기)
+            s.speakGen++;
+            this.stopPlayback(channelId);
             if (s.recording) return;
             s.recording = true;
             if (s.live) { try { s.live.onUserSpeakStart?.(); } catch { /* 무시 */ } }
@@ -157,6 +157,28 @@ const VoiceCall = {
             s.player.play(resource);
         }
         try { s.pcmPT.write(up); } catch { /* 무시 */ }
+    },
+
+    // PCM(24k mono) 버퍼 하나를 재생하고 끝날 때까지 대기 (클론 통화의 문장 단위 재생용)
+    async playPcm24AndWait(channelId, pcm24kBuf) {
+        const s = sessions[channelId];
+        if (!s || s.ended || !pcm24kBuf?.length) return;
+        const up = this._up24to48stereo(pcm24kBuf);
+        try { s.pcmPT?.end(); } catch { /* 무시 */ }
+        const pt = s.pcmPT = new PassThrough({ highWaterMark: 1 << 22 });
+        const resource = createAudioResource(pt, { inputType: StreamType.Raw });
+        s.player.play(resource);
+        pt.end(up);
+        await entersState(s.player, AudioPlayerStatus.Playing, 10_000).catch(() => {});
+        await new Promise((resolve) => {
+            const done = () => {
+                s.player.off(AudioPlayerStatus.Idle, done);
+                s.player.off('error', done);
+                resolve();
+            };
+            s.player.once(AudioPlayerStatus.Idle, done);
+            s.player.once('error', done);
+        });
     },
 
     // 모델 턴 종료 → 스트림 마감 (쓴 데이터는 끝까지 재생됨)
