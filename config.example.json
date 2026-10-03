@@ -1,0 +1,71 @@
+{
+  "stPath": "/home/ubuntu/SillyTavern",
+  "discordToken": "여기에_디스코드_봇_토큰",
+  "connectionProfile": "",
+  "imageProfile": "",
+  "openaiBaseUrl": "",
+  "maxHistoryMessages": 50,
+  "maxResponseTokens": 1000,
+  "rpResponseTokens": 8192,
+  "language": "ko",
+  "timezone": "Asia/Seoul",
+  "splitMessages": true,
+  "chatSlang": true,
+  "devKey": "",
+  "devBranch": "dev",
+  "botMode": "single",
+  "personaBotToken": "",
+  "movieEnabled": true,
+  "moviePort": 8788,
+  "movieToken": "여기에_아무_긴_랜덤_문자열_확장과_동일하게",
+  "movieReactSec": 35,
+  "oauthProxyUrl": "http://127.0.0.1:18765/v1",
+  "callVoice": "ko-KR-InJoonNeural",
+  "callResponseTokens": 2048,
+  "callModel": "gemini-2.5-flash",
+  "callEngine": "",
+  "callFillers": [],
+  "callTtsVoice": "",
+  "callTtsStyle": "",
+  "liveModel": "gemini-3.8-live",
+  "liveVoice": "Charon",
+  "liveStyle": "",
+  "rvcVoice": "",
+  "voiceEngine": "rvc",
+  "rvcUrl": "",
+  "rvcToken": "",
+  "rvcPitch": 0,
+  "cloneUrl": "",
+  "voiceNoteLang": "",
+  "proactive": {
+    "enabled": false,
+    "photos": false,
+    "idleMinHours": 3,
+    "idleMaxHours": 8,
+    "activeHours": [
+      9,
+      23
+    ]
+  },
+  "channels": {
+    "채널ID_1": {
+      "character": "Snow"
+    },
+    "채널ID_2": {
+      "character": "Blaise"
+    }
+  },
+  "groupSheet": "",
+  "members": [
+    {
+      "character": "Snow",
+      "persona": "",
+      "token": "여기에_Snow_봇_토큰"
+    }
+  ],
+  "jevKey": "",
+  "rvcStreamUrl": "",
+  "rvcStreamKey": "",
+  "callStudyPort": 0,
+  "callProfiles": {}
+}

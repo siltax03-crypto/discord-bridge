@@ -1,0 +1,14 @@
+node_modules/
+data/
+config.json
+*.log
+README.md
+설치설명서.md
+
+# 백업·임시 파일
+*.bak-*
+__pycache__/
+
+# 목소리 서버 토큰
+modal/.stream_token
+.env

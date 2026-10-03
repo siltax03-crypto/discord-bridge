@@ -1,0 +1,316 @@
+.discord-bridge-settings label {
+    display: block;
+    margin-top: 8px;
+    font-weight: 600;
+}
+
+.discord-bridge-settings .dbridge_statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 0;
+}
+
+.discord-bridge-settings .dbridge_inline {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+.discord-bridge-settings .dbridge_inline .text_pole {
+    flex: 1;
+}
+
+.discord-bridge-settings .dbridge_grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.discord-bridge-settings .dbridge_section_head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.discord-bridge-settings .dbridge_row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(128,128,128,0.2);
+}
+.discord-bridge-settings .dbridge_row > span {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+.discord-bridge-settings .dbridge_row .text_pole {
+    flex: 1;
+    min-width: 0;
+}
+.discord-bridge-settings .dbridge_row_del {
+    flex: 0 0 auto;
+}
+
+.discord-bridge-settings .dbridge_hint {
+    font-size: 0.8em;
+    opacity: 0.65;
+    margin: 4px 0;
+}
+
+.discord-bridge-settings .dbridge_changelog {
+    margin: 6px 0;
+    font-size: 0.85em;
+}
+.discord-bridge-settings .dbridge_changelog summary {
+    cursor: pointer;
+    opacity: 0.8;
+    user-select: none;
+}
+.discord-bridge-settings .dbridge_changelog_body {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: rgba(128, 128, 128, 0.08);
+    max-height: 260px;
+    overflow-y: auto;
+}
+.discord-bridge-settings .dbridge_changelog_body ul {
+    margin: 4px 0 10px;
+    padding-left: 18px;
+}
+.discord-bridge-settings .dbridge_changelog_body li {
+    margin: 2px 0;
+    opacity: 0.85;
+}
+
+.discord-bridge-settings #dbridge_save {
+    width: 100%;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+.discord-bridge-settings .dbridge_check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: normal;
+    margin-top: 6px;
+    cursor: pointer;
+}
+.discord-bridge-settings .dbridge_check input { width: auto; }
+.discord-bridge-settings #dbridge_proactive_opts { margin-top: 6px; }
+
+/* 음성메모 안내 — 사용량 줄바꿈 표시 */
+.discord-bridge-settings #dbridge_rvc_voicelist {
+    white-space: pre-line;
+}
+
+/* --- 탭 --- */
+.discord-bridge-settings .dbridge_tabs {
+    display: flex;
+    gap: 2px;
+    margin: 6px 0 10px;
+    border-bottom: 1px solid rgba(128,128,128,0.35);
+}
+.discord-bridge-settings .dbridge_tab {
+    padding: 6px 12px;
+    cursor: pointer;
+    opacity: 0.65;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -1px;
+    white-space: nowrap;
+    user-select: none;
+}
+.discord-bridge-settings .dbridge_tab.on {
+    opacity: 1;
+    font-weight: 700;
+    border-bottom-color: currentColor;
+}
+
+/* --- 캐릭터 카드 (접이식) --- */
+.discord-bridge-settings .dbridge_btn {
+    width: auto;
+    white-space: nowrap;
+    margin: 0;
+    flex: 0 0 auto;
+}
+.discord-bridge-settings .dbridge_row.dbridge_card {
+    display: block;
+    margin: 6px 0;
+    padding: 0;
+    border: 1px solid rgba(128,128,128,0.35);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.discord-bridge-settings .dbridge_card_head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+}
+.discord-bridge-settings .dbridge_av {
+    position: relative;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    overflow: hidden;
+    cursor: pointer;
+    background: rgba(128,128,128,0.25);
+}
+.discord-bridge-settings .dbridge_av img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.discord-bridge-settings .dbridge_av_fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    opacity: 0.8;
+}
+.discord-bridge-settings .dbridge_card_title {
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
+}
+.discord-bridge-settings .dbridge_card_name,
+.discord-bridge-settings .dbridge_card_sub {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.discord-bridge-settings .dbridge_card_name { font-weight: 700; }
+.discord-bridge-settings .dbridge_card_sub { font-size: 0.8em; opacity: 0.65; }
+.discord-bridge-settings label.dbridge_tg {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    font-weight: normal;
+    font-size: 0.9em;
+    white-space: nowrap;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+.discord-bridge-settings label.dbridge_tg input { margin: 0; flex: 0 0 auto; }
+.discord-bridge-settings .dbridge_card_toggle {
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0;
+    padding: 4px 8px;
+}
+.discord-bridge-settings .dbridge_card_body {
+    display: none;
+    padding: 8px;
+    border-top: 1px solid rgba(128,128,128,0.25);
+    background: rgba(128,128,128,0.06);
+}
+.discord-bridge-settings .dbridge_card.dbridge_open .dbridge_card_body { display: block; }
+.discord-bridge-settings .dbridge_flabel { font-size: 0.8em; opacity: 0.7; margin-bottom: 2px; }
+.discord-bridge-settings .dbridge_grid2c {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 8px;
+}
+.discord-bridge-settings .dbridge_grid2c > div,
+.discord-bridge-settings .dbridge_grid4 > div { min-width: 0; }
+.discord-bridge-settings .dbridge_grid2c .text_pole,
+.discord-bridge-settings .dbridge_grid4 .text_pole { width: 100%; margin: 0; }
+.discord-bridge-settings .dbridge_grid4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px 8px;
+    margin-top: 6px;
+}
+.discord-bridge-settings .dbridge_seg {
+    display: flex;
+    border: 1px solid rgba(128,128,128,0.45);
+    border-radius: 5px;
+    overflow: hidden;
+}
+.discord-bridge-settings .dbridge_seg_btn {
+    flex: 1;
+    text-align: center;
+    padding: 5px 2px;
+    font-size: 0.85em;
+    cursor: pointer;
+    white-space: nowrap;
+    opacity: 0.7;
+}
+.discord-bridge-settings .dbridge_seg_btn + .dbridge_seg_btn { border-left: 1px solid rgba(128,128,128,0.45); }
+.discord-bridge-settings .dbridge_seg_btn.on {
+    opacity: 1;
+    font-weight: 700;
+    background: rgba(128,128,128,0.28);
+}
+.discord-bridge-settings .dbridge_box,
+.discord-bridge-settings .dbridge_subbox {
+    margin-top: 8px;
+    padding: 6px 8px;
+    border: 1px solid rgba(128,128,128,0.3);
+    border-radius: 6px;
+}
+.discord-bridge-settings .dbridge_box_head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.discord-bridge-settings .dbridge_box_head .text_pole { flex: 0 1 190px; margin: 0; }
+.discord-bridge-settings .dbridge_box_head .dbridge_hint { margin: 0; }
+.discord-bridge-settings .dbridge_memrow {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin: 3px 0;
+}
+.discord-bridge-settings .dbridge_memrow .text_pole { margin: 0; }
+.discord-bridge-settings .dbridge_memrow .text_pole:first-child { flex: 0 0 35%; }
+.discord-bridge-settings .dbridge_memrow .menu_button { flex: 0 0 auto; width: auto; margin: 0; }
+.discord-bridge-settings .dbridge_card_foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
+/* 좁은 자리(폰, 또는 PC에서 확장 패널이 반쪽 칸일 때): 칸을 한 줄에 하나씩, 머리줄은 두 줄로.
+   화면 폭이 아니라 이 패널이 실제로 차지한 폭을 본다. */
+.discord-bridge-settings { container-type: inline-size; container-name: dbridge; }
+@container dbridge (max-width: 480px) {
+    .discord-bridge-settings .dbridge_grid2c { grid-template-columns: 1fr; }
+    .discord-bridge-settings .dbridge_grid4 { grid-template-columns: 1fr 1fr; }
+    .discord-bridge-settings .dbridge_memrow { flex-wrap: wrap; }
+    .discord-bridge-settings .dbridge_memrow .text_pole:first-child { flex: 1 1 100%; }
+    .discord-bridge-settings .dbridge_box_head .text_pole { flex: 1 1 140px; }
+}
+@container dbridge (max-width: 360px) {
+    .discord-bridge-settings .dbridge_card_head { flex-wrap: wrap; row-gap: 4px; }
+    .discord-bridge-settings .dbridge_card_title { order: 1; flex: 1 1 calc(100% - 100px); }
+    .discord-bridge-settings .dbridge_card_toggle { order: 2; }
+    .discord-bridge-settings label.dbridge_tg { order: 3; }
+    .discord-bridge-settings label.dbridge_tg:first-of-type { margin-left: 42px; }
+    .discord-bridge-settings .dbridge_seg_btn { font-size: 0.78em; padding: 5px 0; }
+    .discord-bridge-settings .dbridge_tab { padding: 6px 8px; }
+}
+
+/* 접힌 안내 (엔진 비교 · 목소리 동의) */
+.discord-bridge-settings .dbridge_fold { margin: 6px 0; border: 1px solid var(--SmartThemeBorderColor, #555); border-radius: 8px; padding: 4px 10px; }
+.discord-bridge-settings .dbridge_fold > summary { cursor: pointer; font-size: 0.85em; opacity: 0.8; padding: 2px 0; }
+.discord-bridge-settings .dbridge_fold_body { font-size: 0.85em; line-height: 1.55; padding: 4px 0 6px; }
+.discord-bridge-settings .dbridge_fold_body ol { margin: 4px 0; padding-left: 18px; }
+.discord-bridge-settings .dbridge_fold_body p { margin: 6px 0; }
+.discord-bridge-settings .dbridge_cmp { width: 100%; border-collapse: collapse; margin: 4px 0; }
+.discord-bridge-settings .dbridge_cmp th, .discord-bridge-settings .dbridge_cmp td { border-bottom: 1px solid var(--SmartThemeBorderColor, #555); padding: 3px 5px; text-align: left; vertical-align: top; }
+.discord-bridge-settings .dbridge_cmp td:first-child { white-space: nowrap; opacity: 0.8; }
+.discord-bridge-settings .dbridge_disabled { opacity: 0.45; }

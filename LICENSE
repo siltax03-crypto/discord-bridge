@@ -1,0 +1,51 @@
+Discord Bridge — 이용 허락 및 제한 (License)
+Copyright (c) 2026 netnet. All rights reserved.
+
+[한국어]
+
+1. 허락하는 것
+   이 소프트웨어(코드, 설정 화면, 서버 파일, 문서 포함)를 내려받아 본인이 운영하는 서버와
+   SillyTavern에 설치하고, 본인이 개인적으로 사용하는 것을 허락합니다.
+
+2. 금지하는 것
+   권리자의 서면 허락 없이 다음 행위를 할 수 없습니다.
+   ① 복제: 설치·실행에 필요한 범위를 넘어 이 소프트웨어의 전부 또는 일부를 복제하는 것
+   ② 재배포: 원본이든 수정본이든 이 소프트웨어의 전부 또는 일부를 다른 사람에게 배포·공유·
+      게시·판매·대여하는 것 (다른 저장소·사이트·메신저에 올리는 것 포함)
+   ③ 2차 저작: 이 소프트웨어를 수정하거나 일부를 가져와 다른 프로그램을 만들어 공개하는 것
+   ④ 상업적 이용: 이 소프트웨어 또는 이를 이용한 서비스로 수익을 얻는 것
+   ⑤ AI 학습·분석: 이 소프트웨어의 전부 또는 일부를 인공지능·머신러닝 모델의 학습, 미세조정,
+      데이터셋 구축, 또는 코드 분석·복원·재구성 목적으로 입력하거나 사용하는 것
+   ⑥ 난독화 해제: 배포된 코드의 난독화를 풀거나 원래 코드를 복원·재구성하려는 행위
+
+3. 기타
+   이 소프트웨어는 "있는 그대로" 제공되며, 사용으로 생긴 손해에 대해 권리자는 책임지지 않습니다.
+   이 소프트웨어가 연결하는 외부 서비스(Discord, Google, Modal 등)의 이용약관과 요금은
+   사용자 본인이 따르고 부담합니다. 목소리 기능에 등록하는 목소리는 본인 목소리이거나
+   사용 허락을 받은 목소리여야 하며, 그 책임은 등록한 사람에게 있습니다.
+
+[English]
+
+1. Permission
+   You may download this software (including code, settings UI, server files and documentation),
+   install it on a server and SillyTavern instance that you operate, and use it for your own
+   personal purposes.
+
+2. Restrictions
+   Without the copyright holder's prior written permission, you may not:
+   (1) Copy the software, in whole or in part, beyond what is necessary to install and run it;
+   (2) Redistribute, share, publish, sell, rent or lend the software or any modified version,
+       in whole or in part (including uploading it to other repositories, sites or messengers);
+   (3) Modify the software, or reuse any part of it, to create and publish another program;
+   (4) Use the software, or any service built with it, for commercial purposes;
+   (5) Use the software, in whole or in part, as input for training, fine-tuning or building
+       datasets for any artificial intelligence or machine-learning model, or for AI-assisted
+       analysis, reconstruction or reproduction of its code;
+   (6) De-obfuscate the distributed code or attempt to restore or reconstruct its source.
+
+3. Other
+   The software is provided "AS IS", without warranty of any kind. The copyright holder is not
+   liable for any damage arising from its use. You are responsible for complying with, and paying
+   for, the third-party services the software connects to (such as Discord, Google and Modal).
+   Any voice you register with the voice features must be your own or one you are authorized to
+   use; responsibility lies with the person who registers it.

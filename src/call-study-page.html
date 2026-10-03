@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>통화 영어 복습</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Poppins:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f4ef; --card:#ffffff; --ink:#2b2a28; --sub:#77736b; --line:#e7e2d8;
+  --accent:#4a6fa5; --accent-soft:#e6eef8; --char:#3d4a3f; --char-soft:#eaf0e8;
+  --good:#3c8d5a; --good-soft:#e3f3e8; --mid:#b98a1d; --mid-soft:#fbf1d8; --low:#b0567a; --low-soft:#f9e6ee;
+  --teacher:#fff8e6; --teacher-line:#f0dfb0;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",system-ui,sans-serif;line-height:1.55}
+.wrap{max-width:720px;margin:0 auto;padding:16px 16px 80px}
+header{padding:8px 0 4px}
+.date{color:var(--sub);font-size:13px}
+h1{font-size:22px;margin:4px 0 2px}
+.who{display:flex;align-items:center;gap:10px;margin-top:10px}
+.ava{width:40px;height:40px;border-radius:50%;background:#2f3a33;color:#fff;display:grid;place-items:center;font-size:20px}
+.demo{background:#eef3fb;border:1px dashed #aac0e0;color:#3b5578;border-radius:10px;padding:10px 12px;font-size:13px;margin:14px 0}
+nav{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;gap:6px;padding:10px 0;border-bottom:1px solid var(--line);margin-bottom:14px}
+nav button{flex:1;border:0;background:transparent;padding:9px 4px;border-radius:9px;font:inherit;font-size:14px;color:var(--sub);cursor:pointer}
+nav button.on{background:var(--card);color:var(--ink);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+section{display:none}
+section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 14px 12px;margin-bottom:12px}
+.num{font-size:12px;color:var(--sub)}
+.ko{font-size:15px;margin:2px 0 8px}
+.guess{display:inline-block;font-size:11.5px;background:#f1efe9;color:var(--sub);border-radius:6px;padding:1px 7px;margin-left:4px}
+.en{font-family:Poppins,"Noto Sans KR",sans-serif;font-size:19px;font-weight:600;color:var(--accent);margin:0 0 8px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.b{border:1px solid var(--line);background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;cursor:pointer;color:var(--ink)}
+.b:hover{background:#faf8f3}
+.b.play{background:var(--accent-soft);border-color:#c9d8ee;color:#2c4d7c}
+.b.cplay{background:var(--char-soft);border-color:#cdd9c9;color:var(--char)}
+.b.big{padding:11px 20px;font-size:15px;font-weight:700;background:var(--accent);color:#fff;border-color:var(--accent)}
+.b:disabled{opacity:.45;cursor:default}
+.teacher{background:var(--teacher);border:1px solid var(--teacher-line);border-radius:10px;padding:10px 12px;font-size:14px}
+.teacher b{color:#8a6412}
+.teacher .t-h{font-size:12px;color:#9a7a33;margin-bottom:3px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{font-size:12.5px;background:#fff;border:1px solid var(--teacher-line);border-radius:8px;padding:3px 8px}
+.chip i{font-style:normal;color:var(--sub)}
+.reply{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;font-size:14px}
+.reply .gen{font-family:Poppins,"Noto Sans KR",sans-serif;color:var(--char);font-weight:500}
+.reply .gko{color:var(--sub);font-size:13px}
+.skipped{font-size:13px;color:var(--sub);background:#f1efe9;border-radius:10px;padding:10px 12px}
+/* 역할극 */
+.stage{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 14px;text-align:center}
+.bubble{border-radius:14px;padding:12px 14px;margin:10px auto;max-width:520px;text-align:left}
+.bubble.g{background:var(--char-soft)}
+.bubble.me{background:var(--accent-soft)}
+.bubble .lbl{font-size:12px;color:var(--sub)}
+.bubble .t{font-family:Poppins,"Noto Sans KR",sans-serif;font-size:17px}
+.bubble .k{font-size:13px;color:var(--sub)}
+.hide-en .bubble.me .t{filter:blur(6px);transition:filter .2s}
+.hide-en .bubble.me:hover .t{filter:none}
+.mic{margin:14px auto 6px;width:84px;height:84px;border-radius:50%;background:#dfe6ef;display:grid;place-items:center;font-size:34px;transition:transform .08s}
+.mic.listen{background:#cfe0f5}
+.mic.talk{background:#a9c8ef}
+.status{font-size:14px;color:var(--sub);min-height:22px}
+.prog{height:6px;background:var(--line);border-radius:6px;overflow:hidden;margin:10px 0 4px}
+.prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+.row{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+label.tog{font-size:13px;color:var(--sub);display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+/* 발음 체크 */
+.sum{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.score{display:inline-block;min-width:54px;text-align:center;border-radius:8px;padding:2px 8px;font-weight:700;font-size:14px}
+.s-good{background:var(--good-soft);color:var(--good)}
+.s-mid{background:var(--mid-soft);color:var(--mid)}
+.s-low{background:var(--low-soft);color:var(--low)}
+.s-none{background:#f1efe9;color:var(--sub)}
+.w{display:inline-block;padding:0 2px;border-radius:4px;margin:1px 0}
+.w.miss{background:var(--low-soft);text-decoration:underline wavy #d49ab3;text-underline-offset:4px}
+.heard{font-size:13px;color:var(--sub);margin-top:4px}
+.empty{color:var(--sub);text-align:center;padding:30px 10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="date" id="when"></div>
+    <h1 id="ttl">📞 통화, 영어로 복습해요</h1>
+    <div class="who"><div class="ava">💀</div><div><b id="cname"></b><div class="date">통화가 끝나면 자동으로 여기 쌓여요</div></div></div>
+  </header>
+
+  <div class="demo" id="demo" style="display:none"></div>
+  <div class="date" style="margin:8px 0 0"><a href="../../">← 지난 통화 목록</a></div>
+
+  <nav>
+    <button data-tab="learn" class="on">① 표현 배우기</button>
+    <button data-tab="play">② 다시 통화하기</button>
+    <button data-tab="check">③ 발음 체크</button>
+  </nav>
+
+  <section id="learn" class="on"></section>
+
+  <section id="play">
+    <div class="stage" id="stage">
+      <div style="font-size:15px;margin-bottom:6px">이번엔 <b>영어로</b> <span class="nm"></span>랑 다시 통화해요.</div>
+      <div class="date"><span class="nm"></span>가 먼저 말하면, 내 차례에 영어 문장을 말해요.<br>말이 끝나면 <span class="nm"></span>가 바로 이어서 대답해요.</div>
+      <div class="row" style="margin-top:14px">
+        <label class="tog"><input type="checkbox" id="hideEn"> 영어 문장 가리기 (누르면 보여요)</label>
+      </div>
+      <div class="row"><button class="b big" id="startBtn">📞 통화 시작</button></div>
+    </div>
+  </section>
+
+  <section id="check"><div class="empty">② 다시 통화하기를 끝내면 여기에 발음 결과가 나와요.</div></section>
+</div>
+
+<script>let OPEN={},L=[],SKIPPED=[],voices=[];function loadVoices(){voices=speechSynthesis.getVoices()}function pick(t,e){for(const e of t){const t=voices.find(t=>t.name.includes(e));if(t)return t}return voices.find(t=>t.lang===e)||voices.find(t=>t.lang&&t.lang.startsWith("en"))}loadVoices(),speechSynthesis.onvoiceschanged=loadVoices;const CLIP={};let cur=null,curSrc=null,curDone=null,pctx=null;const bufCache={};function stopAudio(){try{cur&&cur.pause()}catch{}try{curSrc&&curSrc.stop()}catch{}try{speechSynthesis.cancel()}catch{}const t=curDone;cur=curSrc=curDone=null,t&&t()}function speak(t,e="teacher",n=1){stopAudio();const a=CLIP[t],s=Math.max(6e3,600*String(t).split(/\s+/).length/n+4e3);return new Promise(c=>{let o=!1;const i=()=>{o||(o=!0,clearTimeout(r),curDone===i&&(curDone=null),c())},r=setTimeout(i,s);if(curDone=i,a&&pctx&&"running"===pctx.state&&1===n)(async function(t){if(bufCache[t])return bufCache[t];const e=await(await fetch(t)).arrayBuffer(),n=await new Promise((t,n)=>{const a=pctx.decodeAudioData(e,t,n);a&&a.then&&a.then(t,n)});return bufCache[t]=n})(a).then(t=>{if(o)return;const e=pctx.createBufferSource();e.buffer=t,e.connect(pctx.destination),e.onended=i,curSrc=e,e.start(0)}).catch(()=>{o||browserSpeak(t,e,n).then(i)});else{if(a){const s=new Audio(a);return cur=s,s.playbackRate=n,s.preservesPitch=!0,s.onended=i,s.onerror=()=>{o||browserSpeak(t,e,n).then(i)},void s.play().catch(()=>s.onerror())}browserSpeak(t,e,n).then(i)}})}function browserSpeak(t,e="teacher",n=1){return new Promise(a=>{speechSynthesis.cancel();const s=new SpeechSynthesisUtterance(t);"char"===e?(s.voice=pick(["UK English Male","Daniel","Ryan","George","Arthur","Thomas"],"en-GB"),s.pitch=.75,s.rate=.95*n):(s.voice=pick(["UK English Female","Sonia","Libby","Serena","Kate","Martha","Samantha"],"en-GB"),s.rate=.95*n),s.lang=s.voice&&s.voice.lang||"en-GB",s.onend=a,s.onerror=a,speechSynthesis.speak(s)})}const learn=document.getElementById("learn");function showTab(t){document.querySelectorAll("nav button").forEach(e=>e.classList.toggle("on",e.dataset.tab===t)),document.querySelectorAll("section").forEach(e=>e.classList.toggle("on",e.id===t)),window.scrollTo({top:0})}let stream,actx,analyser;learn.addEventListener("click",t=>{const e=t.target.closest("button");e&&(e.dataset.say&&speak(L[e.dataset.say].en),e.dataset.slow&&speak(L[e.dataset.slow].en,"teacher",.7),e.dataset.char&&speak(L[e.dataset.char].char,"char"))}),document.querySelectorAll("nav button").forEach(t=>t.onclick=()=>showTab(t.dataset.tab));const SR=window.SpeechRecognition||window.webkitSpeechRecognition;async function initMic(){stream||(stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:!0,noiseSuppression:!0}}),actx=new(window.AudioContext||window.webkitAudioContext),analyser=actx.createAnalyser(),analyser.fftSize=1024,actx.createMediaStreamSource(stream).connect(analyser))}let forceEnd=null;function listenOnce(t){return new Promise(async e=>{const n=[],a=new MediaRecorder(stream);a.ondataavailable=t=>n.push(t.data),a.start();let s="",c=!SR,o=!1,i="",r=null;if(SR){r=new SR,r.lang="en-GB",r.interimResults=!1,r.continuous=!0,r.onresult=t=>{s=Array.from(t.results).map(t=>t[0].transcript).join(" ")},r.onend=()=>{c=!0,l()},r.onerror=()=>{};try{r.start()}catch{c=!0}}function l(){c&&o&&e({text:s.trim(),url:i})}a.onstop=()=>{i=URL.createObjectURL(new Blob(n,{type:a.mimeType||"audio/webm"})),o=!0,l()};let d=0,u=0;const h=performance.now();let m=!1,p=0,g=0,y=!1;function v(){if(!y){y=!0,clearInterval(f),t("done");try{a.stop()}catch{}if(r){try{r.stop()}catch{}setTimeout(()=>{c=!0,l()},2500)}}}forceEnd=v;const f=setInterval(()=>{const e=function(){const t=new Float32Array(analyser.fftSize);analyser.getFloatTimeDomainData(t);let e=0;for(const n of t)e+=n*n;return Math.sqrt(e/t.length)}(),n=performance.now();if(n-h<300)return d+=e,void u++;e>Math.max(.018,d/Math.max(u,1)*3)?(p++,g=n,p>=3&&!m&&(m=!0,t("talk"))):p=0,m&&n-g>900&&v(),!m&&n-h>12e3&&v(),n-h>2e4&&v()},50);t("listen")})}const results=[],stage=document.getElementById("stage");document.getElementById("hideEn").onchange=t=>stage.classList.toggle("hide-en",t.target.checked),document.getElementById("startBtn").onclick=async function(){!function(){try{pctx||(pctx=new(window.AudioContext||window.webkitAudioContext)),"running"!==pctx.state&&pctx.resume();const t=pctx.createBuffer(1,1,22050),e=pctx.createBufferSource();e.buffer=t,e.connect(pctx.destination),e.start(0)}catch{}}();try{await initMic()}catch{return void alert("마이크를 허용해야 다시 통화하기를 할 수 있어요.")}"suspended"===actx.state&&await actx.resume(),stopFlag=!1,results.length=0;const t=document.getElementById("hideEn").checked;stage.innerHTML=`\n    <div class="date">📞 ${NAME}와 통화 중 · <span id="clock">0:00</span></div>\n    <div class="prog"><i id="bar"></i></div>\n    <div id="gB" class="bubble g"><div class="lbl">💀 ${NAME}</div><div class="t"></div><div class="k"></div></div>\n    <div id="mB" class="bubble me" style="display:none"><div class="lbl">🙋 내 차례 — 이렇게 말해 봐요</div><div class="t"></div><div class="k"></div></div>\n    <div class="mic" id="mic">🎙️</div>\n    <div class="status" id="st"></div>\n    <div class="row">\n      <button class="b" id="doneBtn" disabled>✋ 다 말했어요</button>\n      <button class="b" id="againBtn" disabled>🔁 ${NAME} 다시 듣기</button>\n      <button class="b" id="endBtn">⏹ 그만하기</button>\n    </div>`,stage.classList.toggle("hide-en",t);const e=Date.now(),n=setInterval(()=>{const t=Math.floor((Date.now()-e)/1e3),a=document.getElementById("clock");a?a.textContent=`${Math.floor(t/60)}:${String(t%60).padStart(2,"0")}`:clearInterval(n)},500),a=document.getElementById("gB"),s=document.getElementById("mB"),c=document.getElementById("mic"),o=document.getElementById("st"),i=document.getElementById("bar");document.getElementById("doneBtn").onclick=()=>forceEnd&&forceEnd(),document.getElementById("endBtn").onclick=()=>{stopFlag=!0,stopAudio(),forceEnd&&forceEnd()};let r=OPEN.char;document.getElementById("againBtn").onclick=()=>speak(r,"char");const l=async(t,e)=>{r=t,s.style.display="none",a.querySelector(".t").textContent=t,a.querySelector(".k").textContent=e,c.className="mic",o.textContent=`${NAME}가 말하는 중…`,document.getElementById("doneBtn").disabled=!0,document.getElementById("againBtn").disabled=!0,await speak(t,"char")};OPEN.char&&await l(OPEN.char,OPEN.charKo);for(let t=0;t<L.length&&!stopFlag;t++){const e=L[t];i.style.width=t/L.length*100+"%",s.style.display="",s.querySelector(".t").textContent=e.en,s.querySelector(".k").textContent=e.ko,document.getElementById("doneBtn").disabled=!1,document.getElementById("againBtn").disabled=!1;const n=await listenOnce(t=>{c.className="mic"+("listen"===t?" listen":"talk"===t?" talk":""),o.textContent="listen"===t?"듣고 있어요… 영어로 말해 보세요":"talk"===t?"말하는 중…":""});if(stopFlag)break;results.push({i:t,...n}),e.char&&await l(e.char,e.charKo)}clearInterval(n),i.style.width="100%",o.textContent="통화 끝! 발음 체크로 넘어가요.",renderCheck(),setTimeout(()=>showTab("check"),900)};let stopFlag=!1;const norm=t=>t.toLowerCase().replace(/[’']/g,"").replace(/[^a-z0-9\s-]/g," ").replace(/-/g," ").split(/\s+/).filter(Boolean);function matchWords(t,e){const n=norm(t),a=norm(e),s=Array.from({length:n.length+1},()=>new Array(a.length+1).fill(0));for(let t=n.length-1;t>=0;t--)for(let e=a.length-1;e>=0;e--)s[t][e]=n[t]===a[e]?s[t+1][e+1]+1:Math.max(s[t+1][e],s[t][e+1]);const c=new Array(n.length).fill(!1);let o=0,i=0;for(;o<n.length&&i<a.length;)n[o]===a[i]?(c[o]=!0,o++,i++):s[o+1][i]>=s[o][i+1]?o++:i++;return{T:n,hit:c,score:n.length?Math.round(c.filter(Boolean).length/n.length*100):0}}function renderCheck(){const t=document.getElementById("check");if(!results.length)return void(t.innerHTML='<div class="empty">② 다시 통화하기를 끝내면 여기에 발음 결과가 나와요.</div>');const e=results.map(t=>({...t,...matchWords(L[t.i].en,t.text)})),n=Math.round(e.reduce((t,e)=>t+e.score,0)/e.length),a=e.filter(t=>t.score<85);t.innerHTML=`\n    <div class="sum">\n      <div style="font-size:15px">👩‍🏫 오늘 발음 평균 ${SR?`<b>${n}점</b>`:"(이 브라우저는 받아쓰기가 안 돼서 점수 없음 — 크롬에서 열어 주세요)"}</div>\n      <div class="date" style="margin-top:4px">${a.length?`다시 연습하면 좋은 문장이 <b>${a.length}개</b> 있어요. 연분홍으로 표시된 단어가 잘 안 들린 부분이에요. 🔊로 듣고 🎤로 한 번 더 해 봐요~`:"전부 잘 들렸어요! 아주 좋아요~"}</div>\n    </div>`+e.map((t,e)=>`\n    <div class="card" id="ck${e}">\n      <div class="num">${t.i+1}. ${L[t.i].ko}</div>\n      <div style="display:flex;gap:8px;align-items:flex-start;margin:4px 0">\n        ${function(t){if(!SR)return'<span class="score s-none">–</span>';const e=t.score;return`<span class="score ${e>=85?"s-good":e>=60?"s-mid":"s-low"}">${e}점</span>`}(t)}\n        <div class="en" style="font-size:17px;margin:0">${t.T.map((e,n)=>`<span class="w${t.hit[n]?"":" miss"}">${e}</span>`).join(" ")}</div>\n      </div>\n      <div class="heard">들린 말: ${t.text?`“${t.text}”`:"(안 들렸어요)"}</div>\n      <div class="btns" style="margin-top:8px">\n        <button class="b play" data-say="${t.i}">🔊 정답 듣기</button>\n        <button class="b play" data-slow="${t.i}">🐢 천천히</button>\n        ${t.url?`<button class="b" data-mine="${e}">▶ 내 목소리</button>`:""}\n        <button class="b" data-retry="${e}">🎤 다시 해 보기</button>\n      </div>\n    </div>`).join(""),t.onclick=async t=>{const e=t.target.closest("button");if(e&&(e.dataset.say&&speak(L[e.dataset.say].en),e.dataset.slow&&speak(L[e.dataset.slow].en,"teacher",.7),e.dataset.mine&&new Audio(results[e.dataset.mine].url).play(),e.dataset.retry)){const t=+e.dataset.retry;e.disabled=!0,e.textContent="🎙️ 듣는 중… 말해 보세요",await initMic(),"suspended"===actx.state&&await actx.resume();const n=await listenOnce(t=>{"talk"===t&&(e.textContent="🎙️ 말하는 중…")});results[t]={i:results[t].i,...n},renderCheck(),document.getElementById("ck"+t)?.scrollIntoView({block:"center"})}}}let NAME="";(async()=>{let t;try{t=await(await fetch("study.json",{cache:"no-store"})).json()}catch{return void(learn.innerHTML='<div class="empty">복습 자료를 못 불러왔어요.</div>')}NAME=t.name||t.character||"",OPEN=t.open||{},L=t.lines||[],SKIPPED=t.skipped||[],OPEN.char&&OPEN.audio&&(CLIP[OPEN.char]=OPEN.audio);for(const t of L)t.enAudio&&(CLIP[t.en]=t.enAudio),t.char&&t.charAudio&&(CLIP[t.char]=t.charAudio);const e=new Date(t.start),n=Math.max(0,Math.round((new Date(t.end)-e)/1e3));document.getElementById("when").textContent=new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",month:"long",day:"numeric",weekday:"short",hour:"numeric",minute:"2-digit"}).format(e)+` · ${Math.floor(n/60)}분 ${n%60}초`,document.getElementById("cname").textContent=t.character||"",document.getElementById("ttl").textContent=`📞 ${NAME}랑 한 통화, 영어로 복습해요`,document.title=`통화 복습 · ${NAME}`;const a=L.filter(t=>t.char&&t.standIn).length;if(a){const t=document.getElementById("demo");t.style.display="",t.innerHTML=`🎙️ ${NAME} 대사 ${a}줄은 통화 녹음이 없어서 <b>제미나이 목소리 대역</b>으로 읽어요.`}document.querySelectorAll(".nm").forEach(t=>t.textContent=NAME),learn.innerHTML=L.map((t,e)=>`\n  <div class="card">\n    <div class="num">${e+1} / ${L.length} · 내가 한 말</div>\n    <div class="ko">${t.ko}${t.heard?`<span class="guess">🤔 받아쓰기: “${t.heard}”</span>`:""}</div>\n    <p class="en">${t.en}</p>\n    <div class="btns">\n      <button class="b play" data-say="${e}">🔊 듣기</button>\n      <button class="b play" data-slow="${e}">🐢 천천히</button>\n    </div>\n    <div class="teacher"><div class="t-h">👩‍🏫 선생님 한마디</div>이렇게 말하면 좋아요~ ${t.tip}\n      <div class="chips">${t.chips.map(t=>`<span class="chip">${t[0]} <i>${t[1]}</i></span>`).join("")}</div>\n    </div>\n    ${t.char?`<div class="reply">💀 ${NAME} 대답 <button class="b cplay" data-char="${e}" style="padding:3px 10px;margin-left:4px">▶</button>\n      <div class="gen">${t.char}</div><div class="gko">${t.charKo}</div></div>`:""}\n  </div>`).join("")+(SKIPPED.length?`<div class="skipped">📝 뺀 말 — ${SKIPPED.map(t=>`“${t[0]}” (${t[1]})`).join(" · ")}</div>`:"")})();</script>
+</body>
+</html>
